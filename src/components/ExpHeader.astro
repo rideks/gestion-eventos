@@ -1,0 +1,41 @@
+---
+// Cabecera común de las páginas de un expediente: número, nombre, estado, datos y pestañas.
+import Icon from './Icon.astro';
+import Pill from './Pill.astro';
+import { expedienteState, expLabel } from '../lib/finance.js';
+import { formatRange, today } from '../lib/dates.js';
+
+const { exp, tab = 'resumen', fin = null } = Astro.props;
+const now = today();
+const base = `/expedientes/${exp.id}`;
+const s = fin?.summary;
+const tabs = [
+  { key: 'resumen', href: base, label: 'Resumen' },
+  { key: 'pagos', href: `${base}/pagos`, label: 'Pagos', count: s ? s.pending.length : null, alert: s?.overdue.length > 0 },
+  { key: 'cobros', href: `${base}/cobros`, label: 'Cobros', count: s ? s.toIssue.length + s.uncollected.length : null, alert: s?.overdueInvoices.length > 0 },
+  { key: 'presupuesto', href: `${base}/presupuesto`, label: fin?.budget ? `Presupuesto v${fin.budget.version}` : 'Presupuesto' },
+  { key: 'cierre', href: `${base}/cierre`, label: 'Cierre' },
+];
+---
+<div class="exp-head">
+  <a class="back no-print" href="/expedientes"><Icon name="arrow-left" size={18} /> Expedientes</a>
+  <div class="exp-title">
+    <span class:list={['exp-num', { 'is-draft': !exp.number }]}>{expLabel(exp)}</span>
+    <h1>{exp.name}</h1>
+    <Pill state={expedienteState(exp, now)} />
+  </div>
+  <p class="exp-meta">
+    <span><Icon name="building" size={16} /><strong>{exp.company}</strong></span>
+    {exp.destination && <span><Icon name="map-pin" size={16} />{exp.destination}</span>}
+    {exp.start_date && <span><Icon name="calendar-days" size={16} />{formatRange(exp.start_date, exp.end_date)}</span>}
+    {exp.manager_name && <span><Icon name="user-round" size={16} />{exp.manager_name}</span>}
+  </p>
+</div>
+<nav class="x-tabs" aria-label="Secciones del expediente">
+  {tabs.map((t) => (
+    <a href={t.href} aria-current={tab === t.key ? 'page' : undefined}>
+      {t.label}
+      {t.count > 0 && <small class:list={{ 'is-alert': t.alert }}>{t.count}</small>}
+    </a>
+  ))}
+</nav>

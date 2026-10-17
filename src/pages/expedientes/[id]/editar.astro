@@ -1,0 +1,83 @@
+---
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import ExpHeader from '../../../components/ExpHeader.astro';
+import ExpedienteFields from '../../../components/ExpedienteFields.astro';
+import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
+import { getExpediente, suggestions, activeUsers, numberTaken } from '../../../lib/data.js';
+import { ExpedienteSchema, NumberSchema, validate, formToObject } from '../../../lib/validate.js';
+import { nowIso } from '../../../lib/dates.js';
+import { isLocked, LOCKED_MSG } from '../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const exp = id ? await getExpediente(db, id) : null;
+if (!exp) return Astro.rewrite('/404');
+if (isLocked(exp)) return Astro.redirect(`/expedientes/${id}`, 303);
+
+const me = Astro.locals.user;
+const admin = can(me, 'expediente.open');
+let error = null;
+let errors = {};
+let v = { ...exp };
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  v = { ...exp, ...input };
+  const parsed = validate(ExpedienteSchema, input);
+  // El número sólo lo cambia Administración, y sólo si el expediente ya lo tiene
+  const n = admin && exp.number ? validate(NumberSchema, input) : { ok: true, data: { number: exp.number } };
+  if (isLocked(exp)) {
+    error = LOCKED_MSG;
+  } else if (!parsed.ok) {
+    error = parsed.message;
+    errors = parsed.errors;
+  } else if (!n.ok) {
+    error = n.message;
+    errors = n.errors;
+  } else if (n.data.number !== exp.number && (await numberTaken(db, n.data.number, id))) {
+    error = `Ya hay un expediente con el número ${n.data.number}.`;
+    errors = { number: error };
+  } else {
+    const d = parsed.data;
+    const changes = [];
+    if (n.data.number !== exp.number) changes.push(`número ${exp.number} → ${n.data.number}`);
+    if (d.name !== exp.name) changes.push('nombre');
+    if (d.start_date !== exp.start_date || d.end_date !== exp.end_date) changes.push('fechas');
+    if (d.company !== exp.company) changes.push('empresa');
+    await db.batch([
+      db.prepare(
+        `UPDATE expedientes SET number = ?, name = ?, company = ?, contact_name = ?, contact_email = ?, contact_phone = ?, destination = ?,
+                start_date = ?, end_date = ?, attendees = ?, notes = ?, manager_id = ?, updated_at = ? WHERE id = ?`,
+      ).bind(n.data.number, d.name, d.company, d.contact_name, d.contact_email, d.contact_phone, d.destination,
+        d.start_date, d.end_date, d.attendees, d.notes, d.manager_id, nowIso(), id),
+      activityStmt(db, actor(Astro), id, 'expediente.update', `cambió los datos del evento${changes.length ? ` (${changes.join(', ')})` : ''}`),
+    ]);
+    return Astro.redirect(`/expedientes/${id}?ok=guardado`, 303);
+  }
+  Astro.response.status = 400;
+}
+
+const [{ companies }, users] = await Promise.all([suggestions(db), activeUsers(db)]);
+---
+<App title="Editar datos" section="expedientes" error={error}>
+  <ExpHeader exp={exp} tab="resumen" />
+  <form method="post" class="form">
+    {admin && exp.number && (
+      <section class="form-section">
+        <h2><Icon name="folder" /> Número de expediente</h2>
+        <div class:list={['field', { 'has-error': errors.number }]}>
+          <label for="number">Número</label>
+          <input id="number" name="number" type="number" min="1" inputmode="numeric" required value={v.number} />
+        </div>
+      </section>
+    )}
+    <ExpedienteFields v={v} errors={errors} users={users} companies={companies} />
+    <div class="actions">
+      <button class="btn btn-primary" type="submit" data-busy="Guardando…">Guardar cambios</button>
+      <a class="btn btn-ghost" href={`/expedientes/${id}`}>Cancelar</a>
+    </div>
+  </form>
+</App>

@@ -1,0 +1,183 @@
+---
+// Cobros al cliente (lado derecho del cierre): sus órdenes de compra (PO) y nuestras facturas.
+// Eventos sube las PO y pide la factura; Administración la emite (nº y PDF) y registra el cobro.
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import ExpHeader from '../../../components/ExpHeader.astro';
+import PoForm from '../../../components/PoForm.astro';
+import PoItem from '../../../components/PoItem.astro';
+import InvoiceForm from '../../../components/InvoiceForm.astro';
+import InvoiceItem from '../../../components/InvoiceItem.astro';
+import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
+import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
+import { PoSchema, InvoiceSchema, parseAllocations, validate, formToObject } from '../../../lib/validate.js';
+import { storeFile, getFile, UploadError } from '../../../lib/files.js';
+import { eur, amountInput } from '../../../lib/money.js';
+import { today } from '../../../lib/dates.js';
+import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const exp = id ? await getExpediente(db, id) : null;
+if (!exp) return Astro.rewrite('/404');
+
+const me = Astro.locals.user;
+const admin = can(me, 'invoice.issue');
+const now = today();
+const locked = isLocked(exp);
+const fin = await loadFinance(db, id, now);
+let error = null;
+let errors = {};
+let poValues = { billed_to: exp.company };
+let invValues = { billed_to: exp.company };
+let checked = null;
+let open = Astro.url.searchParams.get('nuevo');
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+
+  if (locked) {
+    error = LOCKED_MSG;
+  } else if (input.intent === 'collect') {
+    const r = await markCollected(db, who, input, id);
+    if (r.ok) return Astro.redirect(`/expedientes/${id}/cobros?ok=cobrada`, 303);
+    error = r.message;
+  } else if (input.intent === 'add_po') {
+    open = 'po';
+    poValues = input;
+    const parsed = validate(PoSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else {
+      const d = parsed.data;
+      try {
+        const file = getFile(form, 'file');
+        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
+        await db.batch([
+          db.prepare('INSERT INTO purchase_orders (expediente_id, number, billed_to, amount_cents, issued_on, file_id, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(id, d.number, d.billed_to, d.amount, d.issued_on, fileId, d.notes, me.id),
+          activityStmt(db, who, id, 'po.add', `subió la PO ${d.number} de ${d.billed_to} (${eur(d.amount)} sin IVA)`),
+        ]);
+        return Astro.redirect(`/expedientes/${id}/cobros?ok=creado`, 303);
+      } catch (err) {
+        if (!(err instanceof UploadError)) throw err;
+        error = err.message;
+      }
+    }
+  } else if (input.intent === 'add_invoice') {
+    open = 'factura';
+    invValues = input;
+    checked = form.getAll('po_ids').map(Number);
+    const alloc = parseAllocations(form, fin.summary.poRows);
+    // Sin importe escrito: la suma de las PO marcadas
+    if (alloc.ok && alloc.rows.length && !String(input.base ?? '').trim() && !String(input.total ?? '').trim()) {
+      input.base = amountInput(alloc.rows.reduce((a, r) => a + r.amount, 0));
+    }
+    const parsed = validate(InvoiceSchema, input);
+    if (!alloc.ok) {
+      error = alloc.message;
+    } else if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else {
+      const d = parsed.data;
+      // Administración puede registrarla ya emitida (con su número)
+      const issued = admin && d.number;
+      try {
+        const file = admin ? getFile(form, 'file') : null;
+        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
+        const inv = await db.prepare(
+          `INSERT INTO invoices (expediente_id, number, billed_to, concept, base_cents, total_cents, vat, status, issued_on, due_date, file_id, notes, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        ).bind(id, issued ? d.number : null, d.billed_to, d.concept, d.base, d.total, d.vat, issued ? 'emitida' : 'por_emitir',
+          issued ? (d.issued_on ?? now) : null, issued ? d.due_date : null, fileId, d.notes, me.id).first();
+        const poText = alloc.rows.length
+          ? ` con la${alloc.rows.length > 1 ? 's' : ''} PO ${alloc.rows.map((r) => fin.summary.poRows.find((p) => p.id === r.po_id).number).join(', ')}`
+          : '';
+        await db.batch([
+          ...alloc.rows.map((r) => db.prepare('INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (?, ?, ?)').bind(inv.id, r.po_id, r.amount)),
+          activityStmt(db, who, id, issued ? 'invoice.issue' : 'invoice.request', issued
+            ? `emitió la factura ${d.number} a ${d.billed_to} (${eur(d.total)})${poText}`
+            : `pidió una factura a ${d.billed_to} por ${eur(d.total)}${poText}`),
+        ]);
+        return Astro.redirect(`/expedientes/${id}/cobros?ok=${issued ? 'emitida' : 'pedida'}`, 303);
+      } catch (err) {
+        if (!(err instanceof UploadError)) throw err;
+        error = err.message;
+      }
+    }
+  }
+  Astro.response.status = 400;
+}
+
+const { companies } = await suggestions(db);
+const s = fin.summary;
+const poByInvoice = new Map();
+for (const a of fin.allocations) poByInvoice.set(a.invoice_id, [...(poByInvoice.get(a.invoice_id) ?? []), a.po_number]);
+const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.base) * 100) : 0;
+---
+<App title={`Cobros · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
+  <ExpHeader exp={exp} tab="cobros" fin={fin} />
+
+  <div class="kpis">
+    <div class="kpi"><span>Presupuesto</span><b class="money">{eur(s.sale.base)}</b><small class="money">{eur(s.sale.total)} con IVA</small></div>
+    <div class="kpi is-gold">
+      <span>PO recibidas</span><b class="money">{eur(s.poTotal)}</b>
+      <small>{s.poMissing > 0 ? `Faltan ${eur(s.poMissing)}` : 'Presupuesto cubierto'}</small>
+      <progress class="bar is-gold" max="100" value={coverage}></progress>
+    </div>
+    <div class="kpi"><span>Facturado</span><b class="money">{eur(s.invoiced.total)}</b><small>{s.toIssue.length ? `${s.toIssue.length} por emitir` : `${eur(s.invoiced.base)} sin IVA`}</small></div>
+    <div class:list={['kpi', { 'is-ok': s.collected > 0, 'is-danger': s.overdueInvoices.length > 0 }]}>
+      <span>Cobrado</span><b class="money">{eur(s.collected)}</b>
+      <small>{s.toCollect ? `Pendiente ${eur(s.toCollect)}` : 'Nada pendiente'}</small>
+    </div>
+  </div>
+
+  <div class="sec-head">
+    <h2><Icon name="file-text" /> Órdenes de compra (PO)</h2>
+    <p>Las PO que envía el cliente. Súbelas aquí en vez de reenviarlas por correo: Administración las ve al emitir la factura.</p>
+  </div>
+  {!locked && (
+    <details class="add" open={open === 'po'}>
+      <summary class="btn btn-ghost"><Icon name="plus" size={18} /> <span class="when-closed">Subir PO</span><span class="when-open">Cerrar formulario</span></summary>
+      <form method="post" enctype="multipart/form-data" class="form-section">
+        <PoForm v={poValues} errors={open === 'po' ? errors : {}} companies={companies} id="newpo" />
+        <div class="actions-inline"><button class="btn btn-primary" type="submit" name="intent" value="add_po" data-busy="Subiendo…">Guardar PO</button></div>
+      </form>
+    </details>
+  )}
+  {s.poRows.length ? (
+    <>
+      <ul class="list">{s.poRows.map((po) => <PoItem po={po} canEdit={!locked} />)}</ul>
+      <p class="list-total"><span>Total PO <b class="money">{eur(s.poTotal)}</b></span><span>Sin facturar <b class="money">{eur(s.poLeft)}</b></span></p>
+    </>
+  ) : <p class="empty">Aún no hay PO del cliente.</p>}
+
+  <div class="sec-head">
+    <h2><Icon name="receipt" /> Facturas al cliente</h2>
+    <p>{admin
+      ? 'Las que pide Eventos salen como «Por emitir»: ponles número y PDF al emitirlas. También puedes registrarlas tú directamente.'
+      : 'Pide aquí la factura con las PO que cubre. Administración la emite y te avisa en la actividad del expediente.'}</p>
+  </div>
+  {!locked && (
+    <details class="add" open={open === 'factura'}>
+      <summary class="btn btn-primary"><Icon name="send" size={18} /> <span class="when-closed">{admin ? 'Nueva factura' : 'Pedir factura'}</span><span class="when-open">Cerrar formulario</span></summary>
+      <form method="post" enctype="multipart/form-data" class="form-section">
+        <InvoiceForm v={invValues} errors={open === 'factura' ? errors : {}} companies={companies} poRows={s.poRows} admin={admin} checked={checked} id="newinv" />
+        <div class="actions-inline">
+          <button class="btn btn-primary" type="submit" name="intent" value="add_invoice" data-busy="Guardando…">{admin ? 'Guardar factura' : 'Pedir factura a Administración'}</button>
+        </div>
+      </form>
+    </details>
+  )}
+  {fin.invoices.length ? (
+    <>
+      <ul class="list">{fin.invoices.map((i) => <InvoiceItem i={i} now={now} canIssue={admin && !locked} canEdit={!locked || admin} poNumbers={(poByInvoice.get(i.id) ?? []).join(', ')} />)}</ul>
+      <p class="list-total"><span>Facturado <b class="money">{eur(s.invoiced.total)}</b></span><span>Cobrado <b class="money">{eur(s.collected)}</b></span><span>Por cobrar <b class="money">{eur(s.toCollect)}</b></span></p>
+    </>
+  ) : <p class="empty">Aún no hay facturas al cliente.</p>}
+</App>

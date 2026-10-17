@@ -1,0 +1,32 @@
+---
+// Página de acceso / alta (sin menú)
+import '@fontsource/barlow/latin-400.css';
+import '@fontsource/barlow/latin-700.css';
+import '@fontsource/barlow-condensed/latin-800.css';
+import '../styles/app.css';
+import { env } from 'cloudflare:workers';
+
+const { title, heading, intro = null } = Astro.props;
+const company = env.COMPANY_NAME || 'Seven Worlds';
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title} · {company}</title>
+    <link rel="icon" href="/favicon.svg" />
+    <script is:inline src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  </head>
+  <body>
+    <main class="auth">
+      <div class="auth-card">
+        <div class="crest"><span class="mark" aria-hidden="true">7<b>W</b></span></div>
+        <h1>{heading}</h1>
+        <p>{intro ?? `${company} · ${env.COMPANY_TAGLINE || 'Gestión de eventos'}`}</p>
+        <slot />
+      </div>
+    </main>
+  </body>
+</html>

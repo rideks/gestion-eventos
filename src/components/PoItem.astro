@@ -1,0 +1,34 @@
+---
+// Una orden de compra (PO) del cliente.
+import Icon from './Icon.astro';
+import { eur } from '../lib/money.js';
+import { formatDate } from '../lib/dates.js';
+import { fileUrl } from '../lib/files.js';
+
+const { po, showExp = false, canEdit = true } = Astro.props;
+const href = fileUrl(po);
+const used = po.amount_cents - po.left_cents;
+---
+<li class="item is-row">
+  <div class="item-body">
+    {showExp && <a class="item-meta" href={`/expedientes/${po.expediente_id}/cobros`}><strong>{po.exp_number ? `EXP ${po.exp_number}` : 'Solicitud'}</strong> · {po.exp_name}</a>}
+    {canEdit
+      ? <a class="item-title" href={`/expedientes/${po.expediente_id}/po/${po.id}`}>PO {po.number} <span class="muted">· {po.billed_to}</span></a>
+      : <span class="item-title">PO {po.number} <span class="muted">· {po.billed_to}</span></span>}
+    <span class="item-meta">
+      {po.issued_on && <span>Del {formatDate(po.issued_on)}</span>}
+      <span>Facturado {eur(used)}</span>
+      {po.notes && <span>{po.notes}</span>}
+    </span>
+    <span class="item-flags">
+      {po.left_cents > 0
+        ? <span class="pill pill-warn">Sin facturar {eur(po.left_cents)}</span>
+        : po.left_cents < 0 ? <span class="pill pill-danger">Facturado de más {eur(-po.left_cents)}</span> : <span class="pill pill-ok">Facturada</span>}
+      {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{po.file_name}</a>}
+    </span>
+  </div>
+  <div class="item-amount">
+    <span class="big-money money">{eur(po.amount_cents)}</span>
+    <small>sin IVA</small>
+  </div>
+</li>

@@ -1,0 +1,121 @@
+---
+// Presupuesto aprobado y sus versiones: "puede cambiar hasta el último momento".
+// Cada cambio se sube como versión nueva (archivo + total) y se ve qué ha cambiado.
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import ExpHeader from '../../../components/ExpHeader.astro';
+import AmountFields from '../../../components/AmountFields.astro';
+import FileField from '../../../components/FileField.astro';
+import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
+import { getExpediente, loadFinance } from '../../../lib/data.js';
+import { BudgetSchema, validate, formToObject } from '../../../lib/validate.js';
+import { storeFile, getFile, fileUrl, UploadError } from '../../../lib/files.js';
+import { eur } from '../../../lib/money.js';
+import { today, formatStamp } from '../../../lib/dates.js';
+import { isLocked, LOCKED_MSG } from '../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const exp = id ? await getExpediente(db, id) : null;
+if (!exp) return Astro.rewrite('/404');
+
+const me = Astro.locals.user;
+const locked = isLocked(exp);
+const now = today();
+let error = null;
+let errors = {};
+let v = { vat: 'mixto' };
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  v = input;
+  const parsed = validate(BudgetSchema, input);
+  if (locked) {
+    error = LOCKED_MSG;
+  } else if (!parsed.ok) {
+    error = parsed.message;
+    errors = parsed.errors;
+  } else {
+    const d = parsed.data;
+    try {
+      const file = getFile(form, 'file');
+      const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
+      const last = await db.prepare('SELECT version, base_cents FROM budgets WHERE expediente_id = ? ORDER BY version DESC LIMIT 1').bind(id).first();
+      const version = (last?.version ?? 0) + 1;
+      const diff = last ? d.base - last.base_cents : 0;
+      await db.batch([
+        db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, note, file_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(id, version, d.base, d.total, d.note, fileId, me.id),
+        activityStmt(db, who, id, 'budget.add', `subió la versión ${version} del presupuesto: ${eur(d.base)} sin IVA`
+          + (last ? ` (${diff >= 0 ? '+' : ''}${eur(diff)})` : '') + (d.note ? `. ${d.note}` : '')),
+      ]);
+      return Astro.redirect(`/expedientes/${id}/presupuesto?ok=creado`, 303);
+    } catch (err) {
+      if (!(err instanceof UploadError)) throw err;
+      error = err.message;
+    }
+  }
+  Astro.response.status = 400;
+}
+
+const fin = await loadFinance(db, id, now);
+const versions = fin.budgets;
+---
+<App title={`Presupuesto · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
+  <ExpHeader exp={exp} tab="presupuesto" fin={fin} />
+
+  {fin.budget ? (
+    <div class="kpis">
+      <div class="kpi is-gold"><span>Vigente · v{fin.budget.version}</span><b class="money">{eur(fin.budget.base_cents)}</b><small class="money">{eur(fin.budget.total_cents)} con IVA</small></div>
+      <div class="kpi"><span>Coste actual</span><b class="money">{eur(fin.summary.cost.base)}</b><small>sin IVA</small></div>
+      <div class:list={['kpi', { 'is-danger': fin.summary.expectedMargin < 0 }]}><span>Margen previsto</span><b class="money">{eur(fin.summary.expectedMargin)}</b><small>presupuesto − costes</small></div>
+      <div class="kpi"><span>Versiones</span><b>{versions.length}</b><small>{versions.length > 1 ? `la 1ª era de ${eur(versions[versions.length - 1].base_cents)}` : 'sin cambios'}</small></div>
+    </div>
+  ) : <p class="flash flash-warn"><Icon name="info" /> Este expediente aún no tiene presupuesto.</p>}
+
+  {!locked && (
+    <details class="add" open={!!error}>
+      <summary class="btn btn-primary"><Icon name="upload" size={18} /> <span class="when-closed">Subir nueva versión</span><span class="when-open">Cerrar formulario</span></summary>
+      <form method="post" enctype="multipart/form-data" class="form-section">
+        <h2><Icon name="file-spreadsheet" /> Nueva versión del presupuesto</h2>
+        <p class="muted">Cuando el cliente cambia algo (más habitaciones, otro menú…), sube el presupuesto actualizado: pasa a ser el vigente y se guarda el historial.</p>
+        <FileField label="Presupuesto actualizado" />
+        <AmountFields id="budget" base={v.base ?? null} total={v.total ?? null} vat={v.vat ?? 'mixto'} errors={errors} labelBase="Total sin IVA" labelTotal="Total con IVA" />
+        <div class="field">
+          <label for="note">¿Qué ha cambiado? <span class="opt">(opcional)</span></label>
+          <input id="note" name="note" type="text" maxlength="300" value={v.note ?? ''} placeholder="+10 habitaciones el 05/05 y cena de gala" />
+        </div>
+        <div class="actions-inline"><button class="btn btn-primary" type="submit" data-busy="Subiendo…">Guardar versión</button></div>
+      </form>
+    </details>
+  )}
+
+  <h2 class="section-title">Historial</h2>
+  {versions.length ? (
+    <ul class="list">
+      {versions.map((b, i) => {
+        const prev = versions[i + 1];
+        const diff = prev ? b.base_cents - prev.base_cents : null;
+        return (
+          <li class="item is-row">
+            <div class="item-body">
+              <span class="item-title">Versión {b.version}{i === 0 && <span class="pill pill-gold">Vigente</span>}</span>
+              <span class="item-meta"><span>{b.created_by_name ?? '—'} · {formatStamp(b.created_at)}</span>{b.note && <span>{b.note}</span>}</span>
+              <span class="item-flags">
+                {diff !== null && diff !== 0 && <span class:list={['pill', diff > 0 ? 'pill-ok' : 'pill-danger']}>{diff > 0 ? '+' : ''}{eur(diff)}</span>}
+                {b.file_id && <a class="doc-link" href={fileUrl(b)} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{b.file_name}</a>}
+              </span>
+            </div>
+            <div class="item-amount">
+              <span class="big-money money">{eur(b.base_cents)}</span>
+              <small class="money">{eur(b.total_cents)} con IVA</small>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  ) : <p class="empty">Sin versiones todavía.</p>}
+</App>

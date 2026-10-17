@@ -1,0 +1,5 @@
+---
+// Estado con color: <Pill state={{ label: 'Pagado', tone: 'ok' }} />
+const { state } = Astro.props;
+---
+{state && <span class:list={['pill', `pill-${state.tone}`]}>{state.label}</span>}

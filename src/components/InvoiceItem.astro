@@ -1,0 +1,55 @@
+---
+// Una factura al cliente (en el expediente y en la bandeja de cobros).
+import Icon from './Icon.astro';
+import Pill from './Pill.astro';
+import { invoiceState } from '../lib/finance.js';
+import { eur } from '../lib/money.js';
+import { formatDate, dueText } from '../lib/dates.js';
+import { fileUrl } from '../lib/files.js';
+
+const { i, now, showExp = false, canIssue = false, canEdit = true, poNumbers = '' } = Astro.props;
+const state = invoiceState(i, now);
+const href = fileUrl(i);
+const edit = `/expedientes/${i.expediente_id}/facturas/${i.id}`;
+const pos = poNumbers || i.po_numbers;
+const title = i.number ? `Factura ${i.number}` : 'Factura por emitir';
+// Pie con botones sólo para Administración cuando hay que emitirla o cobrarla
+const actions = canEdit && canIssue && (i.status === 'por_emitir' || i.status === 'emitida');
+---
+<li class:list={['item is-row', { 'is-muted': i.status === 'anulada' }]}>
+  <div class="item-body">
+    {showExp && <a class="item-meta" href={`/expedientes/${i.expediente_id}/cobros`}><strong>{i.exp_number ? `EXP ${i.exp_number}` : 'Solicitud'}</strong> · {i.exp_name}</a>}
+    {canEdit
+      ? <a class="item-title" href={edit}>{title} <span class="muted">· {i.billed_to}</span></a>
+      : <span class="item-title">{title} <span class="muted">· {i.billed_to}</span></span>}
+    <span class="item-meta">
+      {i.concept && <span>{i.concept}</span>}
+      {pos && <span>PO {pos}</span>}
+      {i.issued_on && <span>Emitida el {formatDate(i.issued_on)}</span>}
+      {i.status === 'cobrada' && <span>Cobrada el {formatDate(i.collected_on)}</span>}
+      {i.status === 'emitida' && i.due_date && <span>Vence {formatDate(i.due_date)} · {dueText(i.due_date, now)}</span>}
+    </span>
+    <span class="item-flags">
+      <Pill state={state} />
+      {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{i.file_name}</a>}
+    </span>
+  </div>
+  <div class="item-amount">
+    <span class:list={['big-money money', { neg: i.total_cents < 0 }]}>{eur(i.total_cents)}</span>
+    <small class="money">{eur(i.base_cents)} sin IVA</small>
+  </div>
+  {actions && (
+    <div class="item-foot">
+      {i.status === 'emitida' && (
+        <form method="post" class="quick-form">
+          <input type="hidden" name="intent" value="collect" />
+          <input type="hidden" name="invoice_id" value={i.id} />
+          <label class="visually-hidden" for={`col-${i.id}`}>Fecha de cobro</label>
+          <input id={`col-${i.id}`} type="date" name="collected_on" value={now} required />
+          <button class="btn btn-sm" type="submit" data-busy="Guardando…"><Icon name="check" size={16} /> Cobrada</button>
+        </form>
+      )}
+      {i.status === 'por_emitir' && <a class="btn btn-primary btn-sm" href={edit}><Icon name="send" size={16} /> Emitir</a>}
+    </div>
+  )}
+</li>

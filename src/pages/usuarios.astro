@@ -1,0 +1,200 @@
+---
+import { env } from 'cloudflare:workers';
+import App from '../layouts/App.astro';
+import Icon from '../components/Icon.astro';
+import { deny, readForm, actor, logActivity } from '../lib/app.js';
+import { InviteSchema, ROLES, validate, formToObject } from '../lib/validate.js';
+import { generateInviteToken, hashInviteToken, deleteUserSessions, nowSeconds } from '../lib/auth.js';
+import { formatStamp } from '../lib/dates.js';
+
+const denied = deny(Astro, 'users');
+if (denied) return denied;
+
+const db = env.DB;
+const me = Astro.locals.user;
+const company = env.COMPANY_NAME || 'Seven Worlds';
+let error = null;
+let inviteLink = null;
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const id = Number(input.id);
+
+  if (input.intent === 'invite') {
+    const parsed = validate(InviteSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+    } else {
+      const token = generateInviteToken();
+      const now = nowSeconds();
+      await db.prepare(
+        'INSERT INTO invites (token_hash, role, note, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).bind(await hashInviteToken(token), parsed.data.role, parsed.data.note, me.id, now, now + parsed.data.days * 86400).run();
+      await logActivity(db, who, null, 'invite.create', `invitó a ${parsed.data.note ?? 'una persona'} (${ROLES[parsed.data.role]})`);
+      // El enlace sólo se muestra ahora: en la base de datos sólo queda su hash
+      inviteLink = `${Astro.url.origin}/registro#token=${token}`;
+    }
+  } else if (input.intent === 'revoke' && Number.isInteger(id)) {
+    await db.prepare('UPDATE invites SET revoked_at = ? WHERE id = ? AND used_at IS NULL').bind(nowSeconds(), id).run();
+    return Astro.redirect('/usuarios?ok=guardado', 303);
+  } else if (['toggle', 'role', 'delete'].includes(input.intent) && Number.isInteger(id)) {
+    const target = await db.prepare('SELECT id, name, role, active FROM users WHERE id = ?').bind(id).first();
+    const { n: activeAdmins } = await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1").first();
+    const isLastAdmin = target?.role === 'admin' && target?.active && activeAdmins <= 1;
+
+    if (!target) {
+      error = 'Ese usuario ya no existe.';
+    } else if (target.id === me.id) {
+      error = 'No puedes cambiar tu propia cuenta desde aquí. Usa «Mi cuenta».';
+    } else if (isLastAdmin && (input.intent !== 'role' || input.role !== 'admin')) {
+      error = 'Debe quedar al menos una cuenta de Administración activa.';
+    } else if (input.intent === 'toggle') {
+      await db.prepare('UPDATE users SET active = ? WHERE id = ?').bind(target.active ? 0 : 1, id).run();
+      if (target.active) await deleteUserSessions(db, id); // fuera de la aplicación al momento
+      return Astro.redirect('/usuarios?ok=guardado', 303);
+    } else if (input.intent === 'role' && input.role in ROLES) {
+      await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(input.role, id).run();
+      return Astro.redirect('/usuarios?ok=guardado', 303);
+    } else if (input.intent === 'delete') {
+      await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+      return Astro.redirect('/usuarios?ok=borrado', 303);
+    }
+  }
+  if (error) Astro.response.status = 400;
+}
+
+const now = nowSeconds();
+const [users, invites] = await db.batch([
+  db.prepare('SELECT id, name, email, role, active, last_login_at FROM users ORDER BY active DESC, role, name'),
+  db.prepare('SELECT id, role, note, expires_at FROM invites WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > ? ORDER BY id DESC').bind(now),
+]);
+const when = (secs) => formatStamp(new Date(secs * 1000).toISOString());
+const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión de eventos de ${company}. Crea tu cuenta aquí:\n\n${inviteLink}\n\nEl enlace sólo sirve para una cuenta.` : '';
+---
+<App title="Usuarios" section="usuarios" error={error}>
+  <div class="page-top">
+    <div>
+      <h1>Usuarios</h1>
+      <p>Quién puede entrar en la aplicación</p>
+    </div>
+  </div>
+
+  {inviteLink && (
+    <div class="invite-link" role="status">
+      <strong><Icon name="check" size={18} /> Invitación creada</strong>
+      <p class="small">Envía este enlace a la persona invitada. <strong>Sólo se muestra ahora</strong> y sirve para crear una única cuenta.</p>
+      <input type="text" readonly value={inviteLink} data-invite-url aria-label="Enlace de invitación" />
+      <div class="btns">
+        <button type="button" class="btn btn-ghost btn-sm" data-copy><Icon name="copy" size={16} /> Copiar</button>
+        <a class="btn btn-primary btn-sm" href={`mailto:?subject=${encodeURIComponent(`Invitación · ${company}`)}&body=${encodeURIComponent(mailBody)}`}><Icon name="mail" size={16} /> Enviar por email</a>
+      </div>
+    </div>
+  )}
+
+  <form method="post" class="form-section">
+    <h2><Icon name="user-plus" /> Invitar a una persona</h2>
+    <div class="row row-3">
+      <div class="field">
+        <label for="role">Tipo de cuenta</label>
+        <select id="role" name="role">
+          <option value="eventos">Gestión de eventos</option>
+          <option value="admin">Administración</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="note">¿Para quién? <span class="opt">(opcional)</span></label>
+        <input id="note" name="note" type="text" maxlength="100" placeholder="Tania" />
+      </div>
+      <div class="field">
+        <label for="days">El enlace caduca en</label>
+        <select id="days" name="days">
+          <option value="2">2 días</option>
+          <option value="7" selected>7 días</option>
+          <option value="30">30 días</option>
+        </select>
+      </div>
+    </div>
+    <details class="help">
+      <summary>¿Qué puede hacer cada tipo de cuenta?</summary>
+      <ul>
+        <li><strong>Gestión de eventos</strong>: pedir expedientes, subir presupuestos, facturas de proveedores y PO, registrar pagos y pedir facturas al cliente.</li>
+        <li><strong>Administración</strong>: además, abre y cierra expedientes (les da número), emite y cobra las facturas al cliente y gestiona los usuarios.</li>
+      </ul>
+    </details>
+    <div><button class="btn btn-primary" type="submit" name="intent" value="invite"><Icon name="send" size={18} /> Crear enlace de invitación</button></div>
+  </form>
+
+  <h2 class="section-title">Personas ({users.results.length})</h2>
+  <ul class="list">
+    {users.results.map((u) => (
+      <li class:list={['item is-row', { 'is-muted': !u.active }]}>
+        <div class="item-body">
+          <span class="item-title">{u.name}{u.id === me.id && <span class="muted"> (tú)</span>}</span>
+          <span class="item-meta"><span>{u.email}</span><span>{u.last_login_at ? `Último acceso ${formatStamp(u.last_login_at)}` : 'Nunca ha entrado'}</span></span>
+          <span class="item-flags">
+            <span class:list={['pill', u.role === 'admin' ? 'pill-accent' : 'pill-muted']}>{ROLES[u.role]}</span>
+            {!u.active && <span class="pill pill-danger">Desactivada</span>}
+          </span>
+        </div>
+        {u.id !== me.id && (
+          <div class="item-foot">
+            <form method="post" class="quick-form">
+              <input type="hidden" name="id" value={u.id} />
+              <input type="hidden" name="intent" value="role" />
+              <label class="visually-hidden" for={`role-${u.id}`}>Tipo de cuenta</label>
+              <select id={`role-${u.id}`} name="role">
+                {Object.entries(ROLES).map(([k, v]) => <option value={k} selected={u.role === k}>{v}</option>)}
+              </select>
+              <button class="btn btn-ghost btn-sm" type="submit">Cambiar</button>
+            </form>
+            <form method="post">
+              <input type="hidden" name="id" value={u.id} />
+              <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="toggle">{u.active ? <><Icon name="ban" size={16} /> Desactivar</> : <><Icon name="check" size={16} /> Activar</>}</button>
+            </form>
+            <form method="post">
+              <input type="hidden" name="id" value={u.id} />
+              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar la cuenta de ${u.name}? Lo que hizo se mantiene en los expedientes.`}><Icon name="trash-2" size={16} /></button>
+            </form>
+          </div>
+        )}
+      </li>
+    ))}
+  </ul>
+
+  {invites.results.length > 0 && (
+    <>
+      <h2 class="section-title">Invitaciones sin usar</h2>
+      <ul class="list">
+        {invites.results.map((inv) => (
+          <li class="item">
+            <div class="item-body">
+              <span class="item-title">{inv.note ?? 'Invitación'}</span>
+              <span class="item-meta"><span>{ROLES[inv.role]}</span><span>Caduca {when(inv.expires_at)}</span></span>
+            </div>
+            <form method="post">
+              <input type="hidden" name="id" value={inv.id} />
+              <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="revoke">Anular</button>
+            </form>
+          </li>
+        ))}
+      </ul>
+    </>
+  )}
+</App>
+
+<script>
+  document.querySelector('[data-copy]')?.addEventListener('click', async (e) => {
+    const input = document.querySelector('[data-invite-url]');
+    if (!(input instanceof HTMLInputElement)) return;
+    try {
+      await navigator.clipboard.writeText(input.value);
+    } catch {
+      input.select();
+      document.execCommand('copy');
+    }
+    const btn = e.currentTarget;
+    if (btn instanceof HTMLElement) btn.textContent = '¡Copiado!';
+  });
+</script>

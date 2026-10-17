@@ -1,0 +1,35 @@
+---
+// Campos de una orden de compra (PO) del cliente
+import FileField from './FileField.astro';
+import { amountInput } from '../lib/money.js';
+
+const { v = {}, errors = {}, companies = [], current = null, id = 'po' } = Astro.props;
+const amount = typeof v.amount === 'string' ? v.amount : amountInput(v.amount_cents ?? null);
+---
+<div class="row row-2">
+  <div class:list={['field', { 'has-error': errors.number }]}>
+    <label for={`${id}-number`}>Nº de PO</label>
+    <input id={`${id}-number`} name="number" type="text" required maxlength="60" value={v.number ?? ''} placeholder="4500123456" autocomplete="off" />
+  </div>
+  <div class:list={['field', { 'has-error': errors.billed_to }]}>
+    <label for={`${id}-billed_to`}>Cliente que paga</label>
+    <input id={`${id}-billed_to`} name="billed_to" type="text" required maxlength="120" list={`${id}-companies`} value={v.billed_to ?? ''} autocomplete="off" />
+    <datalist id={`${id}-companies`}>{companies.map((c) => <option value={c} />)}</datalist>
+    <p class="hint">La empresa o la sede/concesionario a la que se factura.</p>
+  </div>
+</div>
+<div class="row row-2">
+  <div class:list={['field', { 'has-error': errors.amount }]}>
+    <label for={`${id}-amount`}>Importe sin IVA</label>
+    <input id={`${id}-amount`} name="amount" type="text" inputmode="decimal" required value={amount} placeholder="13.922,20" autocomplete="off" />
+  </div>
+  <div class:list={['field', { 'has-error': errors.issued_on }]}>
+    <label for={`${id}-issued_on`}>Fecha de la PO <span class="opt">(opcional)</span></label>
+    <input id={`${id}-issued_on`} name="issued_on" type="date" value={v.issued_on ?? ''} />
+  </div>
+</div>
+<FileField id={`${id}-file`} label="PO (PDF o el correo del cliente)" current={current} />
+<div class:list={['field', { 'has-error': errors.notes }]}>
+  <label for={`${id}-notes`}>Notas <span class="opt">(opcional)</span></label>
+  <input id={`${id}-notes`} name="notes" type="text" maxlength="1000" value={v.notes ?? ''} placeholder="Para qué es: hotel, audiovisuales…" />
+</div>

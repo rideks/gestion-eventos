@@ -1,0 +1,121 @@
+---
+// Pagos a proveedores del expediente (lado izquierdo del cierre).
+// Las previsiones de la solicitud ya están aquí: al llegar la factura se le añade y se marca pagada.
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import ExpHeader from '../../../components/ExpHeader.astro';
+import PaymentForm from '../../../components/PaymentForm.astro';
+import PaymentItem from '../../../components/PaymentItem.astro';
+import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
+import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
+import { PaymentSchema, validate, formToObject } from '../../../lib/validate.js';
+import { storeFile, getFile, UploadError } from '../../../lib/files.js';
+import { eur } from '../../../lib/money.js';
+import { plural } from '../../../lib/finance.js';
+import { today } from '../../../lib/dates.js';
+import { isLocked, LOCKED_MSG, markPaid } from '../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const exp = id ? await getExpediente(db, id) : null;
+if (!exp) return Astro.rewrite('/404');
+
+const me = Astro.locals.user;
+const now = today();
+const locked = isLocked(exp);
+let error = null;
+let errors = {};
+let v = {};
+let openAdd = Astro.url.searchParams.has('nuevo');
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+
+  if (locked) {
+    error = LOCKED_MSG;
+  } else if (input.intent === 'pay') {
+    const r = await markPaid(db, who, input, id);
+    if (r.ok) return Astro.redirect(`/expedientes/${id}/pagos?ok=pagado`, 303);
+    error = r.message;
+  } else if (input.intent === 'add') {
+    v = input;
+    openAdd = true;
+    const parsed = validate(PaymentSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else {
+      const d = parsed.data;
+      try {
+        const file = getFile(form, 'file');
+        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
+        await db.batch([
+          db.prepare(
+            `INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, due_date,
+                                   status, paid_on, method, planned, file_id, notes, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+          ).bind(id, d.supplier, d.concept, d.invoice_number, d.invoice_date, d.base, d.total, d.vat, d.due_date,
+            d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, fileId, d.notes, me.id),
+          activityStmt(db, who, id, 'payment.add', d.invoice_number
+            ? `añadió la factura ${d.invoice_number} de ${d.supplier} (${eur(d.total)})`
+            : `añadió un pago a ${d.supplier} (${eur(d.total)})`),
+        ]);
+        return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
+      } catch (err) {
+        if (!(err instanceof UploadError)) throw err;
+        error = err.message;
+      }
+    }
+  }
+  Astro.response.status = 400;
+}
+
+const [fin, { suppliers }] = await Promise.all([loadFinance(db, id, now), suggestions(db)]);
+const s = fin.summary;
+const pending = fin.payments.filter((p) => p.status !== 'pagado');
+const paid = fin.payments.filter((p) => p.status === 'pagado');
+---
+<App title={`Pagos · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
+  <ExpHeader exp={exp} tab="pagos" fin={fin} />
+
+  <div class="kpis">
+    <div class="kpi"><span>Coste sin IVA</span><b class="money">{eur(s.cost.base)}</b><small class="money">{eur(s.cost.total)} con IVA</small></div>
+    <div class="kpi is-ok"><span>Pagado</span><b class="money">{eur(s.paid)}</b><small>{plural(paid.length, 'pago', 'pagos')}</small></div>
+    <div class:list={['kpi', { 'is-danger': s.overdue.length > 0 }]}><span>Por pagar</span><b class="money">{eur(s.toPay)}</b><small>{s.overdue.length ? plural(s.overdue.length, 'vencido', 'vencidos') : plural(pending.length, 'pendiente', 'pendientes')}</small></div>
+    <div class="kpi"><span>Sin factura</span><b>{s.withoutInvoice.length}</b><small>{s.paidWithoutInvoice.length ? plural(s.paidWithoutInvoice.length, 'ya pagado', 'ya pagados') : 'líneas previstas'}</small></div>
+  </div>
+
+  {!locked && (
+    <details class="add" open={openAdd}>
+      <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Añadir factura o pago</span><span class="when-open">Cerrar formulario</span></summary>
+      <form method="post" enctype="multipart/form-data" class="form-section">
+        <h2><Icon name="receipt" /> Factura o pago a proveedor</h2>
+        <p class="muted">Una factura que ha llegado (aunque no estuviera prevista), un pago con tarjeta o un abono/comisión (en negativo).
+          Si es la factura de un pago ya previsto, mejor ábrelo en la lista y añádesela allí.</p>
+        <PaymentForm v={v} errors={errors} suppliers={suppliers} id="new" />
+        <div class="actions-inline">
+          <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…">Guardar</button>
+        </div>
+      </form>
+    </details>
+  )}
+
+  <div class:list={['group-title', { 'is-danger': s.overdue.length > 0 }]}>
+    <h3>Por pagar ({pending.length})</h3>
+    <span class="money">{eur(s.toPay)}</span>
+  </div>
+  {pending.length ? (
+    <ul class="list">{pending.map((p) => <PaymentItem p={p} now={now} canEdit={!locked} />)}</ul>
+  ) : <p class="empty">No hay nada pendiente de pagar.</p>}
+
+  <div class="group-title">
+    <h3>Pagados ({paid.length})</h3>
+    <span class="money">{eur(s.paid)}</span>
+  </div>
+  {paid.length ? (
+    <ul class="list">{paid.map((p) => <PaymentItem p={p} now={now} canEdit={!locked} />)}</ul>
+  ) : <p class="empty">Aún no se ha pagado nada.</p>}
+</App>

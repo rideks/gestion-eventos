@@ -1,0 +1,193 @@
+---
+// Una factura al cliente. Por emitir → Administración le pone nº, fecha y PDF (emitir) → cobrada.
+import { env } from 'cloudflare:workers';
+import App from '../../../../layouts/App.astro';
+import Icon from '../../../../components/Icon.astro';
+import ExpHeader from '../../../../components/ExpHeader.astro';
+import InvoiceForm from '../../../../components/InvoiceForm.astro';
+import Pill from '../../../../components/Pill.astro';
+import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
+import { getExpediente, loadFinance, suggestions } from '../../../../lib/data.js';
+import { InvoiceSchema, IssueSchema, parseAllocations, validate, formToObject } from '../../../../lib/validate.js';
+import { storeFile, getFile, deleteFiles, fileUrl, UploadError } from '../../../../lib/files.js';
+import { invoiceState } from '../../../../lib/finance.js';
+import { eur, amountInput } from '../../../../lib/money.js';
+import { today, nowIso, formatDate, formatStamp } from '../../../../lib/dates.js';
+import { isLocked, LOCKED_MSG, markCollected } from '../../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const fid = parseId(Astro.params.fid);
+const exp = id ? await getExpediente(db, id) : null;
+const inv = exp && fid ? await db.prepare(
+  `SELECT i.*, f.name AS file_name, u.name AS created_by_name FROM invoices i
+     LEFT JOIN files f ON f.id = i.file_id LEFT JOIN users u ON u.id = i.created_by
+    WHERE i.id = ? AND i.expediente_id = ?`,
+).bind(fid, id).first() : null;
+if (!inv) return Astro.rewrite('/404');
+
+const me = Astro.locals.user;
+const admin = can(me, 'invoice.issue');
+const now = today();
+const locked = isLocked(exp);
+const fin = await loadFinance(db, id, now);
+const allocated = new Map(fin.allocations.filter((a) => a.invoice_id === fid).map((a) => [a.po_id, a.amount_cents]));
+// Quién puede tocar qué: la pedida la puede corregir cualquiera; la emitida, sólo Administración
+const editable = !locked && (inv.status === 'por_emitir' || (admin && inv.status !== 'anulada'));
+const canDelete = !locked && ((inv.status === 'por_emitir' && (admin || inv.created_by === me.id)) || (admin && inv.status === 'anulada'));
+const back = `/expedientes/${id}/cobros`;
+let error = null;
+let errors = {};
+let v = { ...inv };
+let checked = null;
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const label = inv.number ? `la factura ${inv.number}` : `la factura pedida a ${inv.billed_to}`;
+
+  if (locked) {
+    error = LOCKED_MSG;
+  } else if (input.intent === 'collect') {
+    const r = await markCollected(db, who, input, id);
+    if (r.ok) return Astro.redirect(`${back}?ok=cobrada`, 303);
+    error = r.message;
+  } else if (input.intent === 'uncollect' && admin && inv.status === 'cobrada') {
+    await db.batch([
+      db.prepare("UPDATE invoices SET status = 'emitida', collected_on = NULL, updated_at = ? WHERE id = ?").bind(nowIso(), fid),
+      activityStmt(db, who, id, 'invoice.uncollect', `deshizo el cobro de ${label}`),
+    ]);
+    return Astro.redirect(`/expedientes/${id}/facturas/${fid}?ok=guardado`, 303);
+  } else if (input.intent === 'void' && admin && ['emitida', 'cobrada'].includes(inv.status)) {
+    await db.batch([
+      db.prepare("UPDATE invoices SET status = 'anulada', updated_at = ? WHERE id = ?").bind(nowIso(), fid),
+      activityStmt(db, who, id, 'invoice.void', `anuló ${label} (${eur(inv.total_cents)}). Sus PO vuelven a quedar sin facturar.`),
+    ]);
+    return Astro.redirect(`${back}?ok=guardado`, 303);
+  } else if (input.intent === 'delete' && canDelete) {
+    await db.batch([
+      db.prepare('DELETE FROM invoices WHERE id = ?').bind(fid),
+      activityStmt(db, who, id, 'invoice.delete', `borró ${label} (${eur(inv.total_cents)})`),
+    ]);
+    await deleteFiles(db, env.DOCS, [inv.file_id]);
+    return Astro.redirect(`${back}?ok=borrado`, 303);
+  } else if ((input.intent === 'save' || input.intent === 'issue') && editable) {
+    v = { ...inv, ...input };
+    checked = form.getAll('po_ids').map(Number);
+    const alloc = parseAllocations(form, fin.summary.poRows, allocated);
+    if (alloc.ok && alloc.rows.length && !String(input.base ?? '').trim() && !String(input.total ?? '').trim()) {
+      input.base = amountInput(alloc.rows.reduce((a, r) => a + r.amount, 0));
+    }
+    // Al ponerle número, Administración la da por emitida
+    const issuing = admin && inv.status === 'por_emitir' && (input.intent === 'issue' || String(input.number ?? '').trim() !== '');
+    if (issuing && !input.issued_on) input.issued_on = now;
+    const parsed = validate(InvoiceSchema, input);
+    const issue = issuing ? validate(IssueSchema, input) : { ok: true };
+    if (!alloc.ok) {
+      error = alloc.message;
+    } else if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (!issue.ok) {
+      error = `Para emitirla: ${issue.message}`;
+      errors = issue.errors;
+    } else if (admin && inv.status !== 'por_emitir' && !parsed.data.number) {
+      error = 'Una factura emitida tiene que tener su número.';
+      errors = { number: error };
+    } else {
+      const d = parsed.data;
+      try {
+        const file = admin ? getFile(form, 'file') : null;
+        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : inv.file_id;
+        // Los datos de emisión sólo los cambia Administración
+        const number = admin ? d.number : inv.number;
+        const status = issuing ? 'emitida' : inv.status;
+        await db.batch([
+          db.prepare(
+            `UPDATE invoices SET billed_to = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, number = ?, issued_on = ?, due_date = ?,
+                    status = ?, file_id = ?, notes = ?, updated_at = ? WHERE id = ?`,
+          ).bind(d.billed_to, d.concept, d.base, d.total, d.vat, number, admin ? d.issued_on : inv.issued_on, admin ? d.due_date : inv.due_date,
+            status, fileId, d.notes, nowIso(), fid),
+          db.prepare('DELETE FROM invoice_pos WHERE invoice_id = ?').bind(fid),
+          ...alloc.rows.map((r) => db.prepare('INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (?, ?, ?)').bind(fid, r.po_id, r.amount)),
+          activityStmt(db, who, id, issuing ? 'invoice.issue' : 'invoice.update', issuing
+            ? `emitió la factura ${number} a ${d.billed_to} (${eur(d.total)})`
+            : `editó ${number ? `la factura ${number}` : `la factura pedida a ${d.billed_to}`} (${eur(d.total)})`),
+        ]);
+        if (file && inv.file_id) await deleteFiles(db, env.DOCS, [inv.file_id]);
+        return Astro.redirect(`${back}?ok=${issuing ? 'emitida' : 'guardado'}`, 303);
+      } catch (err) {
+        if (!(err instanceof UploadError)) throw err;
+        error = err.message;
+      }
+    }
+  } else {
+    error = inv.status === 'por_emitir' ? 'Esa acción no está permitida.' : 'Una factura emitida sólo la puede cambiar Administración.';
+  }
+  Astro.response.status = 400;
+}
+
+const { companies } = await suggestions(db);
+const state = invoiceState(inv, now);
+const poList = fin.allocations.filter((a) => a.invoice_id === fid);
+---
+<App title={inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} section="expedientes" error={error}>
+  <ExpHeader exp={exp} tab="cobros" />
+  <a class="back" href={back}><Icon name="arrow-left" size={18} /> Cobros del expediente</a>
+
+  <section class="card">
+    <div class="sec-head">
+      <h2><Icon name="receipt" /> {inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} <Pill state={state} /></h2>
+      <span class="big-money money">{eur(inv.total_cents)}</span>
+    </div>
+    <dl class="kv">
+      <dt>Cliente</dt><dd>{inv.billed_to}</dd>
+      <dt>Sin IVA</dt><dd class="money">{eur(inv.base_cents)}</dd>
+      {poList.length > 0 && <><dt>PO</dt><dd>{poList.map((a) => `${a.po_number} (${eur(a.amount_cents)})`).join(' · ')}</dd></>}
+      <dt>Pedida</dt><dd>{inv.created_by_name ?? '—'} · {formatStamp(inv.created_at)}</dd>
+      {inv.issued_on && <><dt>Emitida</dt><dd>{formatDate(inv.issued_on)}{inv.due_date && ` · vence ${formatDate(inv.due_date)}`}</dd></>}
+      {inv.collected_on && <><dt>Cobrada</dt><dd>{formatDate(inv.collected_on)}</dd></>}
+      {inv.file_id && <><dt>PDF</dt><dd><a href={fileUrl(inv)} target="_blank" rel="noopener">{inv.file_name}</a></dd></>}
+      {inv.notes && <><dt>Notas</dt><dd class="msg-body">{inv.notes}</dd></>}
+    </dl>
+
+    {admin && !locked && (
+      <div class="actions-inline mt no-print">
+        {inv.status === 'emitida' && (
+          <form method="post" class="quick-form">
+            <input type="hidden" name="invoice_id" value={inv.id} />
+            <label class="visually-hidden" for="collected_on">Fecha de cobro</label>
+            <input id="collected_on" type="date" name="collected_on" value={now} required />
+            <button class="btn btn-sm" type="submit" name="intent" value="collect"><Icon name="check" size={16} /> Marcar cobrada</button>
+          </form>
+        )}
+        {inv.status === 'cobrada' && (
+          <form method="post"><button class="btn btn-ghost btn-sm" type="submit" name="intent" value="uncollect"><Icon name="rotate-ccw" size={16} /> Deshacer cobro</button></form>
+        )}
+        {['emitida', 'cobrada'].includes(inv.status) && (
+          <form method="post"><button class="btn btn-danger btn-sm" type="submit" name="intent" value="void" data-confirm="¿Anular esta factura? Deja de contar y sus PO vuelven a quedar sin facturar (luego haz la rectificativa o la nueva).">Anular</button></form>
+        )}
+      </div>
+    )}
+  </section>
+
+  {editable && (
+    <form method="post" enctype="multipart/form-data" class="form-section mt">
+      <h2><Icon name="pencil" /> {inv.status === 'por_emitir' && admin ? 'Revisar y emitir' : 'Editar'}</h2>
+      {inv.status === 'por_emitir' && admin && <p class="muted">Haz la factura en el programa de contabilidad y anota aquí su número, la fecha y el PDF.</p>}
+      <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} current={inv.file_id ? inv : null}
+        allocated={allocated} checked={checked} id="edit" />
+      <div class="actions-inline">
+        {inv.status === 'por_emitir' && admin && (
+          <button class="btn btn-primary" type="submit" name="intent" value="issue" data-busy="Emitiendo…"><Icon name="send" size={18} /> Guardar como emitida</button>
+        )}
+        <button class:list={['btn', inv.status === 'por_emitir' && admin ? 'btn-ghost' : 'btn-primary']} type="submit" name="intent" value="save" data-busy="Guardando…">Guardar</button>
+        {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm="¿Borrar esta factura?"><Icon name="trash-2" size={16} /> Borrar</button>}
+      </div>
+    </form>
+  )}
+  {!editable && canDelete && (
+    <form method="post" class="mt"><button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm="¿Borrar esta factura anulada?"><Icon name="trash-2" size={16} /> Borrar</button></form>
+  )}
+</App>

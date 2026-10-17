@@ -1,0 +1,121 @@
+---
+// Campos de una factura al cliente: a quién, qué PO cubre (y cuánto de cada una) e importes.
+// Administración ve además el nº de factura, las fechas y el PDF emitido.
+import AmountFields from './AmountFields.astro';
+import FileField from './FileField.astro';
+import { eur, amountInput } from '../lib/money.js';
+
+const {
+  v = {}, errors = {}, companies = [], poRows = [], current = null, id = 'inv', admin = false,
+  allocated = new Map(), // po_id → importe que esta factura ya tiene de esa PO (al editar)
+  checked = null,        // po_id marcados tras un error
+} = Astro.props;
+// PO que se pueden usar: las que tienen saldo y las que ya usa esta factura
+const usable = poRows.filter((po) => po.left_cents > 0 || allocated.has(po.id));
+const isChecked = (po) => (checked ? checked.includes(po.id) : allocated.has(po.id));
+const amountFor = (po) => {
+  const typed = v[`po_amount_${po.id}`];
+  if (typeof typed === 'string') return typed;
+  return amountInput(allocated.get(po.id) ?? po.left_cents);
+};
+---
+<div class="row row-2">
+  <div class:list={['field', { 'has-error': errors.billed_to }]}>
+    <label for={`${id}-billed_to`}>Cliente al que se factura</label>
+    <input id={`${id}-billed_to`} name="billed_to" type="text" required maxlength="120" list={`${id}-companies`} value={v.billed_to ?? ''} autocomplete="off" />
+    <datalist id={`${id}-companies`}>{companies.map((c) => <option value={c} />)}</datalist>
+  </div>
+  <div class:list={['field', { 'has-error': errors.concept }]}>
+    <label for={`${id}-concept`}>Concepto <span class="opt">(opcional)</span></label>
+    <input id={`${id}-concept`} name="concept" type="text" maxlength="200" value={v.concept ?? ''} placeholder="Workshop BMW · alojamiento y sala" />
+  </div>
+</div>
+
+<fieldset class="field" data-po-alloc>
+  <legend class="label">PO que cubre esta factura</legend>
+  {usable.length ? (
+    <div class="rows-scroll">
+      <table class="rows-table">
+        <thead><tr><th scope="col" class="narrow"></th><th scope="col">PO</th><th scope="col">Sin facturar</th><th scope="col">Se factura</th></tr></thead>
+        <tbody>
+          {usable.map((po) => (
+            <tr>
+              <td><input type="checkbox" name="po_ids" value={po.id} checked={isChecked(po)} aria-label={`Usar la PO ${po.number}`} data-po-check /></td>
+              <td><strong>{po.number}</strong><br /><span class="muted small">{po.billed_to}</span></td>
+              <td class="money">{eur(po.left_cents + (allocated.get(po.id) ?? 0))}</td>
+              <td class="amount"><input type="text" inputmode="decimal" name={`po_amount_${po.id}`} value={amountFor(po)} aria-label={`Importe de la PO ${po.number}`} data-po-amount autocomplete="off" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <p class="muted small">No hay PO con saldo. Si el cliente trabaja con PO, súbelas primero en «Órdenes de compra»; si no, deja esto así.</p>
+  )}
+  <p class="hint">Al marcar las PO, el importe sin IVA de la factura se rellena con la suma.</p>
+</fieldset>
+
+<AmountFields id={id} base={v.base ?? v.base_cents ?? null} total={v.total ?? v.total_cents ?? null} vat={v.vat ?? '21'} errors={errors}
+  hint="Si se queda vacío, se usa la suma de las PO marcadas. Con varios tipos de IVA, escribe los dos importes." />
+
+{admin && (
+  <>
+    <div class="row row-3">
+      <div class:list={['field', { 'has-error': errors.number }]}>
+        <label for={`${id}-number`}>Nº de factura <span class="opt">(al emitirla)</span></label>
+        <input id={`${id}-number`} name="number" type="text" maxlength="60" value={v.number ?? ''} placeholder="G/000808/26/01" autocomplete="off" />
+      </div>
+      <div class:list={['field', { 'has-error': errors.issued_on }]}>
+        <label for={`${id}-issued_on`}>Fecha de emisión</label>
+        <input id={`${id}-issued_on`} name="issued_on" type="date" value={v.issued_on ?? ''} />
+      </div>
+      <div class:list={['field', { 'has-error': errors.due_date }]}>
+        <label for={`${id}-due_date`}>Vencimiento</label>
+        <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
+      </div>
+    </div>
+    <FileField id={`${id}-file`} label="Factura emitida (PDF)" current={current} />
+  </>
+)}
+<div class:list={['field', { 'has-error': errors.notes }]}>
+  <label for={`${id}-notes`}>Notas para Administración <span class="opt">(opcional)</span></label>
+  <input id={`${id}-notes`} name="notes" type="text" maxlength="1000" value={v.notes ?? ''} placeholder="Ej.: enviar a cuentas a pagar con copia a Ana" />
+</div>
+
+<script>
+  import { parseAmount, amountInput } from '../lib/money.js';
+
+  document.querySelectorAll('[data-po-alloc]').forEach((box) => {
+    const form = box.closest('form');
+    const base = form?.querySelector('[data-base]');
+    if (!(base instanceof HTMLInputElement)) return;
+    let lastAuto = '';
+    const update = () => {
+      let cents = 0;
+      let any = false;
+      box.querySelectorAll('tbody tr').forEach((row) => {
+        const check = row.querySelector('[data-po-check]');
+        const amount = row.querySelector('[data-po-amount]');
+        if (!(check instanceof HTMLInputElement) || !(amount instanceof HTMLInputElement) || !check.checked) return;
+        const v = parseAmount(amount.value);
+        if (v !== null && !Number.isNaN(v)) {
+          cents += v;
+          any = true;
+        }
+      });
+      // Sólo se toca el importe si está vacío o lo habíamos puesto nosotros
+      if (base.value.trim() !== '' && base.value !== lastAuto) return;
+      lastAuto = any ? amountInput(cents) : '';
+      base.value = lastAuto;
+      base.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    box.addEventListener('change', update);
+    box.addEventListener('input', (e) => {
+      if (e.target instanceof HTMLElement && e.target.matches('[data-po-amount]')) {
+        const check = e.target.closest('tr')?.querySelector('[data-po-check]');
+        if (check instanceof HTMLInputElement) check.checked = true;
+        update();
+      }
+    });
+  });
+</script>

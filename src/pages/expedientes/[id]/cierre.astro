@@ -1,0 +1,131 @@
+---
+// Cierre del expediente: las dos tablas del Excel de cierre (proveedores | cliente), el beneficio
+// y las comprobaciones. Se calcula solo con lo que se ha ido subiendo; se exporta a Excel o se imprime.
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import ExpHeader from '../../../components/ExpHeader.astro';
+import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
+import { getExpediente, loadFinance } from '../../../lib/data.js';
+import { closingChecks } from '../../../lib/finance.js';
+import { eur, num, pct } from '../../../lib/money.js';
+import { today, nowIso, formatRange } from '../../../lib/dates.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const exp = id ? await getExpediente(db, id) : null;
+if (!exp) return Astro.rewrite('/404');
+
+const me = Astro.locals.user;
+const now = today();
+const fin = await loadFinance(db, id, now);
+const s = fin.summary;
+const checks = closingChecks(s);
+const allOk = checks.every((c) => c.ok);
+let error = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const intent = form?.get('intent');
+  if (intent === 'close' && can(me, 'expediente.close') && exp.status === 'abierto') {
+    const at = nowIso();
+    const pending = checks.filter((c) => !c.ok).map((c) => c.text.toLowerCase());
+    await db.batch([
+      db.prepare("UPDATE expedientes SET status = 'cerrado', closed_by = ?, closed_at = ?, updated_at = ? WHERE id = ?").bind(me.id, at, at, id),
+      activityStmt(db, actor(Astro), id, 'expediente.close',
+        `cerró el expediente: ventas ${eur(s.closingSales.base)}, costes ${eur(s.cost.base)}, beneficio ${eur(s.closingSales.base - s.cost.base)}`
+        + (pending.length ? ` (con avisos: ${pending.join('; ')})` : '')),
+    ]);
+    return Astro.redirect(`/expedientes/${id}?ok=cerrado`, 303);
+  }
+  error = 'Sólo Administración puede cerrar un expediente abierto.';
+  Astro.response.status = 400;
+}
+
+// Como en el Excel: en el orden en que se fueron apuntando
+const costs = [...fin.payments].sort((a, b) => a.id - b.id);
+const sales = fin.invoices.filter((i) => i.status !== 'anulada').sort((a, b) => a.id - b.id);
+const salesBase = s.closingSales.base;
+const salesTotal = s.closingSales.total;
+const profit = salesBase - s.cost.base;
+const profitTotal = salesTotal - s.cost.total;
+const fromBudget = sales.length === 0;
+---
+<App title={`Cierre · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} wide>
+  <ExpHeader exp={exp} tab="cierre" fin={fin} />
+
+  <div class="actions-inline no-print">
+    <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cierre.csv`}><Icon name="download" size={16} /> Descargar Excel (CSV)</a>
+    <button class="btn btn-ghost btn-sm" type="button" data-print><Icon name="printer" size={16} /> Imprimir / PDF</button>
+  </div>
+
+  <p class="muted mt"><strong>{exp.number ? `EXP ${exp.number}` : 'Solicitud'} · {exp.name}</strong> · {exp.company} · {formatRange(exp.start_date, exp.end_date)}</p>
+
+  <div class="result-box">
+    <div class="kpi"><span>Total neto grupo (costes)</span><b class="money">{eur(s.cost.base)}</b><small class="money">{eur(s.cost.total)} con IVA</small></div>
+    <div class="kpi"><span>Total grupo (ventas)</span><b class="money">{eur(salesBase)}</b><small class="money">{fromBudget ? 'según presupuesto (aún sin facturas)' : `${eur(salesTotal)} con IVA`}</small></div>
+    <div class:list={['kpi is-gold', { 'is-danger': profit < 0 }]}><span>Beneficio</span><b class="money">{eur(profit)}</b><small class="money">{eur(profitTotal)} con IVA</small></div>
+    <div class="kpi is-gold"><span>Beneficio % ventas</span><b>{pct(profit, salesBase)}</b><small>{pct(profitTotal, salesTotal)} con IVA</small></div>
+  </div>
+
+  <div class="close-grid">
+    <div class="table-scroll">
+      <table class="dtable">
+        <caption>Proveedores</caption>
+        <thead><tr><th scope="col">Nº fact.</th><th scope="col">Proveedor</th><th scope="col" class="num">Neto sin IVA</th><th scope="col" class="num">Neto con IVA</th></tr></thead>
+        <tbody>
+          {costs.map((p) => (
+            <tr class:list={{ 'is-planned': !p.invoice_number }}>
+              <td>{p.invoice_number ?? 'pendiente'}</td>
+              <td>{p.supplier}{p.concept && ` · ${p.concept}`}</td>
+              <td class:list={['num', { neg: p.base_cents < 0 }]}>{num(p.base_cents)} €</td>
+              <td class:list={['num', { neg: p.total_cents < 0 }]}>{num(p.total_cents)} €</td>
+            </tr>
+          ))}
+          {!fin.payments.length && <tr><td colspan="4" class="muted">Sin costes</td></tr>}
+        </tbody>
+        <tfoot><tr><td colspan="2">Total neto grupo</td><td class="num">{num(s.cost.base)} €</td><td class="num">{num(s.cost.total)} €</td></tr></tfoot>
+      </table>
+    </div>
+
+    <div class="table-scroll">
+      <table class="dtable">
+        <caption>Cliente</caption>
+        <thead><tr><th scope="col">Cliente</th><th scope="col">Nº factura</th><th scope="col" class="num">Importe sin IVA</th><th scope="col" class="num">Importe con IVA</th></tr></thead>
+        <tbody>
+          {sales.map((i) => (
+            <tr class:list={{ 'is-planned': i.status === 'por_emitir' }}>
+              <td>{i.billed_to}</td>
+              <td>{i.number ?? 'por emitir'}</td>
+              <td class="num">{num(i.base_cents)} €</td>
+              <td class="num">{num(i.total_cents)} €</td>
+            </tr>
+          ))}
+          {fromBudget && <tr class="is-planned"><td>{exp.company}</td><td>presupuesto v{fin.budget?.version ?? '—'}</td><td class="num">{num(s.sale.base)} €</td><td class="num">{num(s.sale.total)} €</td></tr>}
+        </tbody>
+        <tfoot><tr><td colspan="2">Total grupo</td><td class="num">{num(salesBase)} €</td><td class="num">{num(salesTotal)} €</td></tr></tfoot>
+      </table>
+    </div>
+  </div>
+  <p class="muted small mt">En cursiva: líneas sin factura todavía (costes previstos o facturas por emitir). Las facturas anuladas no cuentan.</p>
+
+  <section class="card mt no-print">
+    <h2>Antes de cerrar</h2>
+    <ul class="checks">
+      {checks.map((c) => <li class={c.ok ? 'is-ok' : 'is-ko'}><Icon name={c.ok ? 'circle-check' : 'circle-alert'} /> {c.text}</li>)}
+    </ul>
+    {exp.status === 'abierto' && can(me, 'expediente.close') && (
+      <form method="post" class="mt">
+        <button class:list={['btn', allOk ? 'btn-primary' : 'btn-ghost']} type="submit" name="intent" value="close"
+          data-confirm={allOk ? '¿Cerrar el expediente? Quedará en sólo lectura.' : 'Hay cosas pendientes. ¿Cerrar igualmente? Quedará en sólo lectura y se apuntarán los avisos.'}>
+          <Icon name="lock" size={18} /> Cerrar expediente
+        </button>
+      </form>
+    )}
+    {exp.status === 'abierto' && !can(me, 'expediente.close') && <p class="muted mt">Cuando esté todo en verde, Administración lo cerrará.</p>}
+  </section>
+</App>
+
+<script>
+  document.querySelector('[data-print]')?.addEventListener('click', () => window.print());
+</script>

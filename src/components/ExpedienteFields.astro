@@ -1,0 +1,69 @@
+---
+// Datos del evento y del cliente (solicitud nueva y «Editar datos»)
+import Icon from './Icon.astro';
+
+const { v = {}, errors = {}, users = [], companies = [] } = Astro.props;
+---
+<section class="form-section">
+  <h2><Icon name="calendar-days" /> El evento</h2>
+  <div class="row row-2">
+    <div class:list={['field', { 'has-error': errors.name }]}>
+      <label for="name">Nombre del evento</label>
+      <input id="name" name="name" type="text" required maxlength="140" value={v.name ?? ''} placeholder="Lanzamiento Winlevi" />
+    </div>
+    <div class:list={['field', { 'has-error': errors.company }]}>
+      <label for="company">Empresa (cliente)</label>
+      <input id="company" name="company" type="text" required maxlength="120" value={v.company ?? ''} list="companies" placeholder="GLENMARK" autocomplete="off" />
+      <datalist id="companies">{companies.map((c) => <option value={c} />)}</datalist>
+    </div>
+  </div>
+  <div class="row row-3">
+    <div class:list={['field', { 'has-error': errors.destination }]}>
+      <label for="destination">Destino</label>
+      <input id="destination" name="destination" type="text" maxlength="120" value={v.destination ?? ''} placeholder="Marbella" />
+    </div>
+    <div class:list={['field', { 'has-error': errors.start_date }]}>
+      <label for="start_date">Fecha de inicio</label>
+      <input id="start_date" name="start_date" type="date" required value={v.start_date ?? ''} />
+    </div>
+    <div class:list={['field', { 'has-error': errors.end_date }]}>
+      <label for="end_date">Fecha de fin <span class="opt">(si dura varios días)</span></label>
+      <input id="end_date" name="end_date" type="date" value={v.end_date ?? ''} />
+    </div>
+  </div>
+  <div class="row row-2">
+    <div class:list={['field', { 'has-error': errors.attendees }]}>
+      <label for="attendees">Asistentes <span class="opt">(opcional)</span></label>
+      <input id="attendees" name="attendees" type="number" min="0" inputmode="numeric" value={v.attendees ?? ''} />
+    </div>
+    <div class="field">
+      <label for="manager_id">Responsable del evento</label>
+      <select id="manager_id" name="manager_id">
+        <option value="">—</option>
+        {users.map((u) => <option value={u.id} selected={Number(v.manager_id) === u.id}>{u.name}</option>)}
+      </select>
+    </div>
+  </div>
+</section>
+
+<section class="form-section">
+  <h2><Icon name="user-round" /> Contacto del cliente</h2>
+  <div class="row row-3">
+    <div class:list={['field', { 'has-error': errors.contact_name }]}>
+      <label for="contact_name">Nombre</label>
+      <input id="contact_name" name="contact_name" type="text" maxlength="120" value={v.contact_name ?? ''} placeholder="Josephin Malade" />
+    </div>
+    <div class:list={['field', { 'has-error': errors.contact_email }]}>
+      <label for="contact_email">Email</label>
+      <input id="contact_email" name="contact_email" type="email" maxlength="200" value={v.contact_email ?? ''} />
+    </div>
+    <div class:list={['field', { 'has-error': errors.contact_phone }]}>
+      <label for="contact_phone">Teléfono <span class="opt">(opcional)</span></label>
+      <input id="contact_phone" name="contact_phone" type="tel" maxlength="20" value={v.contact_phone ?? ''} />
+    </div>
+  </div>
+  <div class:list={['field', { 'has-error': errors.notes }]}>
+    <label for="notes">Observaciones <span class="opt">(opcional)</span></label>
+    <textarea id="notes" name="notes" class="short" maxlength="4000" placeholder="Condiciones de pago del cliente, datos de facturación, quién envía las PO…">{v.notes ?? ''}</textarea>
+  </div>
+</section>

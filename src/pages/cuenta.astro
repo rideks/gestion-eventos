@@ -1,0 +1,103 @@
+---
+import { env } from 'cloudflare:workers';
+import App from '../layouts/App.astro';
+import Icon from '../components/Icon.astro';
+import { readForm, actor } from '../lib/app.js';
+import { AccountSchema, PasswordChangeSchema, ROLES, validate, formToObject } from '../lib/validate.js';
+import { verifyPassword, hashPassword, deleteUserSessions, nowSeconds } from '../lib/auth.js';
+import { isPasswordPwned, rateLimit } from '../lib/security.js';
+
+const db = env.DB;
+const me = Astro.locals.user;
+let error = null;
+let errors = {};
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+
+  if (input.intent === 'profile') {
+    const parsed = validate(AccountSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else {
+      await db.prepare('UPDATE users SET name = ? WHERE id = ?').bind(parsed.data.name, me.id).run();
+      return Astro.redirect('/cuenta?ok=guardado', 303);
+    }
+  } else if (input.intent === 'password') {
+    const parsed = validate(PasswordChangeSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (!(await rateLimit(env.RL_LOGIN, `pwd:${me.id}`))) {
+      error = 'Demasiados intentos. Espera un minuto.';
+    } else {
+      const row = await db.prepare('SELECT password_hash FROM users WHERE id = ?').bind(me.id).first();
+      if (!(await verifyPassword(parsed.data.current, row?.password_hash))) {
+        error = 'La contraseña actual no es correcta.';
+        errors = { current: error };
+      } else if (await isPasswordPwned(parsed.data.password)) {
+        error = 'Esa contraseña aparece en filtraciones de datos conocidas. Elige otra.';
+        errors = { password: error };
+      } else {
+        await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(await hashPassword(parsed.data.password), me.id).run();
+        // Si alguien conocía la contraseña antigua, se queda fuera
+        await deleteUserSessions(db, me.id, Astro.locals.sessionId);
+        return Astro.redirect('/cuenta?ok=password', 303);
+      }
+    }
+  } else if (input.intent === 'sessions') {
+    await deleteUserSessions(db, me.id, Astro.locals.sessionId);
+    return Astro.redirect('/cuenta?ok=sesiones', 303);
+  }
+  if (error) Astro.response.status = 400;
+}
+
+const { n: sessions } = await db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND expires_at > ?')
+  .bind(me.id, nowSeconds()).first();
+---
+<App title="Mi cuenta" section="cuenta" error={error}>
+  <div class="page-top">
+    <div>
+      <h1>Mi cuenta</h1>
+      <p>{me.email} · {ROLES[me.role]}</p>
+    </div>
+  </div>
+
+  <form method="post" class="form-section">
+    <h2><Icon name="user-round" /> Mis datos</h2>
+    <div class:list={['field', { 'has-error': errors.name }]}>
+      <label for="name">Nombre</label>
+      <input id="name" name="name" type="text" required maxlength="80" value={me.name} autocomplete="name" />
+    </div>
+    <div><button class="btn btn-primary" type="submit" name="intent" value="profile">Guardar</button></div>
+  </form>
+
+  <form method="post" class="form-section mt">
+    <h2><Icon name="key-round" /> Cambiar contraseña</h2>
+    <input type="text" name="username" value={me.email} autocomplete="username" hidden />
+    <div class:list={['field', { 'has-error': errors.current }]}>
+      <label for="current">Contraseña actual</label>
+      <input id="current" name="current" type="password" required autocomplete="current-password" />
+    </div>
+    <div class="row row-2">
+      <div class:list={['field', { 'has-error': errors.password }]}>
+        <label for="password">Nueva contraseña</label>
+        <input id="password" name="password" type="password" required minlength="10" autocomplete="new-password" />
+        <p class="hint">Mínimo 10 caracteres.</p>
+      </div>
+      <div class:list={['field', { 'has-error': errors.password2 }]}>
+        <label for="password2">Repite la nueva</label>
+        <input id="password2" name="password2" type="password" required minlength="10" autocomplete="new-password" />
+      </div>
+    </div>
+    <div><button class="btn btn-primary" type="submit" name="intent" value="password" data-busy="Cambiando…">Cambiar contraseña</button></div>
+  </form>
+
+  <form method="post" class="form-section mt">
+    <h2><Icon name="lock" /> Sesiones abiertas</h2>
+    <p class="muted">Tienes {sessions} {sessions === 1 ? 'sesión abierta' : 'sesiones abiertas'} (móvil, ordenador…). Si has perdido un móvil o entraste en un ordenador ajeno, ciérralas.</p>
+    <div><button class="btn btn-ghost" type="submit" name="intent" value="sessions" disabled={sessions <= 1}><Icon name="log-out" /> Cerrar las demás sesiones</button></div>
+  </form>
+</App>

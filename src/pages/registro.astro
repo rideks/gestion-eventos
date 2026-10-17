@@ -1,0 +1,123 @@
+---
+// Alta con invitación. El enlace es /registro#token=inv_...
+// El token va detrás de "#": el navegador NO lo envía al servidor al abrir el enlace.
+import { env } from 'cloudflare:workers';
+import AuthShell from '../components/AuthShell.astro';
+import { hashPassword, hashInviteToken, createSession, sessionCookieOptions, SESSION_COOKIE, nowSeconds } from '../lib/auth.js';
+import { getClientIp, rateLimit, verifyTurnstile, isPasswordPwned } from '../lib/security.js';
+import { RegisterSchema, validate, formToObject } from '../lib/validate.js';
+import { readForm, logActivity } from '../lib/app.js';
+import { nowIso } from '../lib/dates.js';
+
+if (Astro.locals.user) return Astro.redirect('/');
+
+let error = null;
+let errors = {};
+let values = { name: '', email: '', token: '' };
+
+if (Astro.request.method === 'POST') {
+  const ip = getClientIp(Astro.request);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  values = {
+    name: String(input.name ?? '').slice(0, 80),
+    email: String(input.email ?? '').slice(0, 200),
+    token: /^inv_[A-Za-z0-9_-]{32}$/.test(String(input.token ?? '').trim()) ? String(input.token).trim() : '',
+  };
+
+  if (!(await rateLimit(env.RL_LOGIN, `reg:${ip}`))) {
+    error = 'Demasiados intentos seguidos. Espera un minuto.';
+  } else if (!(await verifyTurnstile({
+    token: input['cf-turnstile-response'], secret: env.TURNSTILE_SECRET_KEY, ip, action: 'register', hostname: Astro.url.hostname,
+  }))) {
+    error = 'No hemos podido comprobar que no eres un robot. Inténtalo de nuevo.';
+  } else {
+    const parsed = validate(RegisterSchema, { ...input, token: String(input.token ?? '').trim() });
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (await isPasswordPwned(parsed.data.password)) {
+      error = 'Esa contraseña aparece en filtraciones de datos conocidas. Elige otra diferente.';
+      errors = { password: error };
+    } else {
+      const { name, email, password, token } = parsed.data;
+      const exists = await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first();
+      if (exists) {
+        error = 'Ya existe una cuenta con ese email. Entra desde la pantalla de acceso.';
+      } else {
+        const now = nowSeconds();
+        // "Reservamos" la invitación de forma atómica: sólo puede usarse una vez
+        const invite = await env.DB.prepare(
+          `UPDATE invites SET used_at = ?
+            WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
+          RETURNING id, role`,
+        ).bind(now, await hashInviteToken(token), now).first();
+
+        if (!invite) {
+          error = 'La invitación no es válida, ya se ha usado o ha caducado. Pide una nueva.';
+        } else {
+          try {
+            const user = await env.DB.prepare(
+              'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?) RETURNING id, name',
+            ).bind(name, email, await hashPassword(password), invite.role).first();
+            await env.DB.prepare('UPDATE invites SET used_by = ? WHERE id = ?').bind(user.id, invite.id).run();
+            const sessionToken = await createSession(env.DB, user.id, { ip, userAgent: Astro.request.headers.get('user-agent') });
+            Astro.cookies.set(SESSION_COOKIE, sessionToken, sessionCookieOptions());
+            await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(nowIso(), user.id).run();
+            await logActivity(env.DB, { user, ip }, null, 'register', 'creó su cuenta');
+            return Astro.redirect('/?ok=bienvenida', 303);
+          } catch (err) {
+            console.error('[registro]', err);
+            await env.DB.prepare('UPDATE invites SET used_at = NULL WHERE id = ?').bind(invite.id).run();
+            error = 'No se ha podido crear la cuenta. Inténtalo de nuevo.';
+          }
+        }
+      }
+    }
+  }
+  Astro.response.status = 400;
+}
+---
+<AuthShell title="Crear cuenta" heading="Crear cuenta" intro="Te han invitado a la aplicación de gestión de eventos.">
+  {error && <p class="flash flash-error" role="alert">{error}</p>}
+  <form method="post" class="form">
+    <div class:list={['field', { 'has-error': errors.token }]}>
+      <label for="token">Código de invitación</label>
+      <input id="token" name="token" type="text" autocomplete="off" spellcheck="false" required data-invite-token value={values.token} />
+      <p class="hint">Se rellena solo si has abierto el enlace que te enviaron.</p>
+    </div>
+    <div class:list={['field', { 'has-error': errors.name }]}>
+      <label for="name">Tu nombre</label>
+      <input id="name" name="name" type="text" autocomplete="name" required value={values.name} />
+    </div>
+    <div class:list={['field', { 'has-error': errors.email }]}>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required value={values.email} />
+    </div>
+    <div class:list={['field', { 'has-error': errors.password }]}>
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" required />
+      <p class="hint">Mínimo 10 caracteres. Mejor una frase fácil de recordar.</p>
+    </div>
+    <div class:list={['field', { 'has-error': errors.password2 }]}>
+      <label for="password2">Repite la contraseña</label>
+      <input id="password2" name="password2" type="password" autocomplete="new-password" minlength="10" required />
+    </div>
+    <div class="turnstile">
+      <div class="cf-turnstile" data-sitekey={env.TURNSTILE_SITE_KEY} data-action="register" data-language="es" data-theme="light"></div>
+    </div>
+    <button class="btn btn-primary btn-block" type="submit" data-busy="Creando cuenta…">Crear mi cuenta</button>
+  </form>
+  <p class="auth-foot"><a href="/login">Ya tengo cuenta</a></p>
+</AuthShell>
+
+<script>
+  const input = document.querySelector('[data-invite-token]');
+  const match = /token=(inv_[A-Za-z0-9_-]{32})/.exec(location.hash);
+  if (input instanceof HTMLInputElement && match) {
+    input.value = match[1];
+    input.readOnly = true;
+    // Quitamos el token de la barra de direcciones
+    history.replaceState(null, '', location.pathname);
+  }
+</script>

@@ -1,0 +1,59 @@
+---
+// Una fila de coste / pago a proveedor (en el expediente y en la bandeja de pagos).
+import Icon from './Icon.astro';
+import Pill from './Pill.astro';
+import { paymentState, PAYMENT_METHODS } from '../lib/finance.js';
+import { eur } from '../lib/money.js';
+import { formatDate, dueText } from '../lib/dates.js';
+import { fileUrl } from '../lib/files.js';
+
+const { p, now, showExp = false, canEdit = true } = Astro.props;
+const state = paymentState(p, now);
+const href = fileUrl(p);
+const edit = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
+const missingInvoice = !p.invoice_number && p.total_cents !== 0;
+// Pie con botones sólo si hay algo que hacer: pagarlo o añadirle la factura
+const actions = canEdit && (p.status !== 'pagado' || missingInvoice);
+---
+<li class="item is-row">
+  <div class="item-body">
+    {showExp && <a class="item-meta" href={`/expedientes/${p.expediente_id}/pagos`}><strong>{p.exp_number ? `EXP ${p.exp_number}` : 'Solicitud'}</strong> · {p.exp_name}</a>}
+    {canEdit
+      ? <a class="item-title" href={edit}>{p.supplier}{p.concept && <span class="muted"> · {p.concept}</span>}</a>
+      : <span class="item-title">{p.supplier}{p.concept && <span class="muted"> · {p.concept}</span>}</span>}
+    <span class="item-meta">
+      {p.invoice_number ? <span>Factura {p.invoice_number}{p.invoice_date && ` · ${formatDate(p.invoice_date)}`}</span> : <span>Sin factura todavía</span>}
+      {p.status === 'pagado'
+        ? <span>Pagado el {formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</span>
+        : p.due_date ? <span>Límite {formatDate(p.due_date)} · {dueText(p.due_date, now)}</span> : <span>Sin fecha límite</span>}
+    </span>
+    <span class="item-flags">
+      <Pill state={state} />
+      {!p.invoice_number && p.status === 'pagado' && p.total_cents !== 0 && <span class="pill pill-warn">Falta factura</span>}
+      {!p.planned && <span class="pill pill-gold" title="No estaba en la previsión inicial">No previsto</span>}
+      {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{p.file_name}</a>}
+    </span>
+  </div>
+  <div class="item-amount">
+    <span class:list={['big-money money', { neg: p.total_cents < 0 }]}>{eur(p.total_cents)}</span>
+    <small class="money">{eur(p.base_cents)} sin IVA</small>
+  </div>
+  {actions && (
+    <div class="item-foot">
+      {p.status !== 'pagado' && (
+        <form method="post" class="quick-form">
+          <input type="hidden" name="intent" value="pay" />
+          <input type="hidden" name="payment_id" value={p.id} />
+          <label class="visually-hidden" for={`paid-${p.id}`}>Fecha de pago</label>
+          <input id={`paid-${p.id}`} type="date" name="paid_on" value={now} required />
+          <label class="visually-hidden" for={`method-${p.id}`}>Forma de pago</label>
+          <select id={`method-${p.id}`} name="method">
+            {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option value={k}>{v}</option>)}
+          </select>
+          <button class="btn btn-sm" type="submit" data-busy="Guardando…"><Icon name="check" size={16} /> Pagado</button>
+        </form>
+      )}
+      {missingInvoice && <a class="btn btn-ghost btn-sm" href={edit}><Icon name="paperclip" size={16} /> Añadir factura</a>}
+    </div>
+  )}
+</li>

@@ -1,0 +1,57 @@
+// Acciones rápidas que se pueden hacer desde varias pantallas (expediente, bandejas, inicio).
+import { activityStmt, can } from './app.js';
+import { PaySchema, CollectSchema, validate } from './validate.js';
+import { eur } from './money.js';
+import { formatDate, nowIso } from './dates.js';
+import { PAYMENT_METHODS } from './finance.js';
+
+/** ¿Se puede tocar el expediente? Los cerrados y cancelados son de sólo lectura. */
+export const isLocked = (exp) => exp.status === 'cerrado' || exp.status === 'cancelado';
+export const LOCKED_MSG = 'El expediente está cerrado: reábrelo para cambiar algo.';
+
+/**
+ * Marca un pago a proveedor como hecho.
+ * @returns {Promise<{ ok: true, expedienteId: number } | { ok: false, message: string }>}
+ */
+export async function markPaid(db, who, input, expedienteId = null) {
+  const id = Number(input.payment_id);
+  const parsed = validate(PaySchema, input);
+  if (!parsed.ok) return parsed;
+  const p = Number.isInteger(id) ? await db.prepare(
+    `SELECT p.id, p.supplier, p.total_cents, p.status, p.expediente_id, e.status AS exp_status
+       FROM payments p JOIN expedientes e ON e.id = p.expediente_id WHERE p.id = ?`,
+  ).bind(id).first() : null;
+  if (!p || (expedienteId && p.expediente_id !== expedienteId)) return { ok: false, message: 'Ese pago ya no existe.' };
+  if (isLocked({ status: p.exp_status })) return { ok: false, message: LOCKED_MSG };
+  if (p.status === 'pagado') return { ok: true, expedienteId: p.expediente_id };
+  const { paid_on, method } = parsed.data;
+  await db.batch([
+    db.prepare("UPDATE payments SET status = 'pagado', paid_on = ?, method = ?, updated_at = ? WHERE id = ?")
+      .bind(paid_on, method, nowIso(), id),
+    activityStmt(db, who, p.expediente_id, 'payment.paid',
+      `marcó como pagado ${p.supplier} (${eur(p.total_cents)}) el ${formatDate(paid_on)}${method ? ` por ${PAYMENT_METHODS[method].toLowerCase()}` : ''}`),
+  ]);
+  return { ok: true, expedienteId: p.expediente_id };
+}
+
+/** Marca una factura emitida como cobrada (sólo Administración) */
+export async function markCollected(db, who, input, expedienteId = null) {
+  if (!can(who.user, 'invoice.issue')) return { ok: false, message: 'Sólo Administración puede registrar cobros.' };
+  const id = Number(input.invoice_id);
+  const parsed = validate(CollectSchema, input);
+  if (!parsed.ok) return parsed;
+  const inv = Number.isInteger(id) ? await db.prepare(
+    `SELECT i.id, i.number, i.billed_to, i.total_cents, i.status, i.expediente_id, e.status AS exp_status
+       FROM invoices i JOIN expedientes e ON e.id = i.expediente_id WHERE i.id = ?`,
+  ).bind(id).first() : null;
+  if (!inv || (expedienteId && inv.expediente_id !== expedienteId)) return { ok: false, message: 'Esa factura ya no existe.' };
+  if (isLocked({ status: inv.exp_status })) return { ok: false, message: LOCKED_MSG };
+  if (inv.status !== 'emitida') return { ok: false, message: 'Sólo se puede cobrar una factura emitida.' };
+  await db.batch([
+    db.prepare("UPDATE invoices SET status = 'cobrada', collected_on = ?, updated_at = ? WHERE id = ?")
+      .bind(parsed.data.collected_on, nowIso(), id),
+    activityStmt(db, who, inv.expediente_id, 'invoice.collected',
+      `registró el cobro de la factura ${inv.number} de ${inv.billed_to} (${eur(inv.total_cents)})`),
+  ]);
+  return { ok: true, expedienteId: inv.expediente_id };
+}

@@ -1,0 +1,4 @@
+# Copia este archivo como .dev.vars para desarrollo local.
+# Claves de PRUEBA de Turnstile (siempre pasan, sólo en localhost). En producción:
+#   npx wrangler secret put TURNSTILE_SECRET_KEY
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

@@ -1,0 +1,17 @@
+# build
+dist/
+.astro/
+node_modules/
+
+# Wrangler: estado local de D1/R2
+.wrangler/
+
+# Secretos locales — NUNCA al repositorio
+.dev.vars
+.env
+.env.*
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

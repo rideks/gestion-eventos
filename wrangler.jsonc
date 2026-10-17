@@ -1,0 +1,65 @@
+// Gestión de eventos · expedientes, pagos a proveedores y facturación a clientes.
+// Un Worker con su base de datos D1 (datos) y su bucket R2 (facturas, PO y presupuestos).
+//
+// Puesta en marcha (una vez):
+//   npx wrangler d1 create gestion-eventos-db        → copia el database_id aquí abajo
+//   npx wrangler r2 bucket create gestion-eventos-docs
+//   npx wrangler secret put TURNSTILE_SECRET_KEY     (y pon la clave pública en vars)
+//   npm run deploy
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gestion-eventos",
+  "main": "./src/worker.js",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": [
+    "global_fetch_strictly_public"
+  ],
+  "observability": {
+    "enabled": true
+  },
+  // Limpieza diaria (sesiones caducadas, intentos de login, invitaciones viejas)
+  "triggers": {
+    "crons": [
+      "37 4 * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gestion-eventos-db",
+      "database_id": "local-gestion-eventos-db",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "DOCS",
+      "bucket_name": "gestion-eventos-docs"
+    }
+  ],
+  // period sólo admite 10 o 60 segundos
+  "ratelimits": [
+    {
+      "name": "RL_LOGIN",
+      "namespace_id": "3001",
+      "simple": {
+        "limit": 6,
+        "period": 60
+      }
+    },
+    {
+      "name": "RL_WRITE",
+      "namespace_id": "3002",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+  "vars": {
+    // Clave pública de Turnstile. La de prueba siempre pasa (sólo para local).
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    "COMPANY_NAME": "Seven Worlds",
+    "COMPANY_TAGLINE": "Events & Congresses"
+  }
+}

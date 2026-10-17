@@ -1,0 +1,139 @@
+---
+// Paso 1-2 del proceso: el presupuesto está aprobado → se pide el expediente.
+// Sustituye al correo a Administración: todo lo necesario va en un único formulario
+// (datos, presupuesto aprobado y previsión de pagos) y le aparece en su bandeja.
+import { env } from 'cloudflare:workers';
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import ExpedienteFields from '../../components/ExpedienteFields.astro';
+import AmountFields from '../../components/AmountFields.astro';
+import FileField from '../../components/FileField.astro';
+import ForecastRows from '../../components/ForecastRows.astro';
+import { readForm, actor, can, activityStmt } from '../../lib/app.js';
+import { ExpedienteSchema, BudgetSchema, ForecastRowSchema, NumberSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
+import { suggestions, activeUsers, suggestNumber, numberTaken } from '../../lib/data.js';
+import { storeFile, getFile, UploadError } from '../../lib/files.js';
+import { eur } from '../../lib/money.js';
+import { nowIso } from '../../lib/dates.js';
+
+const db = env.DB;
+const me = Astro.locals.user;
+const admin = can(me, 'expediente.open');
+let error = null;
+let errors = {};
+let v = { manager_id: me.id, vat: 'mixto' };
+let forecast = [];
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  v = { ...input };
+  const e = validate(ExpedienteSchema, input);
+  const b = validate(BudgetSchema, { base: input.base, total: input.total, vat: input.vat });
+  const fc = form ? parseRows(form, 'fc', ['supplier', 'concept', 'due_date', 'total', 'vat'], ForecastRowSchema, { ignore: ['vat'] }) : { ok: true, rows: [] };
+  if (form) {
+    // Para volver a pintar las filas si hay un error
+    const col = (f) => form.getAll(`fc_${f}`).map(String);
+    forecast = col('supplier').map((supplier, i) => ({ supplier, concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], vat: col('vat')[i] }))
+      .filter((r) => r.supplier || r.total);
+  }
+  const wantsNumber = admin && String(input.number ?? '').trim() !== '';
+  const n = wantsNumber ? validate(NumberSchema, input) : { ok: true, data: { number: null } };
+
+  if (!e.ok) {
+    error = e.message;
+    errors = e.errors;
+  } else if (!b.ok) {
+    error = `Presupuesto · ${b.message}`;
+    errors = b.errors;
+  } else if (!fc.ok) {
+    error = `Previsión de pagos · ${fc.message}`;
+  } else if (!n.ok) {
+    error = n.message;
+    errors = n.errors;
+  } else if (n.data.number && (await numberTaken(db, n.data.number))) {
+    error = `Ya hay un expediente con el número ${n.data.number}.`;
+    errors = { number: error };
+  } else {
+    const d = e.data;
+    const number = n.data.number;
+    const at = nowIso();
+    const exp = await db.prepare(
+      `INSERT INTO expedientes (number, name, company, contact_name, contact_email, contact_phone, destination, start_date, end_date,
+                                attendees, notes, status, manager_id, requested_by, requested_at, opened_by, opened_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    ).bind(number, d.name, d.company, d.contact_name, d.contact_email, d.contact_phone, d.destination, d.start_date, d.end_date,
+      d.attendees, d.notes, number ? 'abierto' : 'solicitado', d.manager_id, me.id, at, number ? me.id : null, number ? at : null, at).first();
+
+    try {
+      const file = getFile(form, 'file');
+      const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: exp.id, userId: me.id }) : null;
+      await db.batch([
+        db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, note, file_id, created_by) VALUES (?, 1, ?, ?, ?, ?, ?)')
+          .bind(exp.id, b.data.base, b.data.total, 'Presupuesto aprobado por el cliente', fileId, me.id),
+        ...fc.rows.map((r) => db.prepare(
+          `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, due_date, planned, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        ).bind(exp.id, r.supplier, r.concept, r.base, r.total, r.vat, r.due_date, me.id)),
+        activityStmt(db, who, exp.id, 'expediente.request',
+          `pidió el expediente con un presupuesto de ${eur(b.data.base)} sin IVA${fc.rows.length ? ` y ${fc.rows.length} pagos previstos` : ''}`),
+        ...(number ? [activityStmt(db, who, exp.id, 'expediente.open', `abrió el expediente con el número ${number}`)] : []),
+      ]);
+    } catch (err) {
+      // Sin documento válido no se crea nada: se borra el expediente recién creado
+      await db.prepare('DELETE FROM expedientes WHERE id = ?').bind(exp.id).run();
+      if (!(err instanceof UploadError)) throw err;
+      error = err.message;
+    }
+    if (!error) return Astro.redirect(`/expedientes/${exp.id}?ok=${number ? 'abierto' : 'solicitado'}`, 303);
+  }
+  Astro.response.status = 400;
+}
+
+const [{ companies, suppliers }, users, suggested] = await Promise.all([suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null]);
+---
+<App title="Nueva solicitud" section="nuevo" error={error}>
+  <div class="page-top">
+    <div>
+      <h1>Nueva solicitud</h1>
+      <p>El cliente ha aprobado el presupuesto: pide aquí el expediente. Sustituye al correo a Administración.</p>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="form">
+    <ExpedienteFields v={v} errors={errors} users={users} companies={companies} />
+
+    <section class="form-section">
+      <h2><Icon name="file-spreadsheet" /> Presupuesto aprobado</h2>
+      <p class="muted">El Excel o PDF que ha aceptado el cliente y su total. Si cambia más adelante, se sube una versión nueva desde el expediente.</p>
+      <FileField label="Presupuesto aprobado" hint="Cada presupuesto es distinto: se guarda el archivo tal cual." />
+      <AmountFields id="budget" base={v.base ?? null} total={v.total ?? null} vat={v.vat ?? 'mixto'} errors={errors}
+        labelBase="Total sin IVA" labelTotal="Total con IVA"
+        hint="Con varios tipos de IVA (hotel al 10 %, servicios al 21 %) escribe los dos totales del presupuesto." />
+    </section>
+
+    <section class="form-section">
+      <h2><Icon name="wallet" /> Previsión de pagos a proveedores</h2>
+      <p class="muted">Lo que realmente cuesta el evento (sin hinchar precios): los pagos grandes y cuándo los exigen.
+        Ej.: el hotel exige 21.400 € antes del 29/01 y un 2º pago de 28.600 € el 28/02. Cada fila pasa a la lista de pagos del expediente.</p>
+      <ForecastRows rows={forecast} suppliers={suppliers} />
+    </section>
+
+    {admin && (
+      <section class="form-section">
+        <h2><Icon name="folder" /> Número de expediente <span class="opt muted small">(sólo Administración)</span></h2>
+        <div class:list={['field', { 'has-error': errors.number }]}>
+          <label for="number">Número</label>
+          <input id="number" name="number" type="number" min="1" inputmode="numeric" value={v.number ?? ''} placeholder={String(suggested)} />
+          <p class="hint">Déjalo vacío para crear sólo la solicitud. Si pones el número ({suggested} es el siguiente), el expediente queda abierto directamente.</p>
+        </div>
+      </section>
+    )}
+
+    <div class="actions">
+      <button class="btn btn-primary" type="submit" data-busy="Enviando…"><Icon name="send" size={18} /> {admin ? 'Crear' : 'Enviar solicitud'}</button>
+      <a class="btn btn-ghost" href="/expedientes">Cancelar</a>
+    </div>
+  </form>
+</App>

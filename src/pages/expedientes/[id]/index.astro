@@ -1,0 +1,245 @@
+---
+// Resumen del expediente: cifras clave, próximos pasos, datos del evento y actividad.
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import ExpHeader from '../../../components/ExpHeader.astro';
+import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
+import { getExpediente, loadFinance, suggestNumber, numberTaken } from '../../../lib/data.js';
+import { NumberSchema, NoteSchema, validate, formToObject } from '../../../lib/validate.js';
+import { nextSteps, plural } from '../../../lib/finance.js';
+import { eur, pct } from '../../../lib/money.js';
+import { today, formatRange, formatStamp, nowIso } from '../../../lib/dates.js';
+import { isLocked } from '../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+let exp = id ? await getExpediente(db, id) : null;
+if (!exp) return Astro.rewrite('/404');
+
+const me = Astro.locals.user;
+const admin = can(me, 'expediente.open');
+const now = today();
+let error = null;
+let errors = {};
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const at = nowIso();
+
+  if (input.intent === 'note') {
+    const parsed = validate(NoteSchema, input);
+    if (!parsed.ok) error = parsed.message;
+    else {
+      await activityStmt(db, who, id, 'note', parsed.data.text).run();
+      return Astro.redirect(`/expedientes/${id}?ok=nota#actividad`, 303);
+    }
+  } else if (input.intent === 'open' && can(me, 'expediente.open') && exp.status === 'solicitado') {
+    const parsed = validate(NumberSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (await numberTaken(db, parsed.data.number, id)) {
+      error = `Ya hay un expediente con el número ${parsed.data.number}.`;
+      errors = { number: error };
+    } else {
+      await db.batch([
+        db.prepare("UPDATE expedientes SET number = ?, status = 'abierto', opened_by = ?, opened_at = ?, updated_at = ? WHERE id = ?")
+          .bind(parsed.data.number, me.id, at, at, id),
+        activityStmt(db, who, id, 'expediente.open', `abrió el expediente con el número ${parsed.data.number}`),
+      ]);
+      return Astro.redirect(`/expedientes/${id}?ok=abierto`, 303);
+    }
+  } else if (input.intent === 'cancel' && can(me, 'expediente.close') && !isLocked(exp)) {
+    await db.batch([
+      db.prepare("UPDATE expedientes SET status = 'cancelado', closed_by = ?, closed_at = ?, updated_at = ? WHERE id = ?").bind(me.id, at, at, id),
+      activityStmt(db, who, id, 'expediente.cancel', 'canceló el expediente'),
+    ]);
+    return Astro.redirect(`/expedientes/${id}?ok=guardado`, 303);
+  } else if (input.intent === 'reopen' && can(me, 'expediente.close') && isLocked(exp)) {
+    const status = exp.number ? 'abierto' : 'solicitado';
+    await db.batch([
+      db.prepare('UPDATE expedientes SET status = ?, closed_by = NULL, closed_at = NULL, updated_at = ? WHERE id = ?').bind(status, at, id),
+      activityStmt(db, who, id, 'expediente.reopen', 'reabrió el expediente'),
+    ]);
+    return Astro.redirect(`/expedientes/${id}?ok=reabierto`, 303);
+  } else {
+    error = 'Esa acción no está permitida ahora.';
+  }
+  Astro.response.status = 400;
+}
+
+const fin = await loadFinance(db, id, now);
+const s = fin.summary;
+const steps = nextSteps(exp, s, now);
+const { results: activity } = await db.prepare(
+  'SELECT user_name, action, text, at FROM activity WHERE expediente_id = ? ORDER BY at DESC, id DESC LIMIT 60',
+).bind(id).all();
+const suggested = exp.status === 'solicitado' && admin ? await suggestNumber(db) : null;
+const { results: admins } = exp.status === 'solicitado' && !admin
+  ? await db.prepare("SELECT email FROM users WHERE role = 'admin' AND active = 1").all()
+  : { results: [] };
+const link = `${Astro.url.origin}/expedientes/${id}`;
+const mailto = `mailto:${admins.map((a) => a.email).join(',')}?subject=${encodeURIComponent(`Nuevo expediente: ${exp.name} (${exp.company})`)}&body=${encodeURIComponent(
+  `Hola:\n\nEl cliente ha aprobado el presupuesto de «${exp.name}» (${exp.company}, ${formatRange(exp.start_date, exp.end_date)}).\n`
+  + `Importe: ${eur(s.sale.base)} sin IVA.\n\nLo tienes todo aquí para abrir el expediente:\n${link}\n`,
+)}`;
+const margin = s.sale.base ? s.expectedMargin : s.margin;
+---
+<App title={exp.number ? `EXP ${exp.number}` : exp.name} section="expedientes" error={error}>
+  <ExpHeader exp={exp} tab="resumen" fin={fin} />
+
+  {exp.status === 'solicitado' && (
+    admin ? (
+      <form method="post" class="form-section">
+        <h2><Icon name="inbox" /> Solicitud pendiente de abrir</h2>
+        <p class="muted">La pidió {exp.requested_by_name ?? 'alguien del equipo'} el {formatStamp(exp.requested_at)}. Revisa los datos, el presupuesto y la previsión de pagos y dale número.</p>
+        <div class="row row-2">
+          <div class:list={['field', { 'has-error': errors.number }]}>
+            <label for="number">Número de expediente</label>
+            <input id="number" name="number" type="number" min="1" inputmode="numeric" required value={suggested} />
+            <p class="hint">Se propone el siguiente libre. Cámbialo si tiene que coincidir con el de contabilidad.</p>
+          </div>
+        </div>
+        <div class="actions-inline">
+          <button class="btn btn-primary" type="submit" name="intent" value="open" data-busy="Abriendo…"><Icon name="folder" size={18} /> Abrir expediente</button>
+          <button class="btn btn-danger btn-sm" type="submit" name="intent" value="cancel" formnovalidate data-confirm="¿Cancelar esta solicitud? El evento no se hará.">Cancelar solicitud</button>
+        </div>
+      </form>
+    ) : (
+      <div class="flash flash-warn">
+        <Icon name="inbox" />
+        <span>Administración tiene la solicitud en su bandeja para abrir el expediente. Mientras tanto puedes ir subiendo facturas y PO.
+          {admins.length > 0 && <> <a href={mailto}>Avisar por email</a></>}</span>
+      </div>
+    )
+  )}
+
+  <div class="kpis">
+    <a class="kpi" href={`/expedientes/${id}/presupuesto`}>
+      <span>Venta (presupuesto)</span>
+      <b class="money">{eur(s.sale.base)}</b>
+      <small class="money">{eur(s.sale.total)} con IVA{fin.budget && ` · v${fin.budget.version}`}</small>
+    </a>
+    <a class="kpi" href={`/expedientes/${id}/pagos`}>
+      <span>Coste</span>
+      <b class="money">{eur(s.cost.base)}</b>
+      <small class="money">{eur(s.cost.total)} con IVA · {plural(fin.payments.length, 'línea', 'líneas')}</small>
+    </a>
+    <a class:list={['kpi is-gold', { 'is-danger': margin < 0 }]} href={`/expedientes/${id}/cierre`}>
+      <span>Beneficio {s.sale.base ? 'previsto' : ''}</span>
+      <b class="money">{eur(margin)}</b>
+      <small>{pct(margin, s.sale.base || s.sales.base)} sobre la venta</small>
+    </a>
+    <a class:list={['kpi', { 'is-ok': s.collected > 0 && s.collected >= s.sale.total }]} href={`/expedientes/${id}/cobros`}>
+      <span>Cobrado</span>
+      <b class="money">{eur(s.collected)}</b>
+      <small class="money">de {eur(s.sale.total)} con IVA</small>
+      <progress class="bar is-ok" max="100" value={s.sale.total ? Math.round(Math.min(1, s.collected / s.sale.total) * 100) : 0}></progress>
+    </a>
+  </div>
+
+  <div class="two-col">
+    <div class="stack">
+      {exp.status === 'abierto' && (
+        <section class="card">
+          <h2>Próximos pasos</h2>
+          {steps.length ? (
+            <ul class="steps">
+              {steps.map((st) => (
+                <li class={`tone-${st.tone}`}>
+                  <a href={`/expedientes/${id}/${st.tab}`}>
+                    <Icon name={st.tone === 'danger' ? 'triangle-alert' : st.tone === 'warn' ? 'clock' : 'info'} />
+                    {st.text}
+                    <Icon name="chevron-right" size={18} class="chev" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ul class="steps"><li class="tone-ok"><span><Icon name="circle-check" /> Todo al día. Cuando acabe el evento y esté todo cobrado, ciérralo desde «Cierre».</span></li></ul>
+          )}
+        </section>
+      )}
+
+      <section class="card">
+        <h2>Cómo va</h2>
+        <dl class="kv">
+          <dt>Pagado a proveedores</dt>
+          <dd><span class="money">{eur(s.paid)}</span> <span class="muted">de {eur(s.cost.total)}</span>
+            <progress class="bar" max="100" value={s.cost.total > 0 ? Math.round(Math.min(1, Math.max(0, s.paid / s.cost.total)) * 100) : 0}></progress></dd>
+          <dt>PO del cliente</dt>
+          <dd><span class="money">{eur(s.poTotal)}</span> <span class="muted">de {eur(s.sale.base)} sin IVA</span>
+            <progress class="bar is-gold" max="100" value={s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.base) * 100) : 0}></progress></dd>
+          <dt>Facturado al cliente</dt>
+          <dd><span class="money">{eur(s.invoiced.base)}</span> <span class="muted">de {eur(s.sale.base)} sin IVA</span>
+            <progress class="bar" max="100" value={s.sale.base > 0 ? Math.round(Math.min(1, s.invoiced.base / s.sale.base) * 100) : 0}></progress></dd>
+        </dl>
+      </section>
+
+      <section class="card" id="actividad">
+        <h2>Actividad y notas</h2>
+        <form method="post" class="form">
+          <div class="field">
+            <label class="visually-hidden" for="text">Nota</label>
+            <textarea id="text" name="text" class="short" maxlength="2000" required placeholder="Ej.: el cliente pide separar la factura del hotel; el hotel amplía el plazo al 15/02…"></textarea>
+          </div>
+          <div><button class="btn btn-ghost btn-sm" type="submit" name="intent" value="note"><Icon name="message-square" size={16} /> Añadir nota</button></div>
+        </form>
+        <ul class="activity mt">
+          {activity.map((a) => (
+            <li>
+              <time datetime={a.at}>{formatStamp(a.at)}</time>
+              <span>{a.action === 'note'
+                ? <><strong>{a.user_name ?? 'Alguien'}:</strong> <span class="msg-body">{a.text}</span></>
+                : <><strong>{a.user_name ?? 'Alguien'}</strong> {a.text}</>}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="card">
+        <div class="sec-head">
+          <h2>Datos del evento</h2>
+          {!isLocked(exp) && <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/editar`}><Icon name="pencil" size={16} /> Editar</a>}
+        </div>
+        <dl class="kv">
+          <dt>Empresa</dt><dd>{exp.company}</dd>
+          <dt>Contacto</dt><dd>{exp.contact_name ?? '—'}</dd>
+          {exp.contact_email && <><dt>Email</dt><dd><a href={`mailto:${exp.contact_email}`}>{exp.contact_email}</a></dd></>}
+          {exp.contact_phone && <><dt>Teléfono</dt><dd><a href={`tel:${exp.contact_phone.replace(/[^\d+]/g, '')}`}>{exp.contact_phone}</a></dd></>}
+          <dt>Destino</dt><dd>{exp.destination ?? '—'}</dd>
+          <dt>Fechas</dt><dd>{formatRange(exp.start_date, exp.end_date) || '—'}</dd>
+          {exp.attendees != null && <><dt>Asistentes</dt><dd>{exp.attendees}</dd></>}
+          <dt>Responsable</dt><dd>{exp.manager_name ?? '—'}</dd>
+          <dt>Solicitado</dt><dd>{exp.requested_by_name ?? '—'} · {formatStamp(exp.requested_at)}</dd>
+          {exp.opened_at && <><dt>Abierto</dt><dd>{exp.opened_by_name ?? '—'} · {formatStamp(exp.opened_at)}</dd></>}
+          {exp.closed_at && <><dt>{exp.status === 'cancelado' ? 'Cancelado' : 'Cerrado'}</dt><dd>{exp.closed_by_name ?? '—'} · {formatStamp(exp.closed_at)}</dd></>}
+        </dl>
+        {exp.notes && <p class="mt msg-body">{exp.notes}</p>}
+      </section>
+
+      {can(me, 'expediente.close') && exp.status !== 'solicitado' && (
+        <form method="post" class="card danger-zone no-print">
+          {isLocked(exp) ? (
+            <>
+              <h2>Expediente {exp.status}</h2>
+              <p class="muted">Está en sólo lectura. Si hay que corregir algo, reábrelo.</p>
+              <button class="btn btn-ghost mt" type="submit" name="intent" value="reopen"><Icon name="lock-open" size={18} /> Reabrir expediente</button>
+            </>
+          ) : (
+            <>
+              <h2>¿El evento no se hace?</h2>
+              <p class="muted">Cancelarlo lo saca de las bandejas de pagos y cobros. Se puede reabrir.</p>
+              <button class="btn btn-danger mt" type="submit" name="intent" value="cancel" data-confirm="¿Cancelar el expediente? Sus pagos y cobros dejarán de salir en las bandejas.">Cancelar expediente</button>
+            </>
+          )}
+        </form>
+      )}
+    </div>
+  </div>
+</App>

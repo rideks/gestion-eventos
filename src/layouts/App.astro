@@ -1,0 +1,120 @@
+---
+// Plantilla de la aplicación. Misma estructura que el panel de club-futsal:
+// menú lateral en el ordenador y barra inferior para el pulgar en el móvil.
+import '@fontsource/barlow/latin-400.css';
+import '@fontsource/barlow/latin-600.css';
+import '@fontsource/barlow/latin-700.css';
+import '@fontsource/barlow-condensed/latin-800.css';
+import '../styles/app.css';
+import { env } from 'cloudflare:workers';
+import Icon from '../components/Icon.astro';
+import { navCounts } from '../lib/data.js';
+import { today } from '../lib/dates.js';
+import { can, FLASH } from '../lib/app.js';
+
+const { title = 'Inicio', section = '', error = null, notice = null, wide = false } = Astro.props;
+const user = Astro.locals.user;
+const company = env.COMPANY_NAME || 'Seven Worlds';
+const counts = await navCounts(env.DB, today());
+const admin = can(user, 'expediente.open');
+
+const ok = FLASH[Astro.url.searchParams.get('ok') ?? ''];
+const warn = Astro.url.searchParams.get('aviso') === 'permiso' ? 'Eso sólo lo puede hacer Administración.' : null;
+
+const nav = [
+  { key: 'inicio', href: '/', label: 'Inicio', icon: 'house' },
+  { key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: admin ? counts.requests : 0, tone: 'warn' },
+  { key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' },
+  { key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: admin ? counts.to_issue : 0, tone: 'warn' },
+  { key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true },
+  ...(admin ? [{ key: 'usuarios', href: '/usuarios', label: 'Usuarios', icon: 'user-plus' }] : []),
+  { key: 'cuenta', href: '/cuenta', label: 'Mi cuenta', icon: 'user-round' },
+];
+const tabs = nav.slice(0, 4);
+const more = nav.slice(4);
+const roleLabel = admin ? 'Administración' : 'Eventos';
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title} · {company}</title>
+    <link rel="icon" href="/favicon.svg" />
+    <slot name="head" />
+  </head>
+  <body>
+    <header class="a-header">
+      <a class="a-brand" href="/">
+        <span class="mark" aria-hidden="true">7<b>W</b></span>
+        <span><strong>{company}</strong><small>Gestión de eventos</small></span>
+      </a>
+      <span class="spacer"></span>
+      {user && <span class="a-user">{user.name} · {roleLabel}</span>}
+      <a class="btn btn-primary btn-sm" href="/expedientes/nuevo"><Icon name="plus" size={18} /><span class="btn-label">Nueva solicitud</span></a>
+    </header>
+
+    <div class="a-shell">
+      <nav class="a-side" aria-label="Secciones">
+        {nav.map((n) => (
+          <>
+            {n.sep && <hr />}
+            <a href={n.href} aria-current={section === n.key ? 'page' : undefined}>
+              <Icon name={n.icon} /> {n.label}
+              {n.badge > 0 && <span class:list={['badge-count', `is-${n.tone}`]}>{n.badge}</span>}
+            </a>
+          </>
+        ))}
+        <form method="post" action="/salir">
+          <button class="btn btn-ghost btn-sm btn-block" type="submit"><Icon name="log-out" size={16} /> Salir</button>
+        </form>
+      </nav>
+
+      <main class:list={['a-main', { 'is-wide': wide }]}>
+        {ok && <p class="flash flash-ok" role="status"><Icon name="check" /> {ok}</p>}
+        {(warn || notice) && <p class="flash flash-warn" role="status"><Icon name="info" /> {warn || notice}</p>}
+        {error && <p class="flash flash-error" role="alert"><Icon name="circle-alert" /> {error}</p>}
+        <slot />
+      </main>
+    </div>
+
+    <nav class="a-tabbar" aria-label="Secciones">
+      {tabs.map((n) => (
+        <a href={n.href} aria-current={section === n.key ? 'page' : undefined}>
+          <Icon name={n.icon} size={22} />{n.label}
+          {n.badge > 0 && <span class="badge-dot" aria-label={`${n.badge} pendientes`}></span>}
+        </a>
+      ))}
+      <button type="button" popovertarget="a-more" aria-current={more.some((n) => n.key === section) ? 'page' : undefined}>
+        <Icon name="menu" size={22} />Más
+      </button>
+    </nav>
+    <div id="a-more" popover class="a-more">
+      {more.map((n) => <a href={n.href}><Icon name={n.icon} /> {n.label}</a>)}
+      <form method="post" action="/salir">
+        <button type="submit"><Icon name="log-out" /> Salir</button>
+      </form>
+    </div>
+
+    <script>
+      // Confirmación antes de acciones delicadas: <button data-confirm="¿Seguro?">
+      document.addEventListener('click', (e) => {
+        const btn = e.target instanceof Element ? e.target.closest('[data-confirm]') : null;
+        if (btn && !window.confirm(btn.getAttribute('data-confirm') || '¿Seguro?')) e.preventDefault();
+      });
+      // Evita el doble envío (y da feedback mientras se suben documentos)
+      document.addEventListener('submit', (e) => {
+        const form = e.target;
+        if (!(form instanceof HTMLFormElement) || e.defaultPrevented) return;
+        const btn = e.submitter;
+        if (btn instanceof HTMLButtonElement && btn.dataset.busy) {
+          setTimeout(() => {
+            btn.disabled = true;
+            btn.textContent = btn.dataset.busy;
+          }, 0);
+        }
+      });
+    </script>
+  </body>
+</html>

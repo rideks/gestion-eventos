@@ -1,0 +1,87 @@
+---
+// Previsión de pagos a proveedores (lo que realmente cuesta el evento).
+// Funciona sin JavaScript (siempre hay filas vacías al final); con JavaScript se añaden y quitan filas.
+import Icon from './Icon.astro';
+import { amountInput } from '../lib/money.js';
+
+const { rows = [], blanks = 3, suppliers = [] } = Astro.props;
+const all = [...rows, ...Array.from({ length: Math.max(1, blanks - rows.length) }, () => ({ vat: '10' }))];
+const VATS = [['10', '10 %'], ['21', '21 %'], ['4', '4 %'], ['0', 'Exento']];
+const val = (v) => (typeof v === 'number' ? amountInput(v) : v ?? '');
+---
+<div class="rows-editor" data-rows-editor>
+  <div class="rows-scroll">
+    <table class="rows-table">
+      <thead>
+        <tr>
+          <th scope="col" class="wide">Proveedor</th>
+          <th scope="col" class="wide">Concepto</th>
+          <th scope="col">Fecha límite</th>
+          <th scope="col">Importe (IVA incl.)</th>
+          <th scope="col">IVA</th>
+          <th scope="col" class="narrow"><span class="visually-hidden">Quitar</span></th>
+        </tr>
+      </thead>
+      <tbody data-rows>
+        {all.map((r, i) => (
+          <tr>
+            <td class="wide"><input name="fc_supplier" type="text" aria-label="Proveedor" list="suppliers" maxlength="120" value={r.supplier ?? ''} placeholder={i === 0 ? 'Hotel…' : ''} autocomplete="off" /></td>
+            <td class="wide"><input name="fc_concept" type="text" aria-label="Concepto" maxlength="160" value={r.concept ?? ''} placeholder={i === 0 ? '1er pago / anticipo' : ''} /></td>
+            <td class="mid"><input name="fc_due_date" type="date" aria-label="Fecha límite" value={r.due_date ?? ''} /></td>
+            <td class="amount"><input name="fc_total" type="text" inputmode="decimal" aria-label="Importe" value={val(r.total)} placeholder={i === 0 ? '21.400' : ''} autocomplete="off" /></td>
+            <td>
+              <select name="fc_vat" aria-label="IVA">
+                {VATS.map(([k, l]) => <option value={k} selected={String(r.vat ?? '10') === k}>{l}</option>)}
+              </select>
+            </td>
+            <td class="row-actions">
+              <button type="button" data-remove aria-label="Quitar fila" title="Quitar"><Icon name="x" size={16} /></button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  <datalist id="suppliers">{suppliers.map((s) => <option value={s} />)}</datalist>
+  <div class="actions-inline">
+    <button type="button" class="btn btn-ghost btn-sm" data-add hidden><Icon name="plus" size={16} /> Añadir pago</button>
+    <span class="muted small" data-sum></span>
+  </div>
+</div>
+
+<script>
+  import { parseAmount, eur } from '../lib/money.js';
+
+  document.querySelectorAll('[data-rows-editor]').forEach((editor) => {
+    const body = editor.querySelector('[data-rows]');
+    const add = editor.querySelector('[data-add]');
+    const sum = editor.querySelector('[data-sum]');
+    if (!body || !add) return;
+    add.hidden = false;
+    const total = () => {
+      let cents = 0;
+      body.querySelectorAll('input[name="fc_total"]').forEach((i) => {
+        const v = parseAmount(i instanceof HTMLInputElement ? i.value : '');
+        if (v !== null && !Number.isNaN(v)) cents += v;
+      });
+      if (sum) sum.textContent = cents ? `Total previsto: ${eur(cents)}` : '';
+    };
+    add.addEventListener('click', () => {
+      const row = body.rows[body.rows.length - 1].cloneNode(true);
+      row.querySelectorAll('input').forEach((i) => { i.value = ''; });
+      row.querySelectorAll('select').forEach((s) => { s.selectedIndex = 0; });
+      body.append(row);
+      row.querySelector('input')?.focus();
+    });
+    body.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest('button[data-remove]') : null;
+      const row = btn?.closest('tr');
+      if (!row) return;
+      if (body.rows.length > 1) row.remove();
+      else row.querySelectorAll('input').forEach((i) => { i.value = ''; });
+      total();
+    });
+    body.addEventListener('input', total);
+    total();
+  });
+</script>

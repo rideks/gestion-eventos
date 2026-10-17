@@ -1,0 +1,79 @@
+---
+// Bandeja de pagos a proveedores de TODOS los expedientes, por fecha límite.
+// Es la lista de trabajo de Administración: qué hay que pagar hoy, esta semana y más adelante.
+import { env } from 'cloudflare:workers';
+import App from '../layouts/App.astro';
+import Icon from '../components/Icon.astro';
+import PaymentItem from '../components/PaymentItem.astro';
+import { actor, readForm } from '../lib/app.js';
+import { pendingPayments, paidWithoutInvoice } from '../lib/data.js';
+import { markPaid } from '../lib/actions.js';
+import { formToObject } from '../lib/validate.js';
+import { plural, SOON_DAYS } from '../lib/finance.js';
+import { eur } from '../lib/money.js';
+import { today, addDays } from '../lib/dates.js';
+
+const db = env.DB;
+const now = today();
+let error = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  if (input.intent === 'pay') {
+    const r = await markPaid(db, actor(Astro), input);
+    if (r.ok) return Astro.redirect('/pagos?ok=pagado', 303);
+    error = r.message;
+  }
+  Astro.response.status = 400;
+}
+
+const [pending, noInvoice] = await Promise.all([pendingPayments(db), paidWithoutInvoice(db)]);
+const soonLimit = addDays(now, SOON_DAYS);
+const monthLimit = addDays(now, 30);
+const groups = [
+  { key: 'vencidos', title: 'Vencidos', danger: true, rows: pending.filter((p) => p.due_date && p.due_date < now) },
+  { key: 'semana', title: `Próximos ${SOON_DAYS} días`, rows: pending.filter((p) => p.due_date && p.due_date >= now && p.due_date <= soonLimit) },
+  { key: 'mes', title: 'Este mes', rows: pending.filter((p) => p.due_date && p.due_date > soonLimit && p.due_date <= monthLimit) },
+  { key: 'luego', title: 'Más adelante', rows: pending.filter((p) => p.due_date && p.due_date > monthLimit) },
+  { key: 'sinfecha', title: 'Sin fecha límite', rows: pending.filter((p) => !p.due_date) },
+];
+const total = (rows) => rows.reduce((a, p) => a + p.total_cents, 0);
+---
+<App title="Pagos" section="pagos" error={error}>
+  <div class="page-top">
+    <div>
+      <h1>Pagos a proveedores</h1>
+      <p>Todo lo pendiente de pagar de todos los expedientes, por fecha límite</p>
+    </div>
+  </div>
+
+  <div class="kpis">
+    {groups.slice(0, 4).map((g) => (
+      <a class:list={['kpi', { 'is-danger': g.danger && g.rows.length > 0 }]} href={`#${g.key}`}>
+        <span>{g.title}</span><b class="money">{eur(total(g.rows))}</b><small>{plural(g.rows.length, 'pago', 'pagos')}</small>
+      </a>
+    ))}
+  </div>
+
+  {groups.filter((g) => g.rows.length).map((g) => (
+    <section id={g.key}>
+      <div class:list={['group-title', { 'is-danger': g.danger }]}>
+        <h3>{g.title} ({g.rows.length})</h3>
+        <span class="money">{eur(total(g.rows))}</span>
+      </div>
+      <ul class="list">{g.rows.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
+    </section>
+  ))}
+  {!pending.length && <p class="empty"><Icon name="circle-check" /> No hay nada pendiente de pagar.</p>}
+
+  {noInvoice.length > 0 && (
+    <section id="sin-factura">
+      <div class="sec-head">
+        <h2><Icon name="paperclip" /> Pagados sin factura del proveedor ({noInvoice.length})</h2>
+        <p>Pagos hechos (anticipos, tarjeta…) de los que aún falta la factura. Reclámala y súbela en el pago.</p>
+      </div>
+      <ul class="list">{noInvoice.map((p) => <PaymentItem p={p} now={now} showExp />)}</ul>
+    </section>
+  )}
+</App>

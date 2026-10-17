@@ -1,0 +1,42 @@
+---
+// Campo para adjuntar un documento (PDF, foto, Excel, Word o correo).
+import Icon from './Icon.astro';
+import { ACCEPT, MAX_FILE_BYTES, fileUrl } from '../lib/files.js';
+
+const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name } = Astro.props;
+const href = fileUrl(current);
+---
+<div class="field">
+  <span class="label">{label}{!required && <span class="opt"> (opcional)</span>}</span>
+  {href && (
+    <p class="file-current">
+      <Icon name="paperclip" size={16} />
+      <a href={href} target="_blank" rel="noopener">{current.file_name}</a>
+      <span class="muted small">· si subes otro, sustituye a este</span>
+    </p>
+  )}
+  <label class="dropzone" for={id} data-file-field>
+    <Icon name="upload" size={22} />
+    <strong data-file-label>Toca para elegir o arrastra aquí el archivo</strong>
+    <span class="small">PDF, foto, Excel, Word o correo · máx. {MAX_FILE_BYTES / 1024 / 1024} MB</span>
+    <input id={id} name={name} type="file" accept={ACCEPT} required={required} />
+  </label>
+  {hint && <p class="hint">{hint}</p>}
+</div>
+
+<script>
+  document.querySelectorAll('[data-file-field]').forEach((zone) => {
+    const input = zone.querySelector('input[type="file"]');
+    const label = zone.querySelector('[data-file-label]');
+    if (!(input instanceof HTMLInputElement) || !label) return;
+    const initial = label.textContent;
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      zone.classList.toggle('has-file', !!file);
+      label.textContent = file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB` : initial;
+    });
+    zone.addEventListener('dragover', () => zone.classList.add('is-over'));
+    zone.addEventListener('dragleave', () => zone.classList.remove('is-over'));
+    zone.addEventListener('drop', () => zone.classList.remove('is-over'));
+  });
+</script>

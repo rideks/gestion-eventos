@@ -1,0 +1,104 @@
+---
+import { env } from 'cloudflare:workers';
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import Pill from '../../components/Pill.astro';
+import { LIST_COLUMNS } from '../../lib/data.js';
+import { expedienteState, expLabel } from '../../lib/finance.js';
+import { eur, pct } from '../../lib/money.js';
+import { today, formatRange } from '../../lib/dates.js';
+
+const db = env.DB;
+const now = today();
+const me = Astro.locals.user;
+const FILTERS = {
+  curso: { label: 'En curso', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) >= ?", args: [now] },
+  cerrar: { label: 'Por cerrar', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) < ?", args: [now] },
+  solicitudes: { label: 'Por abrir', where: "e.status = 'solicitado'", args: [] },
+  mios: { label: 'Míos', where: "e.manager_id = ? AND e.status IN ('solicitado', 'abierto')", args: [me.id] },
+  cerrados: { label: 'Cerrados', where: "e.status IN ('cerrado', 'cancelado')", args: [] },
+  todos: { label: 'Todos', where: '1 = 1', args: [] },
+};
+const key = Astro.url.searchParams.get('ver') ?? 'curso';
+const filter = FILTERS[key] ?? FILTERS.curso;
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const search = q
+  ? { where: " AND (e.name LIKE ?1 OR e.company LIKE ?1 OR e.destination LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)", term: `%${q.replace(/[%_]/g, '')}%` }
+  : null;
+
+// Con búsqueda se busca en todos; sin ella, en la pestaña elegida
+const where = search ? search.where.replace(' AND ', '') : filter.where;
+const args = search ? [search.term] : filter.args;
+const order = key === 'cerrados' ? 'e.closed_at DESC' : "e.status = 'solicitado' DESC, e.start_date, e.id";
+const { results } = await db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id WHERE ${where} ORDER BY ${order} LIMIT 200`)
+  .bind(...args).all();
+const counts = await db.prepare(
+  `SELECT SUM(status = 'abierto' AND COALESCE(end_date, start_date) >= ?1) AS curso,
+          SUM(status = 'abierto' AND COALESCE(end_date, start_date) < ?1) AS cerrar,
+          SUM(status = 'solicitado') AS solicitudes,
+          SUM(manager_id = ?2 AND status IN ('solicitado', 'abierto')) AS mios
+     FROM expedientes`,
+).bind(now, me.id).first();
+---
+<App title="Expedientes" section="expedientes">
+  <div class="page-top">
+    <div>
+      <h1>Expedientes</h1>
+      <p>Cada evento con su presupuesto, pagos a proveedores y cobros al cliente</p>
+    </div>
+    <a class="btn btn-primary" href="/expedientes/nuevo"><Icon name="folder-plus" size={18} /> Nueva solicitud</a>
+  </div>
+
+  <form method="get" class="quick-form" role="search">
+    <label class="visually-hidden" for="q">Buscar</label>
+    <input id="q" name="q" type="search" value={q} placeholder="Buscar por nombre, empresa, destino o nº" />
+    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+    {q && <a class="btn btn-ghost btn-sm" href="/expedientes">Quitar búsqueda</a>}
+  </form>
+
+  {!search && (
+    <nav class="x-tabs mt" aria-label="Filtrar expedientes">
+      {Object.entries(FILTERS).map(([k, f]) => (
+        <a href={`/expedientes?ver=${k}`} aria-current={key === k ? 'page' : undefined}>
+          {f.label}{counts[k] > 0 && <small class:list={{ 'is-alert': k === 'solicitudes' }}>{counts[k]}</small>}
+        </a>
+      ))}
+    </nav>
+  )}
+  {search && <p class="muted mt">{results.length} resultado{results.length === 1 ? '' : 's'} para «{q}»</p>}
+
+  {results.length ? (
+    <ul class="list mt">
+      {results.map((e) => {
+        const sale = e.sales_base || e.budget_base || 0;
+        const margin = sale - e.cost_base;
+        return (
+          <li>
+            <a class="item is-row" href={`/expedientes/${e.id}`}>
+              <div class="item-body">
+                <span class="item-title"><span class:list={['exp-num', { 'is-draft': !e.number }]}>{expLabel(e)}</span> {e.name}</span>
+                <span class="item-meta">
+                  <span><strong>{e.company}</strong></span>
+                  {e.destination && <span>{e.destination}</span>}
+                  {e.start_date && <span>{formatRange(e.start_date, e.end_date)}</span>}
+                  {e.manager_name && <span>{e.manager_name}</span>}
+                </span>
+                <span class="item-flags">
+                  <Pill state={expedienteState(e, now)} />
+                  {e.to_pay > 0 && <span class="pill pill-muted">Por pagar {eur(e.to_pay)}</span>}
+                  {e.to_collect > 0 && <span class="pill pill-info">Por cobrar {eur(e.to_collect)}</span>}
+                </span>
+              </div>
+              <div class="item-amount">
+                <span class="big-money money">{eur(sale)}</span>
+                <small class:list={['money', { neg: margin < 0 }]}>Beneficio {eur(margin)} · {pct(margin, sale)}</small>
+              </div>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  ) : (
+    <p class="empty mt">{search ? 'No hay expedientes que coincidan.' : 'No hay expedientes en esta pestaña.'}</p>
+  )}
+</App>

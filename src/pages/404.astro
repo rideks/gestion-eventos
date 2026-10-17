@@ -1,0 +1,13 @@
+---
+import App from '../layouts/App.astro';
+import Icon from '../components/Icon.astro';
+
+Astro.response.status = 404;
+---
+<App title="No encontrado">
+  <div class="empty">
+    <p><strong>No hemos encontrado esta página.</strong></p>
+    <p class="mt">Puede que el expediente o la factura se haya borrado.</p>
+    <p class="mt"><a class="btn btn-ghost" href="/expedientes"><Icon name="arrow-left" size={18} /> Volver a los expedientes</a></p>
+  </div>
+</App>

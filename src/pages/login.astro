@@ -1,0 +1,76 @@
+---
+import { env } from 'cloudflare:workers';
+import AuthShell from '../components/AuthShell.astro';
+import { verifyPassword, createSession, sessionCookieOptions, SESSION_COOKIE, DUMMY_HASH, isAccountLocked, recordLoginAttempt } from '../lib/auth.js';
+import { getClientIp, rateLimit, verifyTurnstile } from '../lib/security.js';
+import { LoginSchema, validate, formToObject } from '../lib/validate.js';
+import { readForm, logActivity } from '../lib/app.js';
+import { nowIso } from '../lib/dates.js';
+
+// Sólo se vuelve a rutas internas (nunca a otra web: //otro.com o /\otro.com)
+const raw = Astro.url.searchParams.get('volver') ?? '';
+const back = /^\/(?![/\\])[^\s\\]*$/.test(raw) ? raw : '/';
+if (Astro.locals.user) return Astro.redirect(back);
+
+let error = null;
+let email = '';
+
+if (Astro.request.method === 'POST') {
+  const ip = getClientIp(Astro.request);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  email = String(input.email ?? '').slice(0, 200);
+
+  if (!(await rateLimit(env.RL_LOGIN, `login:${ip}`))) {
+    error = 'Demasiados intentos seguidos. Espera un minuto.';
+  } else if (!(await verifyTurnstile({
+    token: input['cf-turnstile-response'], secret: env.TURNSTILE_SECRET_KEY, ip, action: 'login', hostname: Astro.url.hostname,
+  }))) {
+    error = 'No hemos podido comprobar que no eres un robot. Inténtalo de nuevo.';
+  } else {
+    const parsed = validate(LoginSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+    } else if (await isAccountLocked(env.DB, parsed.data.email)) {
+      error = 'Esta cuenta está bloqueada temporalmente por demasiados intentos. Prueba en 15 minutos.';
+    } else {
+      const { email: mail, password } = parsed.data;
+      const user = await env.DB.prepare('SELECT id, name, password_hash, active FROM users WHERE email = ?').bind(mail).first();
+      // Siempre se calcula un hash (aunque el email no exista) para no dar pistas por el tiempo de respuesta
+      const valid = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
+      if (!user || !valid || !user.active) {
+        await recordLoginAttempt(env.DB, mail, ip, false);
+        error = user && valid && !user.active
+          ? 'Tu cuenta está desactivada. Habla con Administración.'
+          : 'Email o contraseña incorrectos.';
+      } else {
+        await recordLoginAttempt(env.DB, mail, ip, true);
+        const token = await createSession(env.DB, user.id, { ip, userAgent: Astro.request.headers.get('user-agent') });
+        Astro.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+        await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(nowIso(), user.id).run();
+        await logActivity(env.DB, { user, ip }, null, 'login', 'entró en la aplicación');
+        return Astro.redirect(back, 303);
+      }
+    }
+  }
+  Astro.response.status = 400;
+}
+---
+<AuthShell title="Acceso" heading="Acceso">
+  {error && <p class="flash flash-error" role="alert">{error}</p>}
+  <form method="post" class="form">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required value={email} />
+    </div>
+    <div class="field">
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+    </div>
+    <div class="turnstile">
+      <div class="cf-turnstile" data-sitekey={env.TURNSTILE_SITE_KEY} data-action="login" data-language="es" data-theme="light"></div>
+    </div>
+    <button class="btn btn-primary btn-block" type="submit" data-busy="Entrando…">Entrar</button>
+  </form>
+  <p class="auth-foot muted">¿No tienes cuenta? Pide una invitación a Administración.</p>
+</AuthShell>
