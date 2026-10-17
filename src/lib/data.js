@@ -144,3 +144,41 @@ export async function suggestNumber(db) {
 export async function numberTaken(db, number, exceptId = 0) {
   return !!(await db.prepare('SELECT 1 FROM expedientes WHERE number = ? AND id != ?').bind(number, exceptId).first());
 }
+
+/** Texto de búsqueda para LIKE (sin comodines del usuario) */
+const likeTerm = (q) => `%${String(q ?? '').trim().slice(0, 80).replace(/[%_]/g, '')}%`;
+
+/** Pagos ya hechos (historial), los más recientes primero; con búsqueda opcional */
+export function paidPayments(db, q = '') {
+  return db.prepare(
+    `SELECT p.*, f.name AS file_name, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
+       FROM payments p JOIN expedientes e ON e.id = p.expediente_id LEFT JOIN files f ON f.id = p.file_id
+      WHERE p.status = 'pagado'
+        AND (?1 = '%%' OR p.supplier LIKE ?1 OR p.concept LIKE ?1 OR p.invoice_number LIKE ?1 OR e.name LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)
+      ORDER BY p.paid_on DESC, p.id DESC LIMIT 300`,
+  ).bind(likeTerm(q)).all().then((r) => r.results);
+}
+
+/** Facturas a cliente ya cobradas (historial), las más recientes primero; con búsqueda opcional */
+export function collectedInvoices(db, q = '') {
+  return db.prepare(
+    `SELECT i.*, e.number AS exp_number, e.name AS exp_name, f.name AS file_name,
+            (SELECT group_concat(po.number, ', ') FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = i.id) AS po_numbers
+       FROM invoices i JOIN expedientes e ON e.id = i.expediente_id LEFT JOIN files f ON f.id = i.file_id
+      WHERE i.status = 'cobrada'
+        AND (?1 = '%%' OR i.billed_to LIKE ?1 OR i.number LIKE ?1 OR i.concept LIKE ?1 OR e.name LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)
+      ORDER BY i.collected_on DESC, i.id DESC LIMIT 300`,
+  ).bind(likeTerm(q)).all().then((r) => r.results);
+}
+
+/** Agrupa filas por mes de una fecha 'YYYY-MM-DD': [{ key: '2026-10', rows }] */
+export function byMonth(rows, field) {
+  const groups = [];
+  for (const r of rows) {
+    const key = String(r[field] ?? '').slice(0, 7) || 'sin-fecha';
+    const last = groups[groups.length - 1];
+    if (last?.key === key) last.rows.push(r);
+    else groups.push({ key, rows: [r] });
+  }
+  return groups;
+}

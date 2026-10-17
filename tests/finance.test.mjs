@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, nextNumber } from '../src/lib/finance.js';
-import { PaymentSchema, ForecastRowSchema, PoSchema, ExpedienteSchema, validate } from '../src/lib/validate.js';
+import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, validate } from '../src/lib/validate.js';
 import { formatRange, dueText, addDays, isDate } from '../src/lib/dates.js';
 
 const NOW = '2026-08-20';
@@ -103,24 +103,33 @@ test('nextNumber', () => {
   assert.equal(nextNumber(5, '1001'), 1001);
 });
 
-test('validación: previsión de pagos (sólo importe con IVA)', () => {
-  const r = validate(ForecastRowSchema, { supplier: 'Hotel Marbella', concept: '1er pago', due_date: '2026-01-29', total: '21.400', vat: '10' });
+const RATES = [{ label: 'IVA 21 %', rate_bp: 2100, is_default: 1 }, { label: 'IVA 10 %', rate_bp: 1000 }, { label: 'IGIC 7 %', rate_bp: 700 }];
+
+test('validación: pagos previstos (importe con IVA y tipo de la lista)', () => {
+  const r = validate(forecastRowSchema(RATES), { supplier: 'Hotel Marbella', concept: '1er pago', due_date: '2026-01-29', total: '21.400', rate: '1000' });
   assert.equal(r.ok, true);
   assert.equal(r.data.total, 2140000);
   assert.equal(r.data.base, 1945455);
-  assert.equal(validate(ForecastRowSchema, { supplier: 'Hotel', total: 'mucho', vat: '10' }).ok, false);
+  assert.deepEqual(r.data.lines, [{ rate: 1000, label: 'IVA 10 %', base: 1945455, total: 2140000 }]);
+  assert.equal(r.data.vat, '10');
+  const igic = validate(forecastRowSchema(RATES), { supplier: 'Hotel Tenerife', total: '10.700', rate: '700' });
+  assert.equal(igic.data.base, 1000000);
+  assert.equal(validate(forecastRowSchema(RATES), { supplier: 'Hotel', total: 'mucho', rate: '1000' }).ok, false);
+  assert.equal(validate(forecastRowSchema(RATES), { supplier: 'Hotel', total: '100', rate: 'manual' }).ok, false);
 });
 
 test('validación: pago a proveedor', () => {
-  const ok = validate(PaymentSchema, { supplier: 'AV Sistemas', base: '2.774,06', vat: '21', status: 'pendiente' });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.data.total, 335661);
-  const paidNoDate = validate(PaymentSchema, { supplier: 'AV Sistemas', base: '10', vat: '21', status: 'pagado' });
+  assert.equal(validate(PaymentSchema, { supplier: 'AV Sistemas', status: 'pendiente' }).ok, true);
+  const paidNoDate = validate(PaymentSchema, { supplier: 'AV Sistemas', status: 'pagado' });
   assert.equal(paidNoDate.ok, false);
   assert.ok(paidNoDate.errors.paid_on);
-  const bad = validate(PaymentSchema, { supplier: 'AV Sistemas', base: 'x', vat: '21', status: 'pendiente' });
-  assert.equal(bad.ok, false);
-  assert.match(bad.message, /Importe/);
+});
+
+test('validación: tipo de IVA nuevo', () => {
+  assert.deepEqual(validate(VatRateSchema, { label: 'IGIC 9,5 %', rate: '9,5' }).data, { label: 'IGIC 9,5 %', rate: 950 });
+  assert.equal(validate(VatRateSchema, { label: 'IVA', rate: '21 %' }).data.rate, 2100);
+  assert.equal(validate(VatRateSchema, { label: 'Raro', rate: '150' }).ok, false);
+  assert.equal(validate(VatRateSchema, { label: 'Raro', rate: 'abc' }).ok, false);
 });
 
 test('validación: PO y expediente', () => {

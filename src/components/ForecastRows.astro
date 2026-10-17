@@ -1,12 +1,15 @@
 ---
-// Previsión de pagos a proveedores (lo que realmente cuesta el evento).
+// Pagos previstos a proveedores (lo que realmente cuesta el evento): en la solicitud
+// y para añadir varios de golpe a un expediente ya abierto.
 // Funciona sin JavaScript (siempre hay filas vacías al final); con JavaScript se añaden y quitan filas.
+// Los tipos de IVA salen de Ajustes.
 import Icon from './Icon.astro';
 import { amountInput } from '../lib/money.js';
+import { defaultRate } from '../lib/vat.js';
 
-const { rows = [], blanks = 3, suppliers = [] } = Astro.props;
-const all = [...rows, ...Array.from({ length: Math.max(1, blanks - rows.length) }, () => ({ vat: '10' }))];
-const VATS = [['10', '10 %'], ['21', '21 %'], ['4', '4 %'], ['0', 'Exento']];
+const { rows = [], blanks = 3, suppliers = [], rates = [], addLabel = 'Añadir pago', supplier = '' } = Astro.props;
+const def = String(defaultRate(rates));
+const all = [...rows, ...Array.from({ length: Math.max(1, blanks - rows.length) }, () => ({ rate: def, supplier }))];
 const val = (v) => (typeof v === 'number' ? amountInput(v) : v ?? '');
 ---
 <div class="rows-editor" data-rows-editor>
@@ -30,8 +33,8 @@ const val = (v) => (typeof v === 'number' ? amountInput(v) : v ?? '');
             <td class="mid"><input name="fc_due_date" type="date" aria-label="Fecha límite" value={r.due_date ?? ''} /></td>
             <td class="amount"><input name="fc_total" type="text" inputmode="decimal" aria-label="Importe" value={val(r.total)} placeholder={i === 0 ? '21.400' : ''} autocomplete="off" /></td>
             <td>
-              <select name="fc_vat" aria-label="IVA">
-                {VATS.map(([k, l]) => <option value={k} selected={String(r.vat ?? '10') === k}>{l}</option>)}
+              <select name="fc_rate" aria-label="IVA">
+                {rates.map((t) => <option value={t.rate_bp} selected={String(r.rate ?? def) === String(t.rate_bp)}>{t.label}</option>)}
               </select>
             </td>
             <td class="row-actions">
@@ -44,7 +47,7 @@ const val = (v) => (typeof v === 'number' ? amountInput(v) : v ?? '');
   </div>
   <datalist id="suppliers">{suppliers.map((s) => <option value={s} />)}</datalist>
   <div class="actions-inline">
-    <button type="button" class="btn btn-ghost btn-sm" data-add hidden><Icon name="plus" size={16} /> Añadir pago</button>
+    <button type="button" class="btn btn-ghost btn-sm" data-add hidden><Icon name="plus" size={16} /> {addLabel}</button>
     <span class="muted small" data-sum></span>
   </div>
 </div>

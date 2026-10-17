@@ -27,7 +27,10 @@ const nav = [
   { key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' },
   { key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: admin ? counts.to_issue : 0, tone: 'warn' },
   { key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true },
-  ...(admin ? [{ key: 'usuarios', href: '/usuarios', label: 'Usuarios', icon: 'user-plus' }] : []),
+  ...(admin ? [
+    { key: 'usuarios', href: '/usuarios', label: 'Usuarios', icon: 'user-plus' },
+    { key: 'ajustes', href: '/ajustes', label: 'Ajustes', icon: 'settings' },
+  ] : []),
   { key: 'cuenta', href: '/cuenta', label: 'Mi cuenta', icon: 'user-round' },
 ];
 const tabs = nav.slice(0, 4);

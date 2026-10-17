@@ -80,3 +80,9 @@ export function formatStamp(iso) {
 }
 
 export const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+/** '2026-10' → 'octubre de 2026' */
+export function formatMonth(key) {
+  if (!/^\d{4}-\d{2}$/.test(key)) return 'Sin fecha';
+  return new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(new Date(`${key}-01T00:00:00Z`));
+}

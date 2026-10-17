@@ -1,10 +1,11 @@
 ---
 // Campos de una factura / pago a proveedor (alta y edición)
-import AmountFields from './AmountFields.astro';
+import VatLines from './VatLines.astro';
 import FileField from './FileField.astro';
 import { PAYMENT_METHODS } from '../lib/finance.js';
 
-const { v = {}, errors = {}, suppliers = [], current = null, id = 'pay' } = Astro.props;
+// lines: desglose por tipos de IVA (guardado o lo escrito antes de un error)
+const { v = {}, errors = {}, suppliers = [], current = null, id = 'pay', rates = [], lines = [] } = Astro.props;
 const status = v.status ?? 'pendiente';
 ---
 <div class="row row-2">
@@ -28,7 +29,7 @@ const status = v.status ?? 'pendiente';
     <input id={`${id}-invoice_date`} name="invoice_date" type="date" value={v.invoice_date ?? ''} />
   </div>
 </div>
-<AmountFields id={id} base={v.base ?? v.base_cents ?? null} total={v.total ?? v.total_cents ?? null} vat={v.vat ?? '21'} errors={errors} />
+<VatLines id={id} lines={lines} rates={rates} error={errors.amount} />
 <div class="row row-2">
   <div class:list={['field', { 'has-error': errors.due_date }]}>
     <label for={`${id}-due_date`}>Fecha límite de pago</label>

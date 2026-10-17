@@ -11,7 +11,8 @@ import { getExpediente, loadFinance, suggestions } from '../../../../lib/data.js
 import { InvoiceSchema, IssueSchema, parseAllocations, validate, formToObject } from '../../../../lib/validate.js';
 import { storeFile, getFile, deleteFiles, fileUrl, UploadError } from '../../../../lib/files.js';
 import { invoiceState } from '../../../../lib/finance.js';
-import { eur, amountInput } from '../../../../lib/money.js';
+import { eur } from '../../../../lib/money.js';
+import { loadRates, invoiceAmounts, rawVatLines, linesOf } from '../../../../lib/vat.js';
 import { today, nowIso, formatDate, formatStamp } from '../../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markCollected } from '../../../../lib/actions.js';
 
@@ -40,6 +41,8 @@ let error = null;
 let errors = {};
 let v = { ...inv };
 let checked = null;
+let lines = linesOf(inv);
+const rates = await loadRates(db);
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -75,10 +78,10 @@ if (Astro.request.method === 'POST') {
   } else if ((input.intent === 'save' || input.intent === 'issue') && editable) {
     v = { ...inv, ...input };
     checked = form.getAll('po_ids').map(Number);
+    lines = rawVatLines(form);
     const alloc = parseAllocations(form, fin.summary.poRows, allocated);
-    if (alloc.ok && alloc.rows.length && !String(input.base ?? '').trim() && !String(input.total ?? '').trim()) {
-      input.base = amountInput(alloc.rows.reduce((a, r) => a + r.amount, 0));
-    }
+    // Sin importe escrito: la suma de las PO marcadas
+    const amounts = alloc.ok ? invoiceAmounts(form, rates, alloc.rows) : null;
     // Al ponerle número, Administración la da por emitida
     const issuing = admin && inv.status === 'por_emitir' && (input.intent === 'issue' || String(input.number ?? '').trim() !== '');
     if (issuing && !input.issued_on) input.issued_on = now;
@@ -89,6 +92,9 @@ if (Astro.request.method === 'POST') {
     } else if (!parsed.ok) {
       error = parsed.message;
       errors = parsed.errors;
+    } else if (!amounts.ok) {
+      error = amounts.message;
+      errors = { amount: amounts.message };
     } else if (!issue.ok) {
       error = `Para emitirla: ${issue.message}`;
       errors = issue.errors;
@@ -96,7 +102,7 @@ if (Astro.request.method === 'POST') {
       error = 'Una factura emitida tiene que tener su número.';
       errors = { number: error };
     } else {
-      const d = parsed.data;
+      const d = { ...parsed.data, base: amounts.base, total: amounts.total };
       try {
         const file = admin ? getFile(form, 'file') : null;
         const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : inv.file_id;
@@ -105,9 +111,9 @@ if (Astro.request.method === 'POST') {
         const status = issuing ? 'emitida' : inv.status;
         await db.batch([
           db.prepare(
-            `UPDATE invoices SET billed_to = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, number = ?, issued_on = ?, due_date = ?,
+            `UPDATE invoices SET billed_to = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?, number = ?, issued_on = ?, due_date = ?,
                     status = ?, file_id = ?, notes = ?, updated_at = ? WHERE id = ?`,
-          ).bind(d.billed_to, d.concept, d.base, d.total, d.vat, number, admin ? d.issued_on : inv.issued_on, admin ? d.due_date : inv.due_date,
+          ).bind(d.billed_to, d.concept, d.base, d.total, amounts.vat, JSON.stringify(amounts.lines), number, admin ? d.issued_on : inv.issued_on, admin ? d.due_date : inv.due_date,
             status, fileId, d.notes, nowIso(), fid),
           db.prepare('DELETE FROM invoice_pos WHERE invoice_id = ?').bind(fid),
           ...alloc.rows.map((r) => db.prepare('INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (?, ?, ?)').bind(fid, r.po_id, r.amount)),
@@ -143,7 +149,11 @@ const poList = fin.allocations.filter((a) => a.invoice_id === fid);
     </div>
     <dl class="kv">
       <dt>Cliente</dt><dd>{inv.billed_to}</dd>
-      <dt>Sin IVA</dt><dd class="money">{eur(inv.base_cents)}</dd>
+      <dt>Importe</dt>
+      <dd>
+        {linesOf(inv).map((l) => <span class="vat-line money">{l.label}: {eur(l.base)} sin IVA → <strong>{eur(l.total)}</strong></span>)}
+        {linesOf(inv).length > 1 && <span class="vat-line money">Total: {eur(inv.base_cents)} sin IVA → <strong>{eur(inv.total_cents)}</strong></span>}
+      </dd>
       {poList.length > 0 && <><dt>PO</dt><dd>{poList.map((a) => `${a.po_number} (${eur(a.amount_cents)})`).join(' · ')}</dd></>}
       <dt>Pedida</dt><dd>{inv.created_by_name ?? '—'} · {formatStamp(inv.created_at)}</dd>
       {inv.issued_on && <><dt>Emitida</dt><dd>{formatDate(inv.issued_on)}{inv.due_date && ` · vence ${formatDate(inv.due_date)}`}</dd></>}
@@ -176,7 +186,7 @@ const poList = fin.allocations.filter((a) => a.invoice_id === fid);
     <form method="post" enctype="multipart/form-data" class="form-section mt">
       <h2><Icon name="pencil" /> {inv.status === 'por_emitir' && admin ? 'Revisar y emitir' : 'Editar'}</h2>
       {inv.status === 'por_emitir' && admin && <p class="muted">Haz la factura en el programa de contabilidad y anota aquí su número, la fecha y el PDF.</p>}
-      <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} current={inv.file_id ? inv : null}
+      <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} current={inv.file_id ? inv : null} rates={rates} lines={lines}
         allocated={allocated} checked={checked} id="edit" />
       <div class="actions-inline">
         {inv.status === 'por_emitir' && admin && (

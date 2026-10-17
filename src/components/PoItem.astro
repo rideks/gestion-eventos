@@ -5,16 +5,14 @@ import { eur } from '../lib/money.js';
 import { formatDate } from '../lib/dates.js';
 import { fileUrl } from '../lib/files.js';
 
-const { po, showExp = false, canEdit = true } = Astro.props;
+const { po, showExp = false } = Astro.props;
 const href = fileUrl(po);
 const used = po.amount_cents - po.left_cents;
 ---
 <li class="item is-row">
   <div class="item-body">
     {showExp && <a class="item-meta" href={`/expedientes/${po.expediente_id}/cobros`}><strong>{po.exp_number ? `EXP ${po.exp_number}` : 'Solicitud'}</strong> · {po.exp_name}</a>}
-    {canEdit
-      ? <a class="item-title" href={`/expedientes/${po.expediente_id}/po/${po.id}`}>PO {po.number} <span class="muted">· {po.billed_to}</span></a>
-      : <span class="item-title">PO {po.number} <span class="muted">· {po.billed_to}</span></span>}
+    <a class="item-title" href={`/expedientes/${po.expediente_id}/po/${po.id}`}>PO {po.number} <span class="muted">· {po.billed_to}</span></a>
     <span class="item-meta">
       {po.issued_on && <span>Del {formatDate(po.issued_on)}</span>}
       <span>Facturado {eur(used)}</span>
@@ -30,5 +28,8 @@ const used = po.amount_cents - po.left_cents;
   <div class="item-amount">
     <span class="big-money money">{eur(po.amount_cents)}</span>
     <small>sin IVA</small>
+  </div>
+  <div class="item-foot">
+    <a class="btn btn-ghost btn-sm" href={`/expedientes/${po.expediente_id}/po/${po.id}`}><Icon name="eye" size={16} /> Ver</a>
   </div>
 </li>

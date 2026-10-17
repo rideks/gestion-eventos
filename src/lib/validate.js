@@ -3,7 +3,8 @@
 
 import { z } from 'zod';
 import { isDate } from './dates.js';
-import { parseAmount, resolveAmounts, VAT_KEYS } from './money.js';
+import { parseAmount } from './money.js';
+import { parseRate, rateLabel, vatColumn, baseFromTotalBp } from './vat.js';
 import { PAYMENT_METHODS } from './finance.js';
 
 // Quita caracteres de control (salvo saltos de línea y tabuladores) y espacios sobrantes
@@ -27,23 +28,9 @@ const optInt = (label, min, max) => z.preprocess(
 );
 const optDate = (label) => z.preprocess(blankToNull, z.string().refine(isDate, `${label}: fecha no válida`).nullable());
 const reqDate = (label) => z.preprocess((v) => clean(v ?? ''), z.string().refine(isDate, `${label}: elige una fecha`));
-/** Importe opcional → céntimos (null si está vacío, NaN si no es un número: lo explica resolveAmounts) */
-const amount = z.preprocess((v) => parseAmount(v), z.custom((v) => v === null || typeof v === 'number'));
-const vat = z.enum(VAT_KEYS, { error: 'IVA: elige el tipo' });
 const email = z.preprocess((v) => clean(v ?? '').toLowerCase(), z.email('Email no válido').max(200));
 const optEmail = (label) => z.preprocess(blankToNull, z.email(`${label}: no es un email válido`).max(200).nullable());
 const method = z.preprocess(blankToNull, z.enum(Object.keys(PAYMENT_METHODS), { error: 'Forma de pago no válida' }).nullable());
-
-/** Añade base/total resueltos (o el error) a un esquema con base, total y vat */
-const withAmounts = (schema, required = true) => schema.transform((d, ctx) => {
-  if (!required && d.base === null && d.total === null) return { ...d, base: 0, total: 0 };
-  const r = resolveAmounts(d);
-  if (!r.ok) {
-    ctx.addIssue({ code: 'custom', path: ['base'], message: r.message });
-    return z.NEVER;
-  }
-  return { ...d, base: r.base, total: r.total };
-});
 
 // Contraseña: longitud > complejidad (recomendación NIST). Se comprueba además contra filtraciones.
 const newPassword = z.string()
@@ -102,39 +89,42 @@ export const NumberSchema = z.object({
     .int('Número de expediente: sin decimales').min(1, 'Número de expediente: tiene que ser mayor que 0').max(9_999_999)),
 });
 
-/** Presupuesto aprobado (cada versión) */
-export const BudgetSchema = withAmounts(z.object({
-  base: amount,
-  total: amount,
-  vat,
-  note: optText('Nota', 300),
-}));
+// Los importes (con su desglose por tipos de IVA) se leen aparte: parseVatLines en src/lib/vat.js
 
-/** Una fila de la previsión de pagos de la solicitud (hotel: 21.400 € antes del 29/01) */
-export const ForecastRowSchema = withAmounts(z.object({
-  supplier: reqText('Previsión: proveedor', 2, 120),
-  concept: optText('Previsión: concepto', 160),
-  due_date: optDate('Previsión: fecha límite'),
-  base: z.preprocess(() => null, z.null()),
-  total: amount,
-  vat,
-}));
+/** Presupuesto aprobado (cada versión) */
+export const BudgetSchema = z.object({
+  note: optText('Nota', 300),
+});
+
+/**
+ * Una fila de pagos previstos (hotel: 21.400 € IVA incluido antes del 29/01).
+ * Se escribe el importe con IVA y su tipo; la base se calcula.
+ */
+export const forecastRowSchema = (rates) => z.object({
+  supplier: reqText('Proveedor', 2, 120),
+  concept: optText('Concepto', 160),
+  due_date: optDate('Fecha límite'),
+  total: z.preprocess((v) => parseAmount(v), z.custom((v) => typeof v === 'number' && !Number.isNaN(v),
+    'Importe: escríbelo con números, por ejemplo 21.400')),
+  rate: z.preprocess((v) => parseRate(v), z.custom((v) => typeof v === 'number', 'IVA: elige el tipo')),
+}).transform((d) => {
+  const base = baseFromTotalBp(d.total, d.rate);
+  const lines = [{ rate: d.rate, label: rateLabel(d.rate, rates), base, total: d.total }];
+  return { ...d, base, lines, vat: vatColumn(lines) };
+});
 
 // ── Proveedores ────────────────────────────────────────────────────────────
-export const PaymentSchema = withAmounts(z.object({
+export const PaymentSchema = z.object({
   supplier: reqText('Proveedor', 2, 120),
   concept: optText('Concepto', 160),
   invoice_number: optText('Nº de factura', 60),
   invoice_date: optDate('Fecha de la factura'),
-  base: amount,
-  total: amount,
-  vat,
   due_date: optDate('Fecha límite de pago'),
   status: z.enum(['pendiente', 'pagado']),
   paid_on: optDate('Fecha de pago'),
   method,
   notes: optText('Notas', 1000),
-})).refine((d) => d.status !== 'pagado' || d.paid_on, { path: ['paid_on'], message: 'Fecha de pago: indica cuándo se pagó' });
+}).refine((d) => d.status !== 'pagado' || d.paid_on, { path: ['paid_on'], message: 'Fecha de pago: indica cuándo se pagó' });
 
 export const PaySchema = z.object({
   paid_on: reqDate('Fecha de pago'),
@@ -151,17 +141,28 @@ export const PoSchema = z.object({
   notes: optText('Notas', 1000),
 });
 
-export const InvoiceSchema = withAmounts(z.object({
+export const InvoiceSchema = z.object({
   billed_to: reqText('Cliente', 2, 120),
   concept: optText('Concepto', 200),
-  base: amount,
-  total: amount,
-  vat,
   number: optText('Nº de factura', 60),
   issued_on: optDate('Fecha de emisión'),
   due_date: optDate('Vencimiento'),
   notes: optText('Notas', 1000),
-}));
+});
+
+/** Un tipo de IVA nuevo (Ajustes) */
+export const VatRateSchema = z.object({
+  label: reqText('Nombre', 2, 40),
+  rate: z.preprocess((v) => {
+    const n = Number(String(v ?? '').trim().replace(',', '.').replace(/\s*%$/, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN;
+  }, z.number({ error: 'Porcentaje: escribe un número, por ejemplo 21 o 9,5' }).int().min(0, 'Porcentaje: mínimo 0').max(10000, 'Porcentaje: máximo 100')),
+});
+
+export const FirstNumberSchema = z.object({
+  first_number: z.preprocess((v) => Number(clean(v ?? '')), z.number({ error: 'Primer número: escribe un número' })
+    .int('Primer número: sin decimales').min(1, 'Primer número: mayor que 0').max(9_999_999)),
+});
 
 export const IssueSchema = z.object({
   number: reqText('Nº de factura', 1, 60),

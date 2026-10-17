@@ -5,11 +5,12 @@ import { env } from 'cloudflare:workers';
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
-import AmountFields from '../../../components/AmountFields.astro';
+import VatLines from '../../../components/VatLines.astro';
 import FileField from '../../../components/FileField.astro';
 import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance } from '../../../lib/data.js';
 import { BudgetSchema, validate, formToObject } from '../../../lib/validate.js';
+import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../lib/vat.js';
 import { storeFile, getFile, fileUrl, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { today, formatStamp } from '../../../lib/dates.js';
@@ -25,21 +26,28 @@ const locked = isLocked(exp);
 const now = today();
 let error = null;
 let errors = {};
-let v = { vat: 'mixto' };
+let v = {};
+let lines = [];
+const rates = await loadRates(db);
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
   v = input;
+  lines = rawVatLines(form);
   const parsed = validate(BudgetSchema, input);
+  const amounts = parseVatLines(form, rates);
   if (locked) {
     error = LOCKED_MSG;
+  } else if (!amounts.ok) {
+    error = amounts.message;
+    errors = { amount: amounts.message };
   } else if (!parsed.ok) {
     error = parsed.message;
     errors = parsed.errors;
   } else {
-    const d = parsed.data;
+    const d = { ...parsed.data, base: amounts.base, total: amounts.total };
     try {
       const file = getFile(form, 'file');
       const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
@@ -47,8 +55,8 @@ if (Astro.request.method === 'POST') {
       const version = (last?.version ?? 0) + 1;
       const diff = last ? d.base - last.base_cents : 0;
       await db.batch([
-        db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, note, file_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .bind(id, version, d.base, d.total, d.note, fileId, me.id),
+        db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, file_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(id, version, d.base, d.total, JSON.stringify(amounts.lines), d.note, fileId, me.id),
         activityStmt(db, who, id, 'budget.add', `subió la versión ${version} del presupuesto: ${eur(d.base)} sin IVA`
           + (last ? ` (${diff >= 0 ? '+' : ''}${eur(diff)})` : '') + (d.note ? `. ${d.note}` : '')),
       ]);
@@ -77,13 +85,13 @@ const versions = fin.budgets;
   ) : <p class="flash flash-warn"><Icon name="info" /> Este expediente aún no tiene presupuesto.</p>}
 
   {!locked && (
-    <details class="add" open={!!error}>
+    <details class="add" open={!!error || Astro.url.searchParams.has('nuevo')}>
       <summary class="btn btn-primary"><Icon name="upload" size={18} /> <span class="when-closed">Subir nueva versión</span><span class="when-open">Cerrar formulario</span></summary>
       <form method="post" enctype="multipart/form-data" class="form-section">
         <h2><Icon name="file-spreadsheet" /> Nueva versión del presupuesto</h2>
         <p class="muted">Cuando el cliente cambia algo (más habitaciones, otro menú…), sube el presupuesto actualizado: pasa a ser el vigente y se guarda el historial.</p>
         <FileField label="Presupuesto actualizado" />
-        <AmountFields id="budget" base={v.base ?? null} total={v.total ?? null} vat={v.vat ?? 'mixto'} errors={errors} labelBase="Total sin IVA" labelTotal="Total con IVA" />
+        <VatLines id="budget" lines={lines} rates={rates} error={errors.amount} labelBase="Total sin IVA" labelTotal="Total con IVA" />
         <div class="field">
           <label for="note">¿Qué ha cambiado? <span class="opt">(opcional)</span></label>
           <input id="note" name="note" type="text" maxlength="300" value={v.note ?? ''} placeholder="+10 habitaciones el 05/05 y cena de gala" />
@@ -104,6 +112,9 @@ const versions = fin.budgets;
             <div class="item-body">
               <span class="item-title">Versión {b.version}{i === 0 && <span class="pill pill-gold">Vigente</span>}</span>
               <span class="item-meta"><span>{b.created_by_name ?? '—'} · {formatStamp(b.created_at)}</span>{b.note && <span>{b.note}</span>}</span>
+              {linesOf(b).length > 1 && (
+                <span class="item-meta">{linesOf(b).map((l) => <span>{l.label}: {eur(l.base)} → {eur(l.total)}</span>)}</span>
+              )}
               <span class="item-flags">
                 {diff !== null && diff !== 0 && <span class:list={['pill', diff > 0 ? 'pill-ok' : 'pill-danger']}>{diff > 0 ? '+' : ''}{eur(diff)}</span>}
                 {b.file_id && <a class="doc-link" href={fileUrl(b)} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{b.file_name}</a>}

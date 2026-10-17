@@ -1,22 +1,25 @@
 ---
 // Bandeja de facturación a clientes de TODOS los expedientes:
-// facturas pedidas por emitir, pendientes de cobro (vencidas primero) y PO aún sin facturar.
+//  · Pendientes: facturas pedidas por emitir, pendientes de cobro (vencidas primero) y PO aún sin facturar.
+//  · Cobradas: el historial por meses, con buscador.
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import PoItem from '../components/PoItem.astro';
 import { actor, readForm, can } from '../lib/app.js';
-import { openInvoices, posWithBalance } from '../lib/data.js';
+import { openInvoices, posWithBalance, collectedInvoices, byMonth } from '../lib/data.js';
 import { markCollected } from '../lib/actions.js';
 import { formToObject } from '../lib/validate.js';
 import { eur } from '../lib/money.js';
-import { today } from '../lib/dates.js';
+import { today, formatMonth } from '../lib/dates.js';
 import { plural } from '../lib/finance.js';
 
 const db = env.DB;
 const now = today();
 const admin = can(Astro.locals.user, 'invoice.issue');
+const view = Astro.url.searchParams.get('ver') === 'cobradas' ? 'cobradas' : 'pendientes';
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
 let error = null;
 
 if (Astro.request.method === 'POST') {
@@ -30,7 +33,10 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [invoices, pos] = await Promise.all([openInvoices(db), posWithBalance(db)]);
+const [invoices, pos, collected] = await Promise.all([
+  openInvoices(db), posWithBalance(db), view === 'cobradas' ? collectedInvoices(db, q) : [],
+]);
+const months = byMonth(collected, 'collected_on');
 const toIssue = invoices.filter((i) => i.status === 'por_emitir');
 const toCollect = invoices.filter((i) => i.status === 'emitida');
 const overdue = toCollect.filter((i) => i.due_date && i.due_date < now);
@@ -44,33 +50,63 @@ const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
     </div>
   </div>
 
-  <div class="kpis">
-    <a class="kpi" href="#emitir"><span>Por emitir</span><b class="money">{eur(total(toIssue))}</b><small>{plural(toIssue.length, 'factura pedida', 'facturas pedidas')}</small></a>
-    <a class="kpi" href="#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(total(toCollect))}</b><small>{plural(toCollect.length, 'factura', 'facturas')}</small></a>
-    <a class:list={['kpi', { 'is-danger': overdue.length > 0 }]} href="#cobrar"><span>Cobro vencido</span><b class="money">{eur(total(overdue))}</b><small>{plural(overdue.length, 'factura', 'facturas')}</small></a>
-    <a class="kpi is-gold" href="#po"><span>PO sin facturar</span><b class="money">{eur(total(pos, 'left_cents'))}</b><small>{pos.length} PO · sin IVA</small></a>
-  </div>
+  <nav class="x-tabs" aria-label="Cobros">
+    <a href="/cobros" aria-current={view === 'pendientes' ? 'page' : undefined}>Pendientes {toIssue.length + toCollect.length > 0 && <small class:list={{ 'is-alert': overdue.length > 0 }}>{toIssue.length + toCollect.length}</small>}</a>
+    <a href="/cobros?ver=cobradas" aria-current={view === 'cobradas' ? 'page' : undefined}>Cobradas</a>
+  </nav>
 
-  <section id="emitir">
-    <div class="sec-head">
-      <h2><Icon name="send" /> Por emitir ({toIssue.length})</h2>
-      <p>{admin ? 'Facturas que ha pedido Eventos: hazlas en contabilidad y anota el número y el PDF.' : 'Facturas pedidas que Administración aún no ha emitido.'}</p>
-    </div>
-    {toIssue.length ? <ul class="list">{toIssue.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay facturas pendientes de emitir.</p>}
-  </section>
+  {view === 'pendientes' ? (
+    <>
+      <div class="kpis">
+        <a class="kpi" href="#emitir"><span>Por emitir</span><b class="money">{eur(total(toIssue))}</b><small>{plural(toIssue.length, 'factura pedida', 'facturas pedidas')}</small></a>
+        <a class="kpi" href="#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(total(toCollect))}</b><small>{plural(toCollect.length, 'factura', 'facturas')}</small></a>
+        <a class:list={['kpi', { 'is-danger': overdue.length > 0 }]} href="#cobrar"><span>Cobro vencido</span><b class="money">{eur(total(overdue))}</b><small>{plural(overdue.length, 'factura', 'facturas')}</small></a>
+        <a class="kpi is-gold" href="#po"><span>PO sin facturar</span><b class="money">{eur(total(pos, 'left_cents'))}</b><small>{pos.length} PO · sin IVA</small></a>
+      </div>
 
-  <section id="cobrar">
-    <div class="sec-head">
-      <h2><Icon name="banknote" /> Pendientes de cobro ({toCollect.length})</h2>
-    </div>
-    {toCollect.length ? <ul class="list">{toCollect.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay cobros pendientes.</p>}
-  </section>
+      <section id="emitir">
+        <div class="sec-head">
+          <h2><Icon name="send" /> Por emitir ({toIssue.length})</h2>
+          <p>{admin ? 'Facturas que ha pedido Eventos: hazlas en contabilidad y anota el número y el PDF.' : 'Facturas pedidas que Administración aún no ha emitido.'}</p>
+        </div>
+        {toIssue.length ? <ul class="list">{toIssue.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay facturas pendientes de emitir.</p>}
+      </section>
 
-  <section id="po">
-    <div class="sec-head">
-      <h2><Icon name="file-text" /> PO sin facturar ({pos.length})</h2>
-      <p>Órdenes de compra recibidas con importe que aún no está en ninguna factura.</p>
-    </div>
-    {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp canEdit={false} />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
-  </section>
+      <section id="cobrar">
+        <div class="sec-head">
+          <h2><Icon name="banknote" /> Pendientes de cobro ({toCollect.length})</h2>
+        </div>
+        {toCollect.length ? <ul class="list">{toCollect.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay cobros pendientes.</p>}
+      </section>
+
+      <section id="po">
+        <div class="sec-head">
+          <h2><Icon name="file-text" /> PO sin facturar ({pos.length})</h2>
+          <p>Órdenes de compra recibidas con importe que aún no está en ninguna factura.</p>
+        </div>
+        {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
+      </section>
+    </>
+  ) : (
+    <>
+      <form method="get" class="quick-form" role="search">
+        <input type="hidden" name="ver" value="cobradas" />
+        <label class="visually-hidden" for="q">Buscar</label>
+        <input id="q" name="q" type="search" value={q} placeholder="Cliente, nº de factura o expediente" />
+        <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+        {q && <a class="btn btn-ghost btn-sm" href="/cobros?ver=cobradas">Quitar búsqueda</a>}
+      </form>
+      {q && <p class="muted mt">{plural(collected.length, 'factura', 'facturas')} para «{q}» · {eur(total(collected))}</p>}
+      {months.map((m) => (
+        <section>
+          <div class="group-title">
+            <h3>{formatMonth(m.key)} ({m.rows.length})</h3>
+            <span class="money">{eur(total(m.rows))}</span>
+          </div>
+          <ul class="list">{m.rows.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul>
+        </section>
+      ))}
+      {!collected.length && <p class="empty mt">{q ? 'No hay facturas que coincidan.' : 'Todavía no hay facturas cobradas.'}</p>}
+    </>
+  )}
 </App>

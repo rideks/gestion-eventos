@@ -1,16 +1,6 @@
 // Importes: siempre en CÉNTIMOS (enteros). 2.381,82 € → 238182.
 // Así las sumas del cierre cuadran al céntimo (con decimales, 0,1 + 0,2 ≠ 0,3).
 
-// En este orden en los desplegables (un objeto ordenaría las claves numéricas de menor a mayor)
-export const VAT_OPTIONS = [
-  ['21', '21 %'],
-  ['10', '10 %'],
-  ['4', '4 %'],
-  ['0', 'Exento (0 %)'],
-  ['mixto', 'Varios tipos'],
-];
-export const VAT_KEYS = VAT_OPTIONS.map(([k]) => k);
-
 const MAX_CENTS = 99_999_999_999; // 999.999.999,99 €
 
 /** ¿Los grupos de miles están bien escritos? '21.400' sí · '2.14' no */
@@ -87,40 +77,7 @@ export function amountInput(cents) {
 /** Para exportar a Excel en español: 238182 → '2381,82' */
 export const csvAmount = (cents) => ((cents ?? 0) / 100).toFixed(2).replace('.', ',');
 
-const rate = (vat) => Number(vat);
-
-/** Base sin IVA → total con IVA (redondeo al céntimo) */
-export const totalFromBase = (base, vat) => Math.round((base * (100 + rate(vat))) / 100);
-
-/** Total con IVA → base sin IVA */
-export const baseFromTotal = (total, vat) => Math.round((total * 100) / (100 + rate(vat)));
-
-/**
- * Completa base / total a partir del tipo de IVA.
- *  · Si llegan los dos, se respetan tal cual (se copian de la factura, con sus redondeos).
- *  · Si llega uno y el tipo es fijo, se calcula el otro.
- *  · Con «varios tipos» hacen falta los dos.
- * @returns {{ ok: true, base: number, total: number } | { ok: false, message: string }}
- */
-export function resolveAmounts({ base, total, vat }) {
-  const b = base ?? null;
-  const t = total ?? null;
-  if (Number.isNaN(b) || Number.isNaN(t)) {
-    return { ok: false, message: 'Importe: escríbelo con números, por ejemplo 21.400 o 1983,47' };
-  }
-  if (b === null && t === null) return { ok: false, message: 'Importe: escribe el importe sin IVA o con IVA' };
-  if (vat === 'mixto') {
-    if (b === null || t === null) {
-      return { ok: false, message: 'Importe: con varios tipos de IVA escribe el importe sin IVA y con IVA' };
-    }
-  }
-  const outBase = b ?? baseFromTotal(t, vat);
-  const outTotal = t ?? totalFromBase(b, vat);
-  if ((outBase < 0 && outTotal > 0) || (outBase > 0 && outTotal < 0)) {
-    return { ok: false, message: 'Importe: sin IVA y con IVA tienen que tener el mismo signo (en negativo para abonos)' };
-  }
-  return { ok: true, base: outBase, total: outTotal };
-}
+// El IVA (tipos y desglose por líneas) está en src/lib/vat.js
 
 /** Porcentaje con una cifra decimal: 0.6347 → '63,5 %' */
 export function pct(part, whole) {

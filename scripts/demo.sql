@@ -1,6 +1,6 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- Datos de EJEMPLO para desarrollo local (npm run db:demo). NUNCA en producción.
--- Borra todo y carga cuatro expedientes basados en casos reales:
+-- Borra todo (también los tipos de IVA, que vuelven a los de serie) y carga cuatro expedientes basados en casos reales:
 --   · EXP 1287 Workshop BMW (Valladolid)      → celebrado, por cerrar (como el Excel de cierre)
 --   · EXP 1285 Jornadas de trabajo ELECNOR    → cerrado
 --   · EXP 1289 Convención anual ROCHE         → en curso, con pagos urgentes y una factura pedida
@@ -12,6 +12,9 @@
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payments; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
+DELETE FROM vat_rates;
+INSERT INTO vat_rates (label, rate_bp, is_default) VALUES
+  ('IVA 21 %', 2100, 1), ('IVA 10 %', 1000, 0), ('IGIC 7 %', 700, 0), ('IVA 4 %', 400, 0), ('Exento 0 %', 0, 0);
 
 INSERT INTO users (id, name, email, password_hash, role) VALUES
   (1, 'Tania Ruiz', 'tania@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', 'admin'),
@@ -28,18 +31,18 @@ INSERT INTO expedientes (id, number, name, company, contact_name, contact_email,
   (4, NULL, 'Lanzamiento Winlevi', 'GLENMARK', 'Josephin Malade', 'josephin.malade@example.com', NULL, 'Marbella', '2027-04-20', '2027-04-22', 180,
    'El cliente quiere la factura del hotel separada del resto.', 'solicitado', 2, 2, '2026-10-16T15:42:00Z', NULL, NULL, NULL, NULL);
 
-INSERT INTO budgets (expediente_id, version, base_cents, total_cents, note, created_by, created_at) VALUES
-  (1, 1, 5850000, 6890000, 'Presupuesto aprobado por el cliente', 2, '2026-06-10T09:12:00Z'),
-  (1, 2, 6300000, 7415000, 'Cena para concesionarios y merchandising', 2, '2026-07-28T12:00:00Z'),
-  (2, 1, 1894000, 2151240, 'Presupuesto aprobado por el cliente', 2, '2026-03-02T08:30:00Z'),
-  (3, 1, 9640000, 11086000, 'Presupuesto aprobado por el cliente', 2, '2026-09-20T10:00:00Z'),
-  (4, 1, 13000000, 15020000, 'Presupuesto aprobado por el cliente', 2, '2026-10-16T15:42:00Z');
+-- Presupuestos con su desglose por tipos de IVA (alojamiento al 10 %, servicios al 21 %)
+INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, created_by, created_at) VALUES
+  (1, 1, 5850000, 6890000, '[{"rate":1000,"label":"IVA 10 %","base":1713636,"total":1885000},{"rate":2100,"label":"IVA 21 %","base":4136364,"total":5005000}]', 'Presupuesto aprobado por el cliente', 2, '2026-06-10T09:12:00Z'),
+  (1, 2, 6300000, 7415000, '[{"rate":1000,"label":"IVA 10 %","base":1890909,"total":2080000},{"rate":2100,"label":"IVA 21 %","base":4409091,"total":5335000}]', 'Cena para concesionarios y merchandising', 2, '2026-07-28T12:00:00Z'),
+  (2, 1, 1894000, 2151240, '[{"rate":1000,"label":"IVA 10 %","base":1277273,"total":1405000},{"rate":2100,"label":"IVA 21 %","base":616727,"total":746240}]', 'Presupuesto aprobado por el cliente', 2, '2026-03-02T08:30:00Z'),
+  (3, 1, 9640000, 11086000, '[{"rate":1000,"label":"IVA 10 %","base":5258182,"total":5784000},{"rate":2100,"label":"IVA 21 %","base":4381818,"total":5302000}]', 'Presupuesto aprobado por el cliente', 2, '2026-09-20T10:00:00Z'),
+  (4, 1, 13000000, 15020000, '[{"rate":1000,"label":"IVA 10 %","base":6454546,"total":7100001},{"rate":2100,"label":"IVA 21 %","base":6545454,"total":7919999}]', 'Presupuesto aprobado por el cliente', 2, '2026-10-16T15:42:00Z');
 
 -- ── EXP 1287 · lado izquierdo del Excel de cierre ─────────────────────────
 INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, due_date, status, paid_on, method, planned, created_by) VALUES
   (1, 'Hotel Barceló Valladolid', 'Alojamiento', '10000001225', '2026-08-01', 238182, 262000, '10', '2026-08-10', 'pagado', '2026-08-08', 'transferencia', 1, 2),
-  (1, 'Hotel Barceló Valladolid', 'Sala y coffee break', '10000002019', '2026-08-27', 82145, 90360, '10', '2026-09-15', 'pagado', '2026-09-10', 'transferencia', 1, 2),
-  (1, 'Hotel Barceló Valladolid', 'Sala y coffee break', '10000002019', '2026-08-27', 198347, 240000, '21', '2026-09-15', 'pagado', '2026-09-10', 'transferencia', 1, 2),
+  (1, 'Hotel Barceló Valladolid', 'Sala y coffee break', '10000002019', '2026-08-27', 280492, 330360, 'mixto', '2026-09-15', 'pagado', '2026-09-10', 'transferencia', 1, 2),
   (1, 'Hotel Barceló Valladolid', 'Extras', '10000003052', '2026-08-28', 33000, 36300, '10', '2026-09-15', 'pagado', '2026-09-10', 'transferencia', 0, 2),
   (1, 'Hotel Barceló Valladolid', 'Factura de comisión', 'NT/000086/26', '2026-09-05', -23255, -39150, 'mixto', NULL, 'pagado', '2026-09-20', 'transferencia', 0, 1),
   (1, 'La Parrilla de San Lorenzo', 'Cena · transferencia', 'F000102/596', '2026-08-26', 279545, 307500, '10', '2026-08-25', 'pagado', '2026-08-24', 'transferencia', 1, 2),
@@ -52,6 +55,9 @@ INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_
   (1, 'Work Center', 'Impresión', 'AP26009610', '2026-08-21', 29552, 35758, '21', NULL, 'pagado', '2026-08-21', 'tarjeta', 0, 2),
   (1, 'Work Center', 'Impresión', 'AP26009612', '2026-08-22', 8415, 10182, '21', NULL, 'pagado', '2026-08-22', 'tarjeta', 0, 2),
   (1, 'Gráficas Mercurio', 'Merchandising', '0234 / 2026', '2026-09-20', 39100, 47311, '21', '2026-10-21', 'pendiente', NULL, NULL, 0, 2);
+
+UPDATE payments SET vat_lines = '[{"rate":1000,"label":"IVA 10 %","base":82145,"total":90360},{"rate":2100,"label":"IVA 21 %","base":198347,"total":240000}]'
+ WHERE invoice_number = '10000002019';
 
 INSERT INTO purchase_orders (id, expediente_id, number, billed_to, amount_cents, issued_on, notes, created_by) VALUES
   (1, 1, '4500881200', 'BMW Ibérica', 1452046, '2026-07-20', 'Alojamiento y sala', 2),

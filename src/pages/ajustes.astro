@@ -1,0 +1,149 @@
+---
+// Ajustes (sólo Administración): los tipos de IVA que salen en todos los desplegables
+// y el primer número de expediente.
+import { env } from 'cloudflare:workers';
+import App from '../layouts/App.astro';
+import Icon from '../components/Icon.astro';
+import { deny, readForm, actor, logActivity } from '../lib/app.js';
+import { VatRateSchema, FirstNumberSchema, validate, formToObject } from '../lib/validate.js';
+import { loadRates, pctText } from '../lib/vat.js';
+import { suggestNumber } from '../lib/data.js';
+
+const denied = deny(Astro, 'settings');
+if (denied) return denied;
+
+const db = env.DB;
+let error = null;
+let errors = {};
+let v = {};
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const id = Number(input.id);
+
+  if (input.intent === 'add_rate') {
+    v = input;
+    const parsed = validate(VatRateSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (await db.prepare('SELECT 1 FROM vat_rates WHERE label = ? COLLATE NOCASE').bind(parsed.data.label).first()) {
+      error = `Ya hay un tipo que se llama «${parsed.data.label}».`;
+      errors = { label: error };
+    } else {
+      await db.prepare('INSERT INTO vat_rates (label, rate_bp) VALUES (?, ?)').bind(parsed.data.label, parsed.data.rate).run();
+      await logActivity(db, who, null, 'settings.vat', `añadió el tipo de IVA ${parsed.data.label}`);
+      return Astro.redirect('/ajustes?ok=creado', 303);
+    }
+  } else if (input.intent === 'default' && Number.isInteger(id)) {
+    await db.batch([
+      db.prepare('UPDATE vat_rates SET is_default = 0'),
+      db.prepare('UPDATE vat_rates SET is_default = 1 WHERE id = ?').bind(id),
+    ]);
+    return Astro.redirect('/ajustes?ok=guardado', 303);
+  } else if (input.intent === 'delete' && Number.isInteger(id)) {
+    const rate = await db.prepare('SELECT id, label, is_default FROM vat_rates WHERE id = ?').bind(id).first();
+    const { n } = await db.prepare('SELECT COUNT(*) AS n FROM vat_rates').first();
+    if (!rate) {
+      error = 'Ese tipo ya no existe.';
+    } else if (n <= 1) {
+      error = 'Tiene que quedar al menos un tipo de IVA.';
+    } else {
+      await db.batch([
+        db.prepare('DELETE FROM vat_rates WHERE id = ?').bind(id),
+        // Si era el de por defecto, pasa a serlo el más alto que quede
+        ...(rate.is_default ? [db.prepare('UPDATE vat_rates SET is_default = 1 WHERE id = (SELECT id FROM vat_rates ORDER BY rate_bp DESC LIMIT 1)')] : []),
+      ]);
+      await logActivity(db, who, null, 'settings.vat', `quitó el tipo de IVA ${rate.label}`);
+      return Astro.redirect('/ajustes?ok=borrado', 303);
+    }
+  } else if (input.intent === 'first_number') {
+    const parsed = validate(FirstNumberSchema, input);
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else {
+      await db.prepare(
+        "INSERT INTO settings (key, value) VALUES ('first_number', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+      ).bind(String(parsed.data.first_number)).run();
+      return Astro.redirect('/ajustes?ok=guardado', 303);
+    }
+  }
+  if (error) Astro.response.status = 400;
+}
+
+const [rates, first, next] = await Promise.all([
+  loadRates(db),
+  db.prepare("SELECT value FROM settings WHERE key = 'first_number'").first().then((r) => r?.value ?? '1001'),
+  suggestNumber(db),
+]);
+---
+<App title="Ajustes" section="ajustes" error={error}>
+  <div class="page-top">
+    <div>
+      <h1>Ajustes</h1>
+      <p>Lo que comparte toda la aplicación</p>
+    </div>
+  </div>
+
+  <section class="form-section">
+    <h2><Icon name="receipt" /> Tipos de IVA</h2>
+    <p class="muted">Salen en todos los importes (presupuestos, pagos a proveedores, facturas) y en los pagos previstos.
+      El de <strong>por defecto</strong> es el que aparece marcado al empezar. Quitar un tipo no cambia lo que ya está guardado con él.</p>
+    <ul class="list">
+      {rates.map((r) => (
+        <li class="item">
+          <div class="item-body">
+            <span class="item-title">{r.label}</span>
+            <span class="item-meta"><span>{pctText(r.rate_bp)} %</span></span>
+          </div>
+          <div class="item-actions">
+            {r.is_default
+              ? <span class="pill pill-gold">Por defecto</span>
+              : (
+                <form method="post">
+                  <input type="hidden" name="id" value={r.id} />
+                  <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="default">Por defecto</button>
+                </form>
+              )}
+            <form method="post">
+              <input type="hidden" name="id" value={r.id} />
+              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Quitar «${r.label}» de la lista?`} aria-label={`Quitar ${r.label}`}><Icon name="trash-2" size={16} /></button>
+            </form>
+          </div>
+        </li>
+      ))}
+    </ul>
+    <form method="post" class="form">
+      <div class="row row-3">
+        <div class:list={['field', { 'has-error': errors.label }]}>
+          <label for="label">Nombre</label>
+          <input id="label" name="label" type="text" required maxlength="40" value={v.label ?? ''} placeholder="IGIC 3 %" />
+        </div>
+        <div class:list={['field', { 'has-error': errors.rate }]}>
+          <label for="rate">Porcentaje</label>
+          <input id="rate" name="rate" type="text" inputmode="decimal" required value={v.rate ?? ''} placeholder="3 o 9,5" />
+        </div>
+        <div class="field">
+          <span class="label" aria-hidden="true">&nbsp;</span>
+          <button class="btn btn-primary" type="submit" name="intent" value="add_rate"><Icon name="plus" size={18} /> Añadir tipo</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <form method="post" class="form-section mt">
+    <h2><Icon name="folder" /> Numeración de expedientes</h2>
+    <p class="muted">Al abrir una solicitud se propone el número siguiente al mayor que exista (ahora: <strong>{next}</strong>).
+      Si todavía no hay ninguno, se empieza por este.</p>
+    <div class="row row-2">
+      <div class:list={['field', { 'has-error': errors.first_number }]}>
+        <label for="first_number">Primer número</label>
+        <input id="first_number" name="first_number" type="number" min="1" inputmode="numeric" required value={first} />
+      </div>
+    </div>
+    <div><button class="btn btn-primary" type="submit" name="intent" value="first_number">Guardar</button></div>
+  </form>
+</App>

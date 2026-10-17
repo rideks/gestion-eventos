@@ -117,6 +117,16 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
     )
   )}
 
+  {!isLocked(exp) && (
+    <nav class="quick-actions no-print" aria-label="Añadir al expediente">
+      <a class="btn btn-primary btn-sm" href={`/expedientes/${id}/pagos?nuevo`}><Icon name="receipt" size={16} /> Añadir pago o factura de proveedor</a>
+      <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/pagos?nuevo=varios`}><Icon name="wallet" size={16} /> Varios pagos previstos</a>
+      <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cobros?nuevo=po`}><Icon name="file-text" size={16} /> Subir PO</a>
+      <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cobros?nuevo=factura`}><Icon name="send" size={16} /> {admin ? 'Nueva factura al cliente' : 'Pedir factura'}</a>
+      <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/presupuesto?nuevo`}><Icon name="file-spreadsheet" size={16} /> Nueva versión del presupuesto</a>
+    </nav>
+  )}
+
   <div class="kpis">
     <a class="kpi" href={`/expedientes/${id}/presupuesto`}>
       <span>Venta (presupuesto)</span>

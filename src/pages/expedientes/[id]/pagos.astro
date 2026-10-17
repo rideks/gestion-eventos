@@ -1,15 +1,19 @@
 ---
 // Pagos a proveedores del expediente (lado izquierdo del cierre).
 // Las previsiones de la solicitud ya están aquí: al llegar la factura se le añade y se marca pagada.
+// Se pueden ir añadiendo pagos en cualquier momento: uno con su factura, o varios de golpe
+// (al mismo proveedor o a varios).
 import { env } from 'cloudflare:workers';
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import PaymentForm from '../../../components/PaymentForm.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
+import ForecastRows from '../../../components/ForecastRows.astro';
 import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
-import { PaymentSchema, validate, formToObject } from '../../../lib/validate.js';
+import { PaymentSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
+import { loadRates, parseVatLines, rawVatLines } from '../../../lib/vat.js';
 import { storeFile, getFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { plural } from '../../../lib/finance.js';
@@ -24,10 +28,16 @@ if (!exp) return Astro.rewrite('/404');
 const me = Astro.locals.user;
 const now = today();
 const locked = isLocked(exp);
+const rates = await loadRates(db);
+// ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?proveedor=… lo rellena
+const params = Astro.url.searchParams;
+let open = params.has('nuevo') ? (params.get('nuevo') === 'varios' ? 'varios' : 'uno') : null;
+const presetSupplier = (params.get('proveedor') ?? '').slice(0, 120);
 let error = null;
 let errors = {};
-let v = {};
-let openAdd = Astro.url.searchParams.has('nuevo');
+let v = { supplier: presetSupplier };
+let lines = [];
+let many = [];
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -42,11 +52,16 @@ if (Astro.request.method === 'POST') {
     error = r.message;
   } else if (input.intent === 'add') {
     v = input;
-    openAdd = true;
+    open = 'uno';
+    lines = rawVatLines(form);
     const parsed = validate(PaymentSchema, input);
+    const amounts = parseVatLines(form, rates);
     if (!parsed.ok) {
       error = parsed.message;
       errors = parsed.errors;
+    } else if (!amounts.ok) {
+      error = amounts.message;
+      errors = { amount: amounts.message };
     } else {
       const d = parsed.data;
       try {
@@ -54,20 +69,42 @@ if (Astro.request.method === 'POST') {
         const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
         await db.batch([
           db.prepare(
-            `INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, due_date,
-                                   status, paid_on, method, planned, file_id, notes, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-          ).bind(id, d.supplier, d.concept, d.invoice_number, d.invoice_date, d.base, d.total, d.vat, d.due_date,
-            d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, fileId, d.notes, me.id),
+            `INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, vat_lines,
+                                   due_date, status, paid_on, method, planned, file_id, notes, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+          ).bind(id, d.supplier, d.concept, d.invoice_number, d.invoice_date, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
+            d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, fileId, d.notes, me.id),
           activityStmt(db, who, id, 'payment.add', d.invoice_number
-            ? `añadió la factura ${d.invoice_number} de ${d.supplier} (${eur(d.total)})`
-            : `añadió un pago a ${d.supplier} (${eur(d.total)})`),
+            ? `añadió la factura ${d.invoice_number} de ${d.supplier} (${eur(amounts.total)})`
+            : `añadió un pago a ${d.supplier} (${eur(amounts.total)})`),
         ]);
         return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
       } catch (err) {
         if (!(err instanceof UploadError)) throw err;
         error = err.message;
       }
+    }
+  } else if (input.intent === 'add_many') {
+    open = 'varios';
+    const col = (f) => form.getAll(`fc_${f}`).map(String);
+    many = col('supplier').map((supplier, i) => ({ supplier, concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
+      .filter((r) => r.supplier || r.total);
+    const rows = parseRows(form, 'fc', ['supplier', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate'] });
+    if (!rows.ok) {
+      error = rows.message;
+    } else if (!rows.rows.length) {
+      error = 'Escribe al menos un pago (proveedor e importe).';
+    } else {
+      const sum = rows.rows.reduce((a, r) => a + r.total, 0);
+      await db.batch([
+        ...rows.rows.map((r) => db.prepare(
+          `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        ).bind(id, r.supplier, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
+        activityStmt(db, who, id, 'payment.add',
+          `añadió ${plural(rows.rows.length, 'pago previsto', 'pagos previstos')} (${eur(sum)}): ${[...new Set(rows.rows.map((r) => r.supplier))].join(', ')}`),
+      ]);
+      return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
     }
   }
   Astro.response.status = 400;
@@ -89,18 +126,32 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
   </div>
 
   {!locked && (
-    <details class="add" open={openAdd}>
-      <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Añadir factura o pago</span><span class="when-open">Cerrar formulario</span></summary>
-      <form method="post" enctype="multipart/form-data" class="form-section">
-        <h2><Icon name="receipt" /> Factura o pago a proveedor</h2>
-        <p class="muted">Una factura que ha llegado (aunque no estuviera prevista), un pago con tarjeta o un abono/comisión (en negativo).
-          Si es la factura de un pago ya previsto, mejor ábrelo en la lista y añádesela allí.</p>
-        <PaymentForm v={v} errors={errors} suppliers={suppliers} id="new" />
-        <div class="actions-inline">
-          <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…">Guardar</button>
-        </div>
-      </form>
-    </details>
+    <div class="add-group">
+      <details class="add" open={open === 'uno'} name="nuevo-pago">
+        <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Añadir factura o pago</span><span class="when-open">Cerrar formulario</span></summary>
+        <form method="post" enctype="multipart/form-data" class="form-section">
+          <h2><Icon name="receipt" /> Factura o pago a proveedor</h2>
+          <p class="muted">Una factura que ha llegado (aunque no estuviera prevista), un pago con tarjeta o un abono/comisión (en negativo).
+            Si es la factura de un pago que ya está en la lista, ábrelo y añádesela allí.</p>
+          <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} id="new" />
+          <div class="actions-inline">
+            <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…">Guardar</button>
+          </div>
+        </form>
+      </details>
+      <details class="add" open={open === 'varios'} name="nuevo-pago">
+        <summary class="btn btn-ghost"><Icon name="wallet" size={18} /> <span class="when-closed">Añadir varios pagos previstos</span><span class="when-open">Cerrar formulario</span></summary>
+        <form method="post" class="form-section">
+          <h2><Icon name="wallet" /> Varios pagos previstos</h2>
+          <p class="muted">Pagos que habrá que hacer, al mismo proveedor o a varios (p. ej. un 2º pago al hotel y el autocar).
+            Las facturas se les añaden cuando lleguen.</p>
+          <ForecastRows rows={many} suppliers={suppliers} rates={rates} supplier={presetSupplier} addLabel="Añadir otra fila" />
+          <div class="actions-inline">
+            <button class="btn btn-primary" type="submit" name="intent" value="add_many" data-busy="Guardando…">Guardar pagos</button>
+          </div>
+        </form>
+      </details>
+    </div>
   )}
 
   <div class:list={['group-title', { 'is-danger': s.overdue.length > 0 }]}>

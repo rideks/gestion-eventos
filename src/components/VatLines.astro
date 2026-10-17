@@ -1,0 +1,145 @@
+---
+// Importe desglosado por tipos de IVA: una línea por tipo (sin IVA · tipo · con IVA).
+// «Añadir otro tipo de IVA» añade líneas (hotel al 10 % + servicios al 21 %…).
+// En cada línea basta con escribir uno de los dos importes: el otro se calcula; si se escriben
+// los dos (copiados de la factura, con sus redondeos) se respetan. Los tipos salen de Ajustes.
+import Icon from './Icon.astro';
+import { amountInput } from '../lib/money.js';
+import { MANUAL, defaultRate, pctText } from '../lib/vat.js';
+
+const {
+  id = 'vl', lines = [], rates = [], error = null, hint = null,
+  labelBase = 'Importe sin IVA', labelTotal = 'Importe con IVA',
+} = Astro.props;
+const def = defaultRate(rates);
+const rows = lines.length ? lines : [{ rate: def }];
+// Lo guardado puede tener un tipo que ya no está en la lista: se sigue ofreciendo en esa línea
+const known = new Set(rates.map((r) => String(r.rate_bp)));
+const value = (v) => (typeof v === 'string' ? v : amountInput(v ?? null));
+const rateValue = (l) => (l.rate === null ? MANUAL : String(l.rate ?? def));
+---
+<div class="vat-lines" data-vat-lines>
+  <div data-vat-rows>
+    {rows.map((l, i) => (
+      <div class="vat-row" data-vat-row>
+        <div class:list={['field vat-base', { 'has-error': error }]}>
+          <label class="vat-label" for={`${id}-base-${i}`}>{labelBase}</label>
+          <input id={`${id}-base-${i}`} name="vl_base" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={value(l.base)} data-base />
+        </div>
+        <div class="field vat-rate">
+          <label class="vat-label" for={`${id}-rate-${i}`}>Tipo de IVA</label>
+          <select id={`${id}-rate-${i}`} name="vl_rate" data-rate>
+            {rates.map((r) => <option value={r.rate_bp} selected={rateValue(l) === String(r.rate_bp)}>{r.label}</option>)}
+            {l.rate != null && !known.has(String(l.rate)) && <option value={l.rate} selected>{l.label ?? `${pctText(l.rate)} %`}</option>}
+            <option value={MANUAL} selected={rateValue(l) === MANUAL}>Otro (escribir los dos importes)</option>
+          </select>
+        </div>
+        <div class:list={['field vat-total', { 'has-error': error }]}>
+          <label class="vat-label" for={`${id}-total-${i}`}>{labelTotal}</label>
+          <input id={`${id}-total-${i}`} name="vl_total" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={value(l.total)} data-total />
+        </div>
+        <button type="button" class="btn btn-ghost btn-icon vat-remove" data-remove-line aria-label="Quitar esta línea" title="Quitar esta línea" hidden={rows.length === 1}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+    ))}
+  </div>
+  <div class="vat-foot">
+    <button type="button" class="btn btn-ghost btn-sm" data-add-line hidden><Icon name="plus" size={16} /> Añadir otro tipo de IVA</button>
+    <p class="vat-sum money" data-vat-sum aria-live="polite"></p>
+  </div>
+  <p class="hint muted small">
+    {hint ?? 'En cada línea escribe un importe y el otro se calcula solo. Si hay varios tipos de IVA, añade una línea por tipo. Abonos y comisiones, en negativo.'}
+    {error && <strong class="error"> {error}</strong>}
+  </p>
+</div>
+
+<script>
+  import { parseAmount, amountInput, eur } from '../lib/money.js';
+  import { totalFromBaseBp, baseFromTotalBp, MANUAL } from '../lib/vat.js';
+
+  let uid = 0;
+  document.querySelectorAll('[data-vat-lines]').forEach((box) => {
+    const list = box.querySelector('[data-vat-rows]');
+    const add = box.querySelector('[data-add-line]');
+    const sum = box.querySelector('[data-vat-sum]');
+    if (!(list instanceof HTMLElement) || !(add instanceof HTMLButtonElement)) return;
+    add.hidden = false;
+
+    const parts = (row) => ({
+      base: row.querySelector('[data-base]'),
+      total: row.querySelector('[data-total]'),
+      rate: row.querySelector('[data-rate]'),
+    });
+    // Un importe es "manual" si la persona lo ha escrito; el otro se recalcula
+    const isManual = (input) => input.dataset.manual === '1';
+    const fill = (row, from) => {
+      const { base, total, rate } = parts(row);
+      if (rate.value === MANUAL) return;
+      const target = from === base ? total : base;
+      if (isManual(target)) return;
+      const v = parseAmount(from.value);
+      const bp = Number(rate.value);
+      target.value = v === null || Number.isNaN(v) ? '' : amountInput(from === base ? totalFromBaseBp(v, bp) : baseFromTotalBp(v, bp));
+    };
+    const refresh = () => {
+      const rows = [...list.querySelectorAll('[data-vat-row]')];
+      rows.forEach((r) => { r.querySelector('[data-remove-line]').hidden = rows.length === 1; });
+      if (!sum) return;
+      let b = 0;
+      let t = 0;
+      rows.forEach((r) => {
+        const { base, total } = parts(r);
+        const vb = parseAmount(base.value);
+        const vt = parseAmount(total.value);
+        if (vb !== null && !Number.isNaN(vb)) b += vb;
+        if (vt !== null && !Number.isNaN(vt)) t += vt;
+      });
+      sum.textContent = rows.length > 1 ? `Total: ${eur(b)} sin IVA · ${eur(t)} con IVA` : '';
+    };
+
+    list.addEventListener('input', (e) => {
+      const input = e.target;
+      if (!(input instanceof HTMLInputElement)) return;
+      const row = input.closest('[data-vat-row]');
+      input.dataset.manual = input.value.trim() ? '1' : '';
+      fill(row, input);
+      refresh();
+    });
+    list.addEventListener('change', (e) => {
+      const select = e.target;
+      if (!(select instanceof HTMLSelectElement)) return;
+      const row = select.closest('[data-vat-row]');
+      const { base, total } = parts(row);
+      // Se recalcula el importe que no se ha escrito a mano
+      if (isManual(total) && !isManual(base)) fill(row, total);
+      else if (!isManual(total) || !isManual(base)) fill(row, base);
+      refresh();
+    });
+    list.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest('[data-remove-line]') : null;
+      if (!btn) return;
+      btn.closest('[data-vat-row]')?.remove();
+      refresh();
+    });
+    add.addEventListener('click', () => {
+      const first = list.querySelector('[data-vat-row]');
+      const row = first.cloneNode(true);
+      uid += 1;
+      row.querySelectorAll('input, select').forEach((el) => {
+        if (el instanceof HTMLInputElement) {
+          el.value = '';
+          el.dataset.manual = '';
+        }
+        if (el instanceof HTMLSelectElement) el.selectedIndex = 0;
+        const label = row.querySelector(`label[for="${el.id}"]`);
+        el.id = `${el.id}-n${uid}`;
+        if (label) label.htmlFor = el.id;
+      });
+      list.append(row);
+      refresh();
+      row.querySelector('input')?.focus();
+    });
+    refresh();
+  });
+</script>

@@ -10,6 +10,7 @@ const ONLY = {
   'invoice.issue': ['admin'],        // poner nº a una factura, marcarla cobrada o anularla
   'delete': ['admin'],               // borrar filas de otras personas
   'users': ['admin'],
+  'settings': ['admin'],             // tipos de IVA y numeración
 };
 
 export const can = (user, action) => !!user && (ONLY[action] ?? ['admin', 'eventos']).includes(user.role);

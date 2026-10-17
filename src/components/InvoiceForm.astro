@@ -1,7 +1,7 @@
 ---
 // Campos de una factura al cliente: a quién, qué PO cubre (y cuánto de cada una) e importes.
 // Administración ve además el nº de factura, las fechas y el PDF emitido.
-import AmountFields from './AmountFields.astro';
+import VatLines from './VatLines.astro';
 import FileField from './FileField.astro';
 import { eur, amountInput } from '../lib/money.js';
 
@@ -9,6 +9,7 @@ const {
   v = {}, errors = {}, companies = [], poRows = [], current = null, id = 'inv', admin = false,
   allocated = new Map(), // po_id → importe que esta factura ya tiene de esa PO (al editar)
   checked = null,        // po_id marcados tras un error
+  rates = [], lines = [], // tipos de IVA y desglose (guardado o lo escrito antes de un error)
 } = Astro.props;
 // PO que se pueden usar: las que tienen saldo y las que ya usa esta factura
 const usable = poRows.filter((po) => po.left_cents > 0 || allocated.has(po.id));
@@ -52,11 +53,11 @@ const amountFor = (po) => {
   ) : (
     <p class="muted small">No hay PO con saldo. Si el cliente trabaja con PO, súbelas primero en «Órdenes de compra»; si no, deja esto así.</p>
   )}
-  <p class="hint">Al marcar las PO, el importe sin IVA de la factura se rellena con la suma.</p>
+  <p class="hint">Al marcar las PO, el importe sin IVA de la factura se rellena con la suma (si tiene una sola línea de IVA).</p>
 </fieldset>
 
-<AmountFields id={id} base={v.base ?? v.base_cents ?? null} total={v.total ?? v.total_cents ?? null} vat={v.vat ?? '21'} errors={errors}
-  hint="Si se queda vacío, se usa la suma de las PO marcadas. Con varios tipos de IVA, escribe los dos importes." />
+<VatLines id={id} lines={lines} rates={rates} error={errors.amount}
+  hint="Si se queda vacío, se usa la suma de las PO marcadas. Con varios tipos de IVA, añade una línea por tipo." />
 
 {admin && (
   <>
@@ -87,10 +88,12 @@ const amountFor = (po) => {
 
   document.querySelectorAll('[data-po-alloc]').forEach((box) => {
     const form = box.closest('form');
-    const base = form?.querySelector('[data-base]');
-    if (!(base instanceof HTMLInputElement)) return;
     let lastAuto = '';
     const update = () => {
+      // Sólo con una línea de IVA: con varias, el reparto entre tipos lo decide la persona
+      const rows = form?.querySelectorAll('[data-vat-row]') ?? [];
+      const base = rows.length === 1 ? rows[0].querySelector('[data-base]') : null;
+      if (!(base instanceof HTMLInputElement)) return;
       let cents = 0;
       let any = false;
       box.querySelectorAll('tbody tr').forEach((row) => {

@@ -13,7 +13,8 @@ import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
 import { PoSchema, InvoiceSchema, parseAllocations, validate, formToObject } from '../../../lib/validate.js';
 import { storeFile, getFile, UploadError } from '../../../lib/files.js';
-import { eur, amountInput } from '../../../lib/money.js';
+import { eur } from '../../../lib/money.js';
+import { loadRates, invoiceAmounts, rawVatLines } from '../../../lib/vat.js';
 import { today } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
 
@@ -32,6 +33,8 @@ let errors = {};
 let poValues = { billed_to: exp.company };
 let invValues = { billed_to: exp.company };
 let checked = null;
+let invLines = [];
+const rates = await loadRates(db);
 let open = Astro.url.searchParams.get('nuevo');
 
 if (Astro.request.method === 'POST') {
@@ -72,28 +75,30 @@ if (Astro.request.method === 'POST') {
     open = 'factura';
     invValues = input;
     checked = form.getAll('po_ids').map(Number);
+    invLines = rawVatLines(form);
     const alloc = parseAllocations(form, fin.summary.poRows);
-    // Sin importe escrito: la suma de las PO marcadas
-    if (alloc.ok && alloc.rows.length && !String(input.base ?? '').trim() && !String(input.total ?? '').trim()) {
-      input.base = amountInput(alloc.rows.reduce((a, r) => a + r.amount, 0));
-    }
     const parsed = validate(InvoiceSchema, input);
+    // Sin importe escrito: la suma de las PO marcadas
+    const amounts = alloc.ok ? invoiceAmounts(form, rates, alloc.rows) : null;
     if (!alloc.ok) {
       error = alloc.message;
     } else if (!parsed.ok) {
       error = parsed.message;
       errors = parsed.errors;
+    } else if (!amounts.ok) {
+      error = amounts.message;
+      errors = { amount: amounts.message };
     } else {
-      const d = parsed.data;
+      const d = { ...parsed.data, base: amounts.base, total: amounts.total };
       // Administración puede registrarla ya emitida (con su número)
       const issued = admin && d.number;
       try {
         const file = admin ? getFile(form, 'file') : null;
         const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
         const inv = await db.prepare(
-          `INSERT INTO invoices (expediente_id, number, billed_to, concept, base_cents, total_cents, vat, status, issued_on, due_date, file_id, notes, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        ).bind(id, issued ? d.number : null, d.billed_to, d.concept, d.base, d.total, d.vat, issued ? 'emitida' : 'por_emitir',
+          `INSERT INTO invoices (expediente_id, number, billed_to, concept, base_cents, total_cents, vat, vat_lines, status, issued_on, due_date, file_id, notes, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        ).bind(id, issued ? d.number : null, d.billed_to, d.concept, d.base, d.total, amounts.vat, JSON.stringify(amounts.lines), issued ? 'emitida' : 'por_emitir',
           issued ? (d.issued_on ?? now) : null, issued ? d.due_date : null, fileId, d.notes, me.id).first();
         const poText = alloc.rows.length
           ? ` con la${alloc.rows.length > 1 ? 's' : ''} PO ${alloc.rows.map((r) => fin.summary.poRows.find((p) => p.id === r.po_id).number).join(', ')}`
@@ -152,7 +157,7 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
   )}
   {s.poRows.length ? (
     <>
-      <ul class="list">{s.poRows.map((po) => <PoItem po={po} canEdit={!locked} />)}</ul>
+      <ul class="list">{s.poRows.map((po) => <PoItem po={po} />)}</ul>
       <p class="list-total"><span>Total PO <b class="money">{eur(s.poTotal)}</b></span><span>Sin facturar <b class="money">{eur(s.poLeft)}</b></span></p>
     </>
   ) : <p class="empty">Aún no hay PO del cliente.</p>}
@@ -167,7 +172,7 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
     <details class="add" open={open === 'factura'}>
       <summary class="btn btn-primary"><Icon name="send" size={18} /> <span class="when-closed">{admin ? 'Nueva factura' : 'Pedir factura'}</span><span class="when-open">Cerrar formulario</span></summary>
       <form method="post" enctype="multipart/form-data" class="form-section">
-        <InvoiceForm v={invValues} errors={open === 'factura' ? errors : {}} companies={companies} poRows={s.poRows} admin={admin} checked={checked} id="newinv" />
+        <InvoiceForm v={invValues} errors={open === 'factura' ? errors : {}} companies={companies} poRows={s.poRows} admin={admin} checked={checked} rates={rates} lines={invLines} id="newinv" />
         <div class="actions-inline">
           <button class="btn btn-primary" type="submit" name="intent" value="add_invoice" data-busy="Guardando…">{admin ? 'Guardar factura' : 'Pedir factura a Administración'}</button>
         </div>

@@ -44,6 +44,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; line-height: 1.15; }
 p { margin: 0; }
 :focus-visible { outline: 3px solid var(--c1); outline-offset: 2px; border-radius: 6px; }
+[hidden] { display: none !important; }
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .muted { color: var(--muted); }
 .small { font-size: 0.9rem; }
@@ -472,6 +473,7 @@ a.item-title { text-decoration: none; color: inherit; }
   min-height: 38px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 10px; background: #fff; font-size: 0.95rem;
 }
 .quick-form input[type='text'] { width: 160px; }
+.quick-form input[type='search'] { width: min(100%, 360px); }
 .item-foot .quick-form { flex: 1 1 280px; justify-content: flex-end; }
 .item-foot .quick-form input[type='date'], .item-foot .quick-form select { flex: 0 1 160px; min-width: 0; }
 .group-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 22px 0 10px; }
@@ -520,3 +522,32 @@ a.item-title { text-decoration: none; color: inherit; }
 .activity li > span { min-width: 0; }
 fieldset.form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .form-section + .kpis { margin-top: 16px; }
+
+/* ── Importe desglosado por tipos de IVA ────────────────────────────────── */
+.vat-lines { display: flex; flex-direction: column; gap: 10px; }
+.vat-lines [data-vat-rows] { display: flex; flex-direction: column; gap: 10px; }
+.vat-row {
+  display: grid; gap: 8px 12px; align-items: end;
+  grid-template-columns: 1fr 1fr auto; grid-template-areas: 'base total remove' 'rate rate rate';
+  padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+}
+.vat-base { grid-area: base; }
+.vat-rate { grid-area: rate; }
+.vat-total { grid-area: total; }
+.vat-remove { grid-area: remove; align-self: end; margin-bottom: 4px; }
+.vat-row input[data-base], .vat-row input[data-total] { text-align: right; font-variant-numeric: tabular-nums; }
+.vat-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.vat-sum { font-weight: 700; }
+.vat-sum:empty { display: none; }
+@media (min-width: 640px) {
+  .vat-row { grid-template-columns: 1fr minmax(170px, 1fr) 1fr auto; grid-template-areas: 'base rate total remove'; padding: 0; border: 0; background: none; }
+  /* Las etiquetas sólo en la primera línea (las demás, para lectores de pantalla) */
+  .vat-row:not(:first-child) .vat-label { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+/* Dos botones de «añadir»: el formulario abierto pasa a su propia fila */
+.add-group { display: flex; flex-wrap: wrap; gap: 0 10px; }
+.add-group > details[open] { flex-basis: 100%; order: 2; }
+.vat-line { display: block; font-weight: 600; }
+.vat-line + .vat-line { margin-top: 2px; }
+.vat-line:last-child:not(:first-child) { padding-top: 4px; border-top: 1px dashed var(--line); }
+.quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }

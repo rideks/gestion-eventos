@@ -13,15 +13,13 @@ const href = fileUrl(i);
 const edit = `/expedientes/${i.expediente_id}/facturas/${i.id}`;
 const pos = poNumbers || i.po_numbers;
 const title = i.number ? `Factura ${i.number}` : 'Factura por emitir';
-// Pie con botones sólo para Administración cuando hay que emitirla o cobrarla
-const actions = canEdit && canIssue && (i.status === 'por_emitir' || i.status === 'emitida');
+// Administración puede emitirla o cobrarla desde la lista; todos pueden abrirla para verla
+const actions = canEdit && canIssue;
 ---
 <li class:list={['item is-row', { 'is-muted': i.status === 'anulada' }]}>
   <div class="item-body">
     {showExp && <a class="item-meta" href={`/expedientes/${i.expediente_id}/cobros`}><strong>{i.exp_number ? `EXP ${i.exp_number}` : 'Solicitud'}</strong> · {i.exp_name}</a>}
-    {canEdit
-      ? <a class="item-title" href={edit}>{title} <span class="muted">· {i.billed_to}</span></a>
-      : <span class="item-title">{title} <span class="muted">· {i.billed_to}</span></span>}
+    <a class="item-title" href={edit}>{title} <span class="muted">· {i.billed_to}</span></a>
     <span class="item-meta">
       {i.concept && <span>{i.concept}</span>}
       {pos && <span>PO {pos}</span>}
@@ -38,9 +36,8 @@ const actions = canEdit && canIssue && (i.status === 'por_emitir' || i.status ==
     <span class:list={['big-money money', { neg: i.total_cents < 0 }]}>{eur(i.total_cents)}</span>
     <small class="money">{eur(i.base_cents)} sin IVA</small>
   </div>
-  {actions && (
-    <div class="item-foot">
-      {i.status === 'emitida' && (
+  <div class="item-foot">
+      {actions && i.status === 'emitida' && (
         <form method="post" class="quick-form">
           <input type="hidden" name="intent" value="collect" />
           <input type="hidden" name="invoice_id" value={i.id} />
@@ -49,7 +46,8 @@ const actions = canEdit && canIssue && (i.status === 'por_emitir' || i.status ==
           <button class="btn btn-sm" type="submit" data-busy="Guardando…"><Icon name="check" size={16} /> Cobrada</button>
         </form>
       )}
-      {i.status === 'por_emitir' && <a class="btn btn-primary btn-sm" href={edit}><Icon name="send" size={16} /> Emitir</a>}
-    </div>
-  )}
+      {actions && i.status === 'por_emitir'
+        ? <a class="btn btn-primary btn-sm" href={edit}><Icon name="send" size={16} /> Emitir</a>
+        : <a class="btn btn-ghost btn-sm" href={edit}><Icon name="eye" size={16} /> Ver</a>}
+  </div>
 </li>
