@@ -1,36 +1,48 @@
 ---
+// Una PO del cliente: qué facturas la cubren, cuánto queda, facturarla o darla por cerrada, y editarla.
+// Una PO está «facturada» cuando hay facturas al cliente que la incluyen («PO que cubre esta factura»);
+// si el resto ya no se va a facturar (el evento costó menos, el cliente la recortó…), se cierra.
 import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
 import ExpHeader from '../../../../components/ExpHeader.astro';
 import PoForm from '../../../../components/PoForm.astro';
+import Pill from '../../../../components/Pill.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../../lib/data.js';
-import { PoSchema, validate, formToObject } from '../../../../lib/validate.js';
+import { PoSchema, PoCloseSchema, validate, formToObject } from '../../../../lib/validate.js';
 import { storeFile, getFile, deleteFiles, UploadError } from '../../../../lib/files.js';
+import { invoiceState } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
-import { today } from '../../../../lib/dates.js';
+import { today, nowIso, formatStamp } from '../../../../lib/dates.js';
 import { isLocked, LOCKED_MSG } from '../../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const poid = parseId(Astro.params.poid);
 const exp = id ? await getExpediente(db, id) : null;
-const po = exp && poid ? await db.prepare(
-  'SELECT po.*, f.name AS file_name FROM purchase_orders po LEFT JOIN files f ON f.id = po.file_id WHERE po.id = ? AND po.expediente_id = ?',
-).bind(poid, id).first() : null;
-if (!po) return Astro.rewrite('/404');
+const now = today();
+const fin = exp && poid ? await loadFinance(db, id, now) : null;
+const row = fin?.summary.poRows.find((r) => r.id === poid);
+if (!row) return Astro.rewrite('/404');
 
+const po = row;
 const me = Astro.locals.user;
+const admin = can(me, 'invoice.issue');
 const locked = isLocked(exp);
-const fin = await loadFinance(db, id, today());
-const row = fin.summary.poRows.find((r) => r.id === poid);
-const used = po.amount_cents - row.left_cents;
+const used = row.used_cents;
+const left = row.left_cents;
 const canDelete = !locked && (can(me, 'delete') || po.created_by === me.id);
 const back = `/expedientes/${id}/cobros`;
+const self = `/expedientes/${id}/po/${poid}`;
+// Facturas al cliente que llevan esta PO (las anuladas se ven, pero no cuentan)
+const covering = fin.allocations.filter((a) => a.po_id === poid)
+  .map((a) => ({ ...a, invoice: fin.invoices.find((i) => i.id === a.invoice_id) }))
+  .filter((a) => a.invoice);
 let error = null;
 let errors = {};
 let v = { ...po };
+let closeNote = '';
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -38,16 +50,40 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   if (locked) {
     error = LOCKED_MSG;
+  } else if (input.intent === 'close') {
+    const parsed = validate(PoCloseSchema, input);
+    closeNote = String(input.closed_note ?? '');
+    if (po.closed) {
+      return Astro.redirect(self, 303);
+    } else if (left <= 0) {
+      error = 'Esta PO ya está facturada entera: no hace falta cerrarla.';
+    } else if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else {
+      const note = parsed.data.closed_note;
+      await db.batch([
+        db.prepare('UPDATE purchase_orders SET closed_at = ?, closed_by = ?, closed_note = ? WHERE id = ?').bind(nowIso(), me.id, note, poid),
+        activityStmt(db, who, id, 'po.close', `cerró la PO ${po.number}: los ${eur(left)} sin facturar no se facturarán${note ? ` (${note})` : ''}`),
+      ]);
+      return Astro.redirect(`${self}?ok=po_cerrada`, 303);
+    }
+  } else if (input.intent === 'reopen' && po.closed) {
+    await db.batch([
+      db.prepare('UPDATE purchase_orders SET closed_at = NULL, closed_by = NULL, closed_note = NULL WHERE id = ?').bind(poid),
+      activityStmt(db, who, id, 'po.reopen', `reabrió la PO ${po.number}${left > 0 ? ` (vuelven a quedar ${eur(left)} sin facturar)` : ''}`),
+    ]);
+    return Astro.redirect(`${self}?ok=po_reabierta`, 303);
   } else if (input.intent === 'remove_file' && po.file_id) {
     await db.batch([
       db.prepare('UPDATE purchase_orders SET file_id = NULL WHERE id = ?').bind(poid),
       activityStmt(db, who, id, 'po.file', `quitó el documento de la PO ${po.number}`),
     ]);
     await deleteFiles(db, env.DOCS, [po.file_id]);
-    return Astro.redirect(`/expedientes/${id}/po/${poid}?ok=guardado`, 303);
+    return Astro.redirect(`${self}?ok=guardado`, 303);
   } else if (input.intent === 'delete' && canDelete) {
-    if (fin.allocations.some((a) => a.po_id === poid)) {
-      error = 'Esta PO ya está en alguna factura: quítala de la factura antes de borrarla.';
+    if (covering.length) {
+      error = 'Esta PO ya está en alguna factura: quítala de la factura antes de borrarla (o ciérrala si el resto no se va a facturar).';
     } else {
       await db.batch([
         db.prepare('DELETE FROM purchase_orders WHERE id = ?').bind(poid),
@@ -87,13 +123,65 @@ if (Astro.request.method === 'POST') {
 }
 
 const { companies } = await suggestions(db);
+const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'danger' }
+  : left === 0 ? { label: 'Facturada', tone: 'ok' }
+  : po.closed ? { label: 'Cerrada', tone: 'muted' }
+  : { label: `Sin facturar ${eur(left)}`, tone: 'warn' };
 ---
 <App title={`PO ${po.number}`} section="expedientes" error={error}>
   <ExpHeader exp={exp} tab="cobros" />
   <a class="back" href={back}><Icon name="arrow-left" size={18} /> Cobros del expediente</a>
-  <form method="post" enctype="multipart/form-data" class="form-section">
-    <h2><Icon name="file-text" /> PO {po.number}</h2>
-    <p class="muted small">Facturado {eur(used)} · sin facturar {eur(row.left_cents)}</p>
+
+  <section class="card">
+    <div class="sec-head">
+      <h2><Icon name="file-text" /> PO {po.number} <Pill state={state} /></h2>
+      <span class="big-money money">{eur(po.amount_cents)}</span>
+    </div>
+    <dl class="kv">
+      <dt>Cliente</dt><dd>{po.billed_to}</dd>
+      <dt>Facturado</dt>
+      <dd>
+        {eur(used)}
+        {covering.map((a) => (
+          <span class="vat-line">
+            <a href={`/expedientes/${id}/facturas/${a.invoice_id}`}>{a.invoice.number ? `Factura ${a.invoice.number}` : 'Factura por emitir'}</a>{' · '}
+            {eur(a.amount_cents)} <Pill state={invoiceState(a.invoice, now)} />
+          </span>
+        ))}
+      </dd>
+      <dt>Sin facturar</dt>
+      <dd>{eur(Math.max(0, left))}{po.closed && left > 0 && ' · no se facturará (PO cerrada)'}</dd>
+      {po.closed && <><dt>Cerrada</dt><dd>{po.closed_by_name ?? '—'} · {formatStamp(po.closed_at)}{po.closed_note && ` · ${po.closed_note}`}</dd></>}
+    </dl>
+    {!covering.length && !po.closed && (
+      <p class="muted small mt">Una PO queda facturada cuando una factura al cliente la incluye en «PO que cubre esta factura».
+        El documento adjunto aquí debe ser la PO que envía el cliente, no una factura.</p>
+    )}
+
+    {!locked && (
+      <div class="actions-inline mt no-print">
+        {!po.closed && left > 0 && (
+          <a class="btn btn-primary btn-sm" href={`${back}?nuevo=factura&po=${poid}#nueva-factura`}>
+            <Icon name="send" size={16} /> {admin ? 'Facturar' : 'Pedir factura'} {eur(left)}</a>
+        )}
+        {!po.closed && left > 0 && (
+          <form method="post" class="quick-form">
+            <label class="visually-hidden" for="closed_note">Motivo para cerrar la PO</label>
+            <input id="closed_note" type="text" name="closed_note" maxlength="300" placeholder="Motivo (opcional)" value={closeNote} />
+            <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="close"
+              data-confirm={`¿Cerrar la PO ${po.number}? Los ${eur(left)} que quedan sin facturar dejarán de contar como pendientes. Podrás reabrirla.`}
+              data-confirm-ok="Cerrar PO"><Icon name="lock" size={16} /> Cerrar PO</button>
+          </form>
+        )}
+        {po.closed && (
+          <form method="post"><button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen"><Icon name="lock-open" size={16} /> Reabrir PO</button></form>
+        )}
+      </div>
+    )}
+  </section>
+
+  <form method="post" enctype="multipart/form-data" class="form-section mt">
+    <h2><Icon name="pencil" /> Editar PO</h2>
     <fieldset disabled={locked} class="form">
       <PoForm v={v} errors={errors} companies={companies} current={po.file_id ? po : null} removable={!locked} id="edit" />
     </fieldset>

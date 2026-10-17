@@ -44,7 +44,8 @@ export async function loadFinance(db, id, now) {
         ORDER BY p.status = 'pagado', COALESCE(p.due_date, '9999-12-31'), p.id`,
     ).bind(id),
     db.prepare(
-      `SELECT po.*, f.name AS file_name FROM purchase_orders po LEFT JOIN files f ON f.id = po.file_id
+      `SELECT po.*, f.name AS file_name, u.name AS closed_by_name
+         FROM purchase_orders po LEFT JOIN files f ON f.id = po.file_id LEFT JOIN users u ON u.id = po.closed_by
         WHERE po.expediente_id = ? ORDER BY COALESCE(po.issued_on, '9999-12-31'), po.id`,
     ).bind(id),
     db.prepare(
@@ -160,11 +161,11 @@ export function openInvoices(db, q = '') {
 export function posWithBalance(db, q = '') {
   return db.prepare(
     `SELECT * FROM (
-       SELECT po.*, e.number AS exp_number, e.name AS exp_name, f.name AS file_name,
+       SELECT po.*, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, f.name AS file_name,
               po.amount_cents - COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
                                            WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) AS left_cents
          FROM purchase_orders po JOIN expedientes e ON e.id = po.expediente_id LEFT JOIN files f ON f.id = po.file_id
-        WHERE e.status != 'cancelado'
+        WHERE e.status != 'cancelado' AND po.closed_at IS NULL
      ) WHERE left_cents > 0
          AND (?1 = '%%' OR number LIKE ?1 OR billed_to LIKE ?1 OR exp_name LIKE ?1 OR CAST(exp_number AS TEXT) LIKE ?1)
      ORDER BY exp_number, id`,

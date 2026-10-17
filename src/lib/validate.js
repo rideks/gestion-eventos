@@ -186,6 +186,10 @@ export const CollectSchema = z.object({
   collected_on: reqDate('Fecha de cobro'),
 });
 
+export const PoCloseSchema = z.object({
+  closed_note: optText('Motivo', 300),
+});
+
 export const NoteSchema = z.object({
   text: reqText('Nota', 1, 2000),
 });
@@ -247,7 +251,8 @@ export function parseAllocations(form, poRows, current = new Map()) {
   for (const poId of ids) {
     const po = poRows.find((p) => p.id === poId);
     if (!po) return { ok: false, message: 'Una de las PO marcadas ya no existe.' };
-    const available = po.left_cents + (current.get(poId) ?? 0);
+    if (po.closed && !current.has(poId)) return { ok: false, message: `La PO ${po.number} está cerrada: reábrela para facturar de ella.` };
+    const available = po.billable_cents + (current.get(poId) ?? 0);
     const raw = parseAmount(form.get(`po_amount_${poId}`));
     const amount = raw === null ? available : raw;
     if (Number.isNaN(amount) || amount <= 0) return { ok: false, message: `PO ${po.number}: escribe cuánto se factura de ella` };

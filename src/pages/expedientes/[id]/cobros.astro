@@ -14,7 +14,7 @@ import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
 import { PoSchema, InvoiceSchema, parseAllocations, validate, formToObject } from '../../../lib/validate.js';
 import { storeFile, getFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
-import { loadRates, invoiceAmounts, rawVatLines } from '../../../lib/vat.js';
+import { loadRates, invoiceAmounts, rawVatLines, defaultRate, totalFromBaseBp } from '../../../lib/vat.js';
 import { today } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
 
@@ -36,6 +36,15 @@ let checked = null;
 let invLines = [];
 const rates = await loadRates(db);
 let open = Astro.url.searchParams.get('nuevo');
+
+// «Facturar» desde una PO: la factura nueva sale con esa PO marcada, su cliente y su saldo
+const fromPo = open === 'factura' && !locked ? fin.summary.poRows.find((p) => p.id === parseId(Astro.url.searchParams.get('po'))) : null;
+if (fromPo && fromPo.billable_cents > 0) {
+  const rate = defaultRate(rates);
+  invValues = { billed_to: fromPo.billed_to };
+  checked = [fromPo.id];
+  invLines = [{ rate, base: fromPo.billable_cents, total: totalFromBaseBp(fromPo.billable_cents, rate) }];
+}
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -157,8 +166,8 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
   )}
   {s.poRows.length ? (
     <>
-      <ul class="list">{s.poRows.map((po) => <PoItem po={po} />)}</ul>
-      <p class="list-total"><span>Total PO <b class="money">{eur(s.poTotal)}</b></span><span>Sin facturar <b class="money">{eur(s.poLeft)}</b></span></p>
+      <ul class="list">{s.poRows.map((po) => <PoItem po={po} canInvoice={!locked} invoiceLabel={admin ? 'Facturar' : 'Pedir factura'} />)}</ul>
+      <p class="list-total"><span>Total PO <b class="money">{eur(s.poTotal)}</b></span><span>Sin facturar <b class="money">{eur(s.poLeft)}</b></span>{s.poClosedLeft > 0 && <span>No se facturan (PO cerradas) <b class="money">{eur(s.poClosedLeft)}</b></span>}</p>
     </>
   ) : <p class="empty">Aún no hay PO del cliente.</p>}
 
@@ -169,7 +178,7 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
       : 'Pide aquí la factura con las PO que cubre. Administración la emite y te avisa en la actividad del expediente.'}</p>
   </div>
   {!locked && (
-    <details class="add" open={open === 'factura'}>
+    <details class="add" id="nueva-factura" open={open === 'factura'}>
       <summary class="btn btn-primary"><Icon name="send" size={18} /> <span class="when-closed">{admin ? 'Nueva factura' : 'Pedir factura'}</span><span class="when-open">Cerrar formulario</span></summary>
       <form method="post" enctype="multipart/form-data" class="form-section">
         <InvoiceForm v={invValues} errors={open === 'factura' ? errors : {}} companies={companies} poRows={s.poRows} admin={admin} checked={checked} rates={rates} lines={invLines} id="newinv" />

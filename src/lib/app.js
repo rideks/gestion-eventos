@@ -78,6 +78,8 @@ export const FLASH = {
   subida: 'Factura subida. Administración la revisará.',
   revisada: 'Factura revisada: conforme',
   quitada: 'Factura quitada del pago',
+  po_cerrada: 'PO cerrada: lo que quedaba sin facturar ya no cuenta como pendiente',
+  po_reabierta: 'PO reabierta',
   nota: 'Nota añadida',
   password: 'Contraseña cambiada. Se ha cerrado la sesión en tus otros dispositivos.',
   sesiones: 'Se ha cerrado la sesión en tus otros dispositivos.',

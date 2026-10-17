@@ -5,9 +5,12 @@ import { eur } from '../lib/money.js';
 import { formatDate } from '../lib/dates.js';
 import { fileUrl } from '../lib/files.js';
 
-const { po, showExp = false } = Astro.props;
+const { po, showExp = false, canInvoice = false, invoiceLabel = 'Facturar' } = Astro.props;
 const href = fileUrl(po);
 const used = po.amount_cents - po.left_cents;
+const closed = !!po.closed_at;
+// «Facturar» abre la factura nueva del expediente con esta PO ya marcada
+const invoiceHref = `/expedientes/${po.expediente_id}/cobros?nuevo=factura&po=${po.id}#nueva-factura`;
 ---
 <li class="item is-row">
   <div class="item-body">
@@ -19,9 +22,10 @@ const used = po.amount_cents - po.left_cents;
       {po.notes && <span>{po.notes}</span>}
     </span>
     <span class="item-flags">
-      {po.left_cents > 0
-        ? <span class="pill pill-warn">Sin facturar {eur(po.left_cents)}</span>
-        : po.left_cents < 0 ? <span class="pill pill-danger">Facturado de más {eur(-po.left_cents)}</span> : <span class="pill pill-ok">Facturada</span>}
+      {po.left_cents < 0 ? <span class="pill pill-danger">Facturado de más {eur(-po.left_cents)}</span>
+        : po.left_cents === 0 ? <span class="pill pill-ok">Facturada</span>
+        : closed ? <span class="pill pill-muted">Cerrada · {eur(po.left_cents)} no se facturan</span>
+        : <span class="pill pill-warn">Sin facturar {eur(po.left_cents)}</span>}
       {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{po.file_name}</a>}
     </span>
   </div>
@@ -31,5 +35,6 @@ const used = po.amount_cents - po.left_cents;
   </div>
   <div class="item-foot">
     <a class="btn btn-ghost btn-sm" href={`/expedientes/${po.expediente_id}/po/${po.id}`}><Icon name="eye" size={16} /> Ver</a>
+    {canInvoice && !closed && po.left_cents > 0 && <a class="btn btn-primary btn-sm" href={invoiceHref}><Icon name="send" size={16} /> {invoiceLabel} {eur(po.left_cents)}</a>}
   </div>
 </li>

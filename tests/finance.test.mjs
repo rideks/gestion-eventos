@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, nextNumber } from '../src/lib/finance.js';
-import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, SupplierInvoiceSchema, ConformSchema, validate } from '../src/lib/validate.js';
+import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, SupplierInvoiceSchema, ConformSchema, parseAllocations, validate } from '../src/lib/validate.js';
 import { formatRange, dueText, addDays, isDate } from '../src/lib/dates.js';
 
 const NOW = '2026-08-20';
@@ -180,4 +180,36 @@ test('validación: datos de la factura del proveedor', () => {
   assert.equal(validate(SupplierInvoiceSchema, { invoice_total: 'mucho' }).ok, false);
   assert.equal(validate(ConformSchema, { invoice_number: '' }).ok, false);
   assert.deepEqual(validate(ConformSchema, { invoice_number: '238' }).data, { number: '238', issued_on: null });
+});
+
+test('PO cerrada: su resto deja de contar como pendiente y no se puede facturar', () => {
+  // La PO 11 tiene 13.922,20 € sin facturar; se cierra porque el evento costó menos
+  const closedPos = [pos[0], { ...pos[1], closed_at: '2026-08-19T10:00:00Z' }];
+  const s = summarize({ budget, payments, pos: closedPos, invoices, allocations }, NOW);
+  const po11 = s.poRows.find((p) => p.id === 11);
+  assert.equal(po11.closed, true);
+  assert.equal(po11.left_cents, 3390220 - 1998000);
+  assert.equal(po11.billable_cents, 0);
+  assert.equal(s.poLeft, 0);
+  assert.equal(s.poClosedLeft, 3390220 - 1998000);
+  assert.ok(!nextSteps({ status: 'abierto' }, s, NOW).some((x) => /PO sin facturar/.test(x.text)));
+  const check = closingChecks(s).find((c) => /PO/.test(c.text));
+  assert.equal(check.ok, true);
+  assert.match(check.text, /cerradas/);
+
+  // Facturar de una PO cerrada: no (salvo lo que ya tenía la factura que se está editando)
+  const form = (entries) => {
+    const f = new FormData();
+    for (const [k, v] of entries) f.append(k, v);
+    return f;
+  };
+  const bad = parseAllocations(form([['po_ids', '11']]), s.poRows);
+  assert.equal(bad.ok, false);
+  assert.match(bad.message, /cerrada/);
+  const keep = parseAllocations(form([['po_ids', '11'], ['po_amount_11', '19.980']]), s.poRows, new Map([[11, 1998000]]));
+  assert.deepEqual(keep, { ok: true, rows: [{ po_id: 11, amount: 1998000 }] });
+  assert.equal(parseAllocations(form([['po_ids', '11'], ['po_amount_11', '20.000']]), s.poRows, new Map([[11, 1998000]])).ok, false);
+  // Una PO abierta se sigue facturando por su saldo
+  const open = summarize({ budget, payments, pos, invoices, allocations }, NOW);
+  assert.deepEqual(parseAllocations(form([['po_ids', '11']]), open.poRows), { ok: true, rows: [{ po_id: 11, amount: 3390220 - 1998000 }] });
 });

@@ -10,7 +10,7 @@ import PoItem from '../components/PoItem.astro';
 import SearchBox from '../components/SearchBox.astro';
 import { actor, readForm, can } from '../lib/app.js';
 import { openInvoices, posWithBalance, collectedInvoices, byMonth } from '../lib/data.js';
-import { markCollected } from '../lib/actions.js';
+import { markCollected, isLocked } from '../lib/actions.js';
 import { formToObject } from '../lib/validate.js';
 import { eur } from '../lib/money.js';
 import { today, formatMonth } from '../lib/dates.js';
@@ -89,7 +89,7 @@ const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
           <h2><Icon name="file-text" /> PO sin facturar ({pos.length})</h2>
           <p>Órdenes de compra recibidas con importe que aún no está en ninguna factura.</p>
         </div>
-        {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
+        {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp canInvoice={!isLocked({ status: po.exp_status })} invoiceLabel={admin ? 'Facturar' : 'Pedir factura'} />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
       </section>
     </>
   ) : (

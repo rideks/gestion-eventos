@@ -111,12 +111,17 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
     if (!liveIds.has(a.invoice_id)) continue;
     usedByPo.set(a.po_id, (usedByPo.get(a.po_id) ?? 0) + a.amount_cents);
   }
+  // left_cents: lo que falta por facturar; billable_cents: lo que aún se puede facturar
+  // (una PO cerrada ya no espera más facturas: su resto no cuenta como pendiente)
   const poRows = pos.map((po) => {
     const used = usedByPo.get(po.id) ?? 0;
-    return { ...po, used_cents: used, left_cents: po.amount_cents - used };
+    const left = po.amount_cents - used;
+    const closed = !!po.closed_at;
+    return { ...po, used_cents: used, left_cents: left, closed, billable_cents: closed ? 0 : left };
   });
   const poTotal = sum(pos, 'amount_cents');
-  const poLeft = poRows.reduce((acc, p) => acc + Math.max(0, p.left_cents), 0);
+  const poLeft = poRows.reduce((acc, p) => acc + Math.max(0, p.billable_cents), 0);
+  const poClosedLeft = poRows.reduce((acc, p) => acc + (p.closed ? Math.max(0, p.left_cents) : 0), 0);
   // Presupuesto que aún no está respaldado por ninguna PO
   const poMissing = Math.max(0, sale.base - poTotal);
 
@@ -127,7 +132,7 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   return {
     sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview,
     sales, invoiced, collected, toCollect, toIssue, uncollected, overdueInvoices,
-    poRows, poTotal, poLeft, poMissing,
+    poRows, poTotal, poLeft, poClosedLeft, poMissing,
     expectedMargin, margin,
     // Venta del cierre: lo facturado (o pedido) si ya hay facturas; si no, el presupuesto
     closingSales: live.length ? sales : sale,
@@ -164,7 +169,11 @@ export function closingChecks(s) {
     { ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' },
     { ok: s.toIssue.length === 0, text: s.toIssue.length ? `${s.toIssue.length} ${s.toIssue.length === 1 ? 'factura' : 'facturas'} al cliente por emitir` : 'Todas las facturas al cliente están emitidas' },
     { ok: s.toCollect === 0, text: s.toCollect ? `Quedan ${eur(s.toCollect)} por cobrar` : 'Todo está cobrado' },
-    { ok: s.poLeft === 0, text: s.poLeft ? `Hay ${eur(s.poLeft)} en PO sin facturar` : 'Las PO están facturadas' },
+    {
+      ok: s.poLeft === 0,
+      text: s.poLeft ? `Hay ${eur(s.poLeft)} en PO sin facturar`
+        : s.poClosedLeft ? `Las PO están facturadas o cerradas (${eur(s.poClosedLeft)} de PO cerradas no se facturan)` : 'Las PO están facturadas',
+    },
   ];
 }
 

@@ -20,7 +20,7 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Cambios de última hora | Correos y versiones de Excel sueltas | **Versiones del presupuesto** (v1, v2…) con el archivo, el total y qué ha cambiado (+/− €). **Notas** y **actividad** en cada expediente. |
 | Facturas de proveedores | Se adjuntan por correo | Se suben al pago (PDF/foto desde el móvil) y quedan **por revisar** (naranja): a Administración le aparece en la **campana** y en su inicio, abre el documento, anota el número y la da por **conforme** (verde, «Con factura»). Una misma factura puede cubrir **varios pagos** (dos anticipos y una única factura) y se comprueba que su total cuadra con ellos. Las **previsiones** («el hotel exige 21.400 € antes del 29/01») se completan con su factura cuando llega. Se pueden ir **añadiendo pagos** en cualquier momento, de uno en uno o **varios de golpe** (al mismo proveedor o a varios). Lo añadido después de la solicitud se marca como tal. |
 | Pagos | Se controlan a mano | **Bandeja de pagos** de todos los expedientes por fecha límite (vencidos, próximos 7 días, este mes…) y botón **Pagado** con fecha y forma de pago (transferencia, tarjeta…). Aviso de **pagos hechos sin factura**. |
-| PO del cliente | Se reenvían a Tania por correo | Se suben al expediente. Se ve si **faltan PO** para cubrir el presupuesto y cuánto de cada PO **queda sin facturar**. |
+| PO del cliente | Se reenvían a Tania por correo | Se suben al expediente. Se ve si **faltan PO** para cubrir el presupuesto y cuánto de cada PO **queda sin facturar**. Una PO queda facturada cuando las facturas al cliente la cubren: el botón **Facturar** de la PO abre la factura con esa PO marcada y su saldo. Si el resto no se va a facturar (el evento costó menos, el cliente la recortó…), se **cierra la PO** con un motivo y deja de contar como pendiente (se puede reabrir). |
 | Facturas al cliente | Correo a Tania con las PO | **Pedir factura**: se marcan las PO que cubre (una factura puede llevar varias PO y una PO puede facturarse en varias veces) y el importe se rellena solo. Tania la ve en **Por emitir**, la hace en contabilidad y anota número, fecha y PDF. Después, **Cobrada**. |
 | Cierre | Excel de cierre hecho a mano | **Pestaña Cierre** con las dos tablas del Excel (proveedores \| cliente), total neto grupo, total grupo, beneficio y % sobre ventas, calculado solo. Comprobaciones antes de cerrar, **descarga para Excel** (mismo formato) e impresión/PDF. Al cerrar queda en sólo lectura. |
 
@@ -47,7 +47,7 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
 - **Pagos** y **Cobros**: bandejas de trabajo con todos los expedientes, con **buscador** en todas las pestañas:
   pendientes, **facturas de proveedor por revisar** y el **historial** de lo pagado y lo cobrado por meses.
 - Cada pago, PO y factura tiene su **ficha** (botón «Ver»): de qué era, su documento, el desglose de IVA y
-  cuándo se pagó o cobró. En la ficha de un pago: subir su factura (o elegir una ya subida si cubre varios
+  cuándo se pagó o cobró. En la ficha de una PO: las facturas que la cubren, «Facturar», «Cerrar PO» y «Reabrir». En la ficha de un pago: subir su factura (o elegir una ya subida si cubre varios
   pagos), cambiar o quitar el documento, revisarla (Administración), «Otro pago a este proveedor» y borrar.
 - Todo lo que borra o quita algo pide **confirmación** en una ventana propia de la aplicación.
 - **Ajustes** (Administración): los **tipos de IVA** que salen en todos los desplegables (añadir, quitar,

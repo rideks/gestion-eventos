@@ -12,13 +12,13 @@ const {
   rates = [], lines = [], // tipos de IVA y desglose (guardado o lo escrito antes de un error)
   removable = false,      // botón «Quitar documento» junto al PDF actual
 } = Astro.props;
-// PO que se pueden usar: las que tienen saldo y las que ya usa esta factura
-const usable = poRows.filter((po) => po.left_cents > 0 || allocated.has(po.id));
+// PO que se pueden usar: las abiertas con saldo y las que ya usa esta factura
+const usable = poRows.filter((po) => po.billable_cents > 0 || allocated.has(po.id));
 const isChecked = (po) => (checked ? checked.includes(po.id) : allocated.has(po.id));
 const amountFor = (po) => {
   const typed = v[`po_amount_${po.id}`];
   if (typeof typed === 'string') return typed;
-  return amountInput(allocated.get(po.id) ?? po.left_cents);
+  return amountInput(allocated.get(po.id) ?? po.billable_cents);
 };
 ---
 <div class="row row-2">
@@ -43,8 +43,8 @@ const amountFor = (po) => {
           {usable.map((po) => (
             <tr>
               <td><input type="checkbox" name="po_ids" value={po.id} checked={isChecked(po)} aria-label={`Usar la PO ${po.number}`} data-po-check /></td>
-              <td><strong>{po.number}</strong><br /><span class="muted small">{po.billed_to}</span></td>
-              <td class="money">{eur(po.left_cents + (allocated.get(po.id) ?? 0))}</td>
+              <td><strong>{po.number}</strong>{po.closed && <span class="muted small"> · cerrada</span>}<br /><span class="muted small">{po.billed_to}</span></td>
+              <td class="money">{eur(po.billable_cents + (allocated.get(po.id) ?? 0))}</td>
               <td class="amount"><input type="text" inputmode="decimal" name={`po_amount_${po.id}`} value={amountFor(po)} aria-label={`Importe de la PO ${po.number}`} data-po-amount autocomplete="off" /></td>
             </tr>
           ))}
