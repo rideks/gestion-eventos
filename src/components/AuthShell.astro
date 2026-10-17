@@ -16,15 +16,17 @@ const company = env.COMPANY_NAME || 'Seven Worlds';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <title>{title} · {company}</title>
-    <link rel="icon" href="/favicon.svg" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script is:inline src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   </head>
   <body>
     <main class="auth">
+      <img class="auth-logo" src="/brand/logo.png" alt={`${company} · Events & Congresses`} width="260" height="124" />
       <div class="auth-card">
-        <div class="crest"><span class="mark" aria-hidden="true">7<b>W</b></span></div>
         <h1>{heading}</h1>
-        <p>{intro ?? `${company} · ${env.COMPANY_TAGLINE || 'Gestión de eventos'}`}</p>
+        <p>{intro ?? 'Gestión de eventos'}</p>
         <slot />
       </div>
     </main>

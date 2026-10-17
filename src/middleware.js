@@ -6,7 +6,8 @@ import { getSession, SESSION_COOKIE, sessionCookieOptions } from './lib/auth.js'
 import { applySecurityHeaders, isTrustedMutation, rateLimit } from './lib/security.js';
 
 const PUBLIC = new Set(['/login', '/registro']);
-const isAsset = (path) => path.startsWith('/_astro/') || path === '/favicon.svg' || path === '/robots.txt';
+const ASSETS = new Set(['/favicon.png', '/apple-touch-icon.png', '/robots.txt']);
+const isAsset = (path) => path.startsWith('/_astro/') || path.startsWith('/brand/') || ASSETS.has(path);
 
 function withHeaders(response, url) {
   try {

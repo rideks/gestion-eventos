@@ -5,6 +5,8 @@ proveedores y llevar la facturación a clientes. **Versión 1: centrada en la fa
 
 Mismo stack y misma base de estilos que `club-futsal`: **Astro 7** sobre **Cloudflare Workers**,
 **D1** para los datos y **R2** para los documentos (facturas, PO, presupuestos). Todo en JavaScript.
+Imagen corporativa de Seven Worlds: logo en `public/brand/` (el original y las versiones con fondo
+transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al principio de `src/styles/app.css`.
 
 ---
 

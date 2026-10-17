@@ -59,7 +59,6 @@
   "vars": {
     // Clave pública de Turnstile. La de prueba siempre pasa (sólo para local).
     "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
-    "COMPANY_NAME": "Seven Worlds",
-    "COMPANY_TAGLINE": "Events & Congresses"
+    "COMPANY_NAME": "Seven Worlds"
   }
 }

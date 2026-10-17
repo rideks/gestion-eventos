@@ -41,14 +41,16 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="robots" content="noindex, nofollow" />
     <title>{title} · {company}</title>
-    <link rel="icon" href="/favicon.svg" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <slot name="head" />
   </head>
   <body>
     <header class="a-header">
       <a class="a-brand" href="/">
-        <span class="mark" aria-hidden="true">7<b>W</b></span>
-        <span><strong>{company}</strong><small>Gestión de eventos</small></span>
+        <img src="/brand/logo.png" alt={`${company} · Events & Congresses`} width="105" height="50" />
+        <span class="app-name">Gestión<br />de eventos</span>
       </a>
       <span class="spacer"></span>
       {user && <span class="a-user">{user.name} · {roleLabel}</span>}

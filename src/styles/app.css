@@ -1,15 +1,16 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    GESTIÓN DE EVENTOS · misma base que el panel de club-futsal (claro, grande y
-   cómodo en el móvil) con una paleta sobria para datos económicos:
-   azul marino para las acciones y dorado (el de «Worlds» del logo) como acento.
+   cómodo en el móvil) con los colores corporativos de Seven Worlds:
+   negro (cabecera, tablas, acciones), blanco y el amarillo de «Worlds» como acento.
+   El amarillo no se usa para texto sobre blanco (no se leería): para eso, --c2-text.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #f3f4f7;
+  --bg: #f4f4f5;
   --surface: #ffffff;
-  --line: #e2e5ec;
-  --line-2: #cdd2dc;
-  --text: #131826;
-  --muted: #5c6577;
+  --line: #e4e4e7;
+  --line-2: #d0d0d6;
+  --text: #141414;
+  --muted: #5e5e66;
   --ok: #15803d;
   --ok-bg: #e7f6ec;
   --warn: #a16207;
@@ -18,10 +19,13 @@
   --danger-bg: #fdeaea;
   --info: #1d4ed8;
   --info-bg: #e8eefc;
-  --c1: #1f3a6e;
+  --c1: #111111;          /* negro corporativo */
   --c1-ink: #fff;
-  --c2: #b08d2a;
-  --c2-soft: #f6efd9;
+  --c2: #ffcf00;          /* amarillo de «WORLDS» */
+  --c2-ink: #111111;
+  --c2-soft: #fff6cc;
+  --c2-text: #7a5f00;     /* amarillo oscurecido: legible como texto sobre blanco */
+  --brand-gray: #b1b1b1;  /* gris de «EVENTS & CONGRESSES» */
   --radius: 14px;
   --font: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
@@ -48,11 +52,14 @@ p { margin: 0; }
 .a-header {
   position: sticky; top: 0; z-index: 40;
   display: flex; align-items: center; gap: 12px;
-  height: 60px; padding: 0 16px;
-  background: var(--surface); border-bottom: 1px solid var(--line);
+  height: 64px; padding: 0 16px;
+  background: #000; color: #fff; border-bottom: 3px solid var(--c2);
 }
 .a-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; min-width: 0; }
-.a-brand img, .a-brand .crest-fallback { width: 36px; height: 36px; object-fit: contain; flex: none; }
+/* Proporción del logo (logo.png): 356 × 170 */
+.a-brand img { width: auto; height: 50px; flex: none; }
+.a-brand .app-name { padding-left: 12px; border-left: 1px solid rgb(255 255 255 / 0.25); color: var(--brand-gray); font-size: 0.85rem; font-weight: 600; line-height: 1.15; }
+@media (max-width: 520px) { .a-brand .app-name { display: none; } }
 .crest-fallback {
   display: grid; place-items: center; border-radius: 50%;
   background: var(--c1); color: var(--c1-ink); font-family: var(--font-display); font-weight: 800; font-style: italic;
@@ -60,7 +67,7 @@ p { margin: 0; }
 .a-brand strong { font-family: var(--font-display); font-weight: 800; font-size: 1.25rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .a-brand small { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1; }
 .a-header .spacer { flex: 1; }
-.a-user { display: none; font-size: 0.9rem; color: var(--muted); }
+.a-user { display: none; font-size: 0.9rem; color: var(--brand-gray); }
 
 .a-shell { display: block; }
 .a-side { display: none; }
@@ -71,7 +78,7 @@ p { margin: 0; }
   .a-shell { display: grid; grid-template-columns: 240px 1fr; }
   .a-side {
     display: flex; flex-direction: column; gap: 4px;
-    position: sticky; top: 60px; height: calc(100dvh - 60px);
+    position: sticky; top: 67px; height: calc(100dvh - 67px);
     padding: 20px 12px; border-right: 1px solid var(--line); background: var(--surface);
   }
   .a-main { padding: 32px 32px 64px; width: 100%; }
@@ -132,7 +139,8 @@ p { margin: 0; }
 }
 .btn:hover { transform: translateY(-1px); }
 .btn:disabled { opacity: 0.55; cursor: wait; transform: none; }
-.btn-primary { background: var(--c1); color: var(--c1-ink); box-shadow: 0 6px 18px -8px var(--c1); }
+.btn-primary { background: var(--c2); color: var(--c2-ink); box-shadow: 0 6px 18px -10px color-mix(in srgb, var(--c2) 80%, #000); }
+.btn-primary:hover { background: color-mix(in srgb, var(--c2) 88%, #000); }
 .btn-ghost { background: var(--surface); color: var(--text); border-color: var(--line-2); }
 .btn-ghost:hover { background: var(--bg); }
 .btn-danger { background: var(--surface); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
@@ -255,7 +263,7 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 .actions {
   position: sticky; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 5;
   display: flex; flex-wrap: wrap; gap: 10px; padding: 12px; margin: 0 -4px;
-  background: rgb(243 244 247 / 0.92); backdrop-filter: blur(8px); border-radius: 14px;
+  background: rgb(244 244 245 / 0.92); backdrop-filter: blur(8px); border-radius: 14px;
 }
 .actions .btn-primary { flex: 1 1 200px; }
 @media (min-width: 960px) { .actions { bottom: 12px; } }
@@ -285,18 +293,15 @@ details.help ul { margin: 8px 0 0; padding-left: 18px; }
 
 /* Acceso */
 .auth {
-  min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px;
-  background:
-    radial-gradient(70% 55% at 50% 0%, color-mix(in srgb, var(--c1) 20%, transparent), transparent 70%),
-    radial-gradient(50% 40% at 100% 100%, color-mix(in srgb, var(--c2) 16%, transparent), transparent 70%),
-    var(--bg);
+  min-height: 100dvh; display: grid; place-items: center; align-content: center; gap: 24px; padding: 24px 16px;
+  background: radial-gradient(60% 45% at 50% 100%, color-mix(in srgb, var(--c2) 14%, transparent), transparent 70%), #000;
 }
+.auth-logo { width: min(260px, 70vw); height: auto; }
 .auth-card { width: min(100%, 420px); background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 28px 22px; box-shadow: 0 30px 80px -40px rgb(0 0 0 / 0.35); }
-.auth-card .crest { display: grid; place-items: center; margin-bottom: 14px; }
-.auth-card .crest .mark { width: 72px; height: 72px; font-size: 1.7rem; border-width: 3px; }
 .auth-card h1 { text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 1.9rem; text-transform: uppercase; }
 .auth-card > p { text-align: center; color: var(--muted); margin: 4px 0 20px; }
 .auth-foot { text-align: center; margin-top: 18px; font-size: 0.9rem; }
+.auth :focus-visible { outline-color: var(--c2); }
 .turnstile { min-height: 70px; display: flex; justify-content: center; }
 
 .invite-link { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 12px; background: var(--ok-bg); margin-bottom: 18px; }
@@ -330,20 +335,20 @@ details.help ul { margin: 8px 0 0; padding-left: 18px; }
 .rows-table .row-actions button:hover { background: var(--bg); }
 
 /* ── Navegación: marca y contadores ─────────────────────────────────────── */
-.mark {
-  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 38px; height: 38px; border-radius: 50%;
-  border: 2px solid var(--text); background: #fff; color: var(--text);
-  font-family: var(--font-display); font-weight: 800; font-size: 0.95rem; letter-spacing: -0.04em; line-height: 1;
-}
-.mark b { color: var(--c2); font-weight: 800; }
-.a-brand small { color: var(--c2); font-weight: 700; letter-spacing: 0.04em; }
 .a-header .btn { white-space: nowrap; }
+.a-header :focus-visible { outline-color: var(--c2); }
+.a-side a[aria-current='page'] { background: var(--c2-soft); box-shadow: inset 4px 0 0 var(--c2); }
+.a-side a[aria-current='page'] svg { color: var(--c1); }
+.a-tabbar [aria-current='page'] { color: var(--c1); }
+.a-tabbar [aria-current='page']::before {
+  content: ''; position: absolute; top: -6px; left: 28%; right: 28%; height: 3px; border-radius: 0 0 3px 3px; background: var(--c2);
+}
 .badge-count {
   margin-left: auto; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px;
   display: inline-grid; place-items: center; background: var(--c1); color: var(--c1-ink); font-size: 0.8rem; font-weight: 700;
 }
 .badge-count.is-danger { background: var(--danger); }
-.badge-count.is-warn { background: var(--c2); }
+.badge-count.is-warn { background: var(--c2); color: var(--c2-ink); }
 .a-tabbar a, .a-tabbar button { position: relative; }
 .badge-dot { position: absolute; top: 4px; right: calc(50% - 18px); width: 10px; height: 10px; border-radius: 50%; background: var(--danger); border: 2px solid var(--surface); }
 @media (max-width: 520px) { .a-header .btn-label { display: none; } }
@@ -351,7 +356,7 @@ details.help ul { margin: 8px 0 0; padding-left: 18px; }
 /* ── Estados ────────────────────────────────────────────────────────────── */
 .pill-info { background: var(--info-bg); color: var(--info); border-color: transparent; }
 .pill-muted { background: var(--bg); color: var(--muted); }
-.pill-gold { background: var(--c2-soft); color: #7a6118; border-color: transparent; }
+.pill-gold { background: var(--c2-soft); color: var(--c2-text); border-color: transparent; }
 .pill { white-space: nowrap; }
 
 /* ── Importes ───────────────────────────────────────────────────────────── */
@@ -383,7 +388,7 @@ details.help ul { margin: 8px 0 0; padding-left: 18px; }
   color: var(--muted); font-weight: 700; text-decoration: none;
 }
 .x-tabs a:hover { color: var(--text); }
-.x-tabs a[aria-current='page'] { color: var(--text); border-bottom-color: var(--c1); }
+.x-tabs a[aria-current='page'] { color: var(--text); border-bottom-color: var(--c2); }
 .x-tabs small { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--bg); font-size: 0.75rem; text-align: center; }
 .x-tabs small.is-alert { background: var(--danger-bg); color: var(--danger); }
 @media (min-width: 960px) { .x-tabs { margin: 0 0 22px; padding: 0; } }
@@ -399,8 +404,8 @@ a.kpi:hover { border-color: var(--line-2); }
 .kpi > span { color: var(--muted); font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .kpi > b { font-family: var(--font-display); font-weight: 800; font-size: clamp(1.35rem, 4.5vw, 1.75rem); line-height: 1.05; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .kpi > small { color: var(--muted); font-size: 0.85rem; }
-.kpi.is-gold { border-color: color-mix(in srgb, var(--c2) 45%, var(--line)); background: linear-gradient(180deg, var(--c2-soft), var(--surface) 70%); }
-.kpi.is-gold > span { color: #7a6118; }
+.kpi.is-gold { border-color: color-mix(in srgb, var(--c2) 70%, var(--line)); background: linear-gradient(180deg, var(--c2-soft), var(--surface) 75%); }
+.kpi.is-gold > span { color: var(--c2-text); }
 .kpi.is-danger > b { color: var(--danger); }
 .kpi.is-ok > b { color: var(--ok); }
 
