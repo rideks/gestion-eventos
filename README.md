@@ -18,7 +18,7 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | 2. Pedir el expediente | Correo a Tania con los datos, el Excel y la previsión de pagos | **Nueva solicitud**: un formulario con todo (datos, contacto, presupuesto + total, previsión de pagos). Le aparece a Administración en su bandeja y en el contador del menú. |
 | 3. Abrir el expediente | Tania lo crea a mano y le da número | Un botón: se propone el **siguiente número libre** (editable si debe coincidir con contabilidad). La previsión de pagos ya está dentro. |
 | Cambios de última hora | Correos y versiones de Excel sueltas | **Versiones del presupuesto** (v1, v2…) con el archivo, el total y qué ha cambiado (+/− €). **Notas** y **actividad** en cada expediente. |
-| Facturas de proveedores | Se adjuntan por correo | Se suben al expediente (PDF/foto desde el móvil). Las **previsiones** («el hotel exige 21.400 € antes del 29/01») se completan con su factura cuando llega. Se pueden ir **añadiendo pagos** en cualquier momento, de uno en uno o **varios de golpe** (al mismo proveedor o a varios). Lo añadido después de la solicitud se marca como tal. |
+| Facturas de proveedores | Se adjuntan por correo | Se suben al pago (PDF/foto desde el móvil) y quedan **por revisar** (naranja): a Administración le aparece en la **campana** y en su inicio, abre el documento, anota el número y la da por **conforme** (verde, «Con factura»). Una misma factura puede cubrir **varios pagos** (dos anticipos y una única factura) y se comprueba que su total cuadra con ellos. Las **previsiones** («el hotel exige 21.400 € antes del 29/01») se completan con su factura cuando llega. Se pueden ir **añadiendo pagos** en cualquier momento, de uno en uno o **varios de golpe** (al mismo proveedor o a varios). Lo añadido después de la solicitud se marca como tal. |
 | Pagos | Se controlan a mano | **Bandeja de pagos** de todos los expedientes por fecha límite (vencidos, próximos 7 días, este mes…) y botón **Pagado** con fecha y forma de pago (transferencia, tarjeta…). Aviso de **pagos hechos sin factura**. |
 | PO del cliente | Se reenvían a Tania por correo | Se suben al expediente. Se ve si **faltan PO** para cubrir el presupuesto y cuánto de cada PO **queda sin facturar**. |
 | Facturas al cliente | Correo a Tania con las PO | **Pedir factura**: se marcan las PO que cubre (una factura puede llevar varias PO y una PO puede facturarse en varias veces) y el importe se rellena solo. Tania la ve en **Por emitir**, la hace en contabilidad y anota número, fecha y PDF. Después, **Cobrada**. |
@@ -31,6 +31,7 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Pedir expedientes, subir presupuestos, facturas de proveedor y PO | ✔ | ✔ |
 | Registrar pagos (p. ej. con tarjeta) y pedir facturas al cliente | ✔ | ✔ |
 | Dar número (abrir), cerrar, reabrir y cancelar expedientes | | ✔ |
+| Revisar y dar por buenas las facturas de proveedor | | ✔ |
 | Emitir facturas al cliente, registrar cobros, anular | | ✔ |
 | Usuarios y Ajustes (tipos de IVA, numeración) | | ✔ |
 
@@ -43,10 +44,12 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
 - **Expedientes**: pestañas En curso · Por cerrar · Por abrir · Míos · Cerrados, y buscador.
 - **Expediente**: Resumen (venta, coste, beneficio previsto, cobrado, próximos pasos, datos y actividad) ·
   Pagos · Cobros (PO y facturas) · Presupuesto (versiones) · Cierre.
-- **Pagos** y **Cobros**: bandejas de trabajo con todos los expedientes (pendientes) y el **historial**
-  de lo pagado y lo cobrado por meses, con buscador.
+- **Pagos** y **Cobros**: bandejas de trabajo con todos los expedientes, con **buscador** en todas las pestañas:
+  pendientes, **facturas de proveedor por revisar** y el **historial** de lo pagado y lo cobrado por meses.
 - Cada pago, PO y factura tiene su **ficha** (botón «Ver»): de qué era, su documento, el desglose de IVA y
-  cuándo se pagó o cobró. Desde la ficha de un pago: «Otro pago a este proveedor».
+  cuándo se pagó o cobró. En la ficha de un pago: subir su factura (o elegir una ya subida si cubre varios
+  pagos), cambiar o quitar el documento, revisarla (Administración), «Otro pago a este proveedor» y borrar.
+- Todo lo que borra o quita algo pide **confirmación** en una ventana propia de la aplicación.
 - **Ajustes** (Administración): los **tipos de IVA** que salen en todos los desplegables (añadir, quitar,
   marcar el de por defecto; admite decimales y otros impuestos como el IGIC) y el primer número de expediente.
 - **Usuarios** (invitación por enlace, sin registro abierto) y **Mi cuenta**.

@@ -10,7 +10,7 @@
 -- ════════════════════════════════════════════════════════════════════════════
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
-DELETE FROM payments; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
+DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
 DELETE FROM vat_rates;
 INSERT INTO vat_rates (label, rate_bp, is_default) VALUES
@@ -115,6 +115,23 @@ INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents,
   (4, 'Hotel Puente Romano', '2º pago', 2600000, 2860000, '10', '2027-02-28', 1, 2),
   (4, 'DMC Marbella', 'Traslados y actividades', 500000, 605000, '21', '2027-04-01', 1, 2);
 
+-- ── Facturas de proveedor ─────────────────────────────────────────────────
+-- Arriba los pagos llevan su nº de factura; aquí pasan a ser facturas aparte (como hace la
+-- migración 0003). La de La Parrilla (F000102/596) cubre DOS pagos: transferencia y tarjeta.
+INSERT INTO supplier_invoices (expediente_id, supplier, number, issued_on, review, reviewed_by, reviewed_at, uploaded_by, uploaded_at)
+SELECT expediente_id, supplier, invoice_number, MIN(invoice_date), 'conforme', 1, MIN(created_at), MIN(created_by), MIN(created_at)
+  FROM payments WHERE invoice_number IS NOT NULL
+ GROUP BY expediente_id, supplier, invoice_number;
+UPDATE payments SET supplier_invoice_id = (
+  SELECT si.id FROM supplier_invoices si
+   WHERE si.expediente_id = payments.expediente_id AND si.supplier = payments.supplier AND si.number = payments.invoice_number
+) WHERE invoice_number IS NOT NULL;
+UPDATE payments SET invoice_number = NULL, invoice_date = NULL, file_id = NULL;
+UPDATE supplier_invoices SET total_cents = 347820 WHERE number = 'F000102/596';
+-- Recién subida por Marta: le sale a Tania en la campana para revisarla
+UPDATE supplier_invoices SET review = 'pendiente', reviewed_by = NULL, reviewed_at = NULL, uploaded_by = 2, uploaded_at = '2026-10-16T10:00:00Z'
+ WHERE number = '0234 / 2026';
+
 -- ── Actividad ─────────────────────────────────────────────────────────────
 INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUES
   (1, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 58.500,00 € sin IVA y 4 pagos previstos', '2026-06-10T09:12:00Z'),
@@ -124,6 +141,7 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (1, 2, 'Marta López', 'po.add', 'subió la PO 4500890045 de BMW Ibérica (13.922,20 € sin IVA)', '2026-09-15T08:20:00Z'),
   (1, 2, 'Marta López', 'invoice.request', 'pidió una factura a BMW Ibérica por 16.845,86 € con la PO 4500890045', '2026-10-15T09:00:00Z'),
   (1, 2, 'Marta López', 'note', 'BMW confirma que la PO de la cena ya está aprobada en su sistema: se puede facturar.', '2026-10-15T09:05:00Z'),
+  (1, 2, 'Marta López', 'supplier_invoice.add', 'subió la factura 0234 / 2026 de Gráficas Mercurio (473,11 €) · pendiente de revisar', '2026-10-16T10:00:00Z'),
   (2, 1, 'Tania Ruiz', 'expediente.close', 'cerró el expediente: ventas 18.940,00 €, costes 15.655,95 €, beneficio 3.284,05 €', '2026-06-15T16:20:00Z'),
   (3, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 96.400,00 € sin IVA y 4 pagos previstos', '2026-09-20T10:00:00Z'),
   (3, 1, 'Tania Ruiz', 'expediente.open', 'abrió el expediente con el número 1289', '2026-09-21T08:15:00Z'),

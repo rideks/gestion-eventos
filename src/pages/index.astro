@@ -7,10 +7,12 @@ import Icon from '../components/Icon.astro';
 import Pill from '../components/Pill.astro';
 import PaymentItem from '../components/PaymentItem.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
+import ReviewItem from '../components/ReviewItem.astro';
 import { actor, readForm, can } from '../lib/app.js';
-import { pendingPayments, openInvoices, posWithBalance, LIST_COLUMNS } from '../lib/data.js';
+import { pendingPayments, openInvoices, posWithBalance, invoicesToReview, LIST_COLUMNS } from '../lib/data.js';
+import { conformInvoice } from '../lib/supplier.js';
 import { markPaid, markCollected } from '../lib/actions.js';
-import { formToObject } from '../lib/validate.js';
+import { ConformSchema, validate, formToObject } from '../lib/validate.js';
 import { expedienteState, expLabel, plural, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { today, addDays, formatRange, formatStamp, formatDateLong } from '../lib/dates.js';
@@ -24,16 +26,24 @@ let error = null;
 if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
+  const conform = () => {
+    const parsed = validate(ConformSchema, input);
+    return parsed.ok ? conformInvoice({ db, who: actor(Astro), invoiceId: Number(input.supplier_invoice_id), data: parsed.data }) : parsed;
+  };
   const r = input.intent === 'pay' ? await markPaid(db, actor(Astro), input)
     : input.intent === 'collect' ? await markCollected(db, actor(Astro), input)
-      : { ok: false, message: 'Acción no válida.' };
-  if (r.ok) return Astro.redirect(`/?ok=${input.intent === 'pay' ? 'pagado' : 'cobrada'}`, 303);
+      : input.intent === 'conform' ? await conform()
+        : { ok: false, message: 'Acción no válida.' };
+  const OK = { pay: 'pagado', collect: 'cobrada', conform: 'revisada' };
+  if (r.ok) return Astro.redirect(`/?ok=${OK[input.intent]}`, 303);
   error = r.message;
   Astro.response.status = 400;
 }
 
 const soon = addDays(now, SOON_DAYS);
-const [pending, invoices, pos, open, requests, toClose, activity] = await Promise.all([
+const reviewer = can(me, 'supplier.review');
+const [review, pending, invoices, pos, open, requests, toClose, activity] = await Promise.all([
+  reviewer ? invoicesToReview(db) : [],
   pendingPayments(db),
   openInvoices(db),
   posWithBalance(db),
@@ -76,6 +86,15 @@ const firstName = me.name.split(' ')[0];
 
   <div class="two-col">
     <div class="stack">
+      {reviewer && review.length > 0 && (
+        <section class="card card-alert">
+          <div class="sec-head">
+            <h2><Icon name="bell" /> Facturas nuevas por revisar ({review.length})</h2>
+            <a class="btn btn-ghost btn-sm" href="/pagos?ver=revisar">Ver todas</a>
+          </div>
+          <ul class="list">{review.slice(0, 4).map((si) => <ReviewItem si={si} canReview />)}</ul>
+        </section>
+      )}
       {admin && requests.length > 0 && (
         <section class="card">
           <div class="sec-head"><h2><Icon name="inbox" /> Solicitudes por abrir</h2></div>

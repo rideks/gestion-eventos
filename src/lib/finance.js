@@ -37,8 +37,26 @@ export function paymentState(p, now) {
     if (d < 0) return { key: 'vencido', label: 'Vencido', tone: 'danger' };
     if (d <= SOON_DAYS) return { key: 'pronto', label: d === 0 ? 'Vence hoy' : 'Vence pronto', tone: 'warn' };
   }
-  if (!p.invoice_number && p.planned) return { key: 'previsto', label: 'Previsto', tone: 'muted' };
+  if (!p.supplier_invoice_id && p.planned) return { key: 'previsto', label: 'Previsto', tone: 'muted' };
   return { key: 'pendiente', label: 'Por pagar', tone: 'info' };
+}
+
+/**
+ * Factura del proveedor de un pago:
+ *  · sin factura (en rojo si ya está pagado: hay que reclamarla)
+ *  · subida y pendiente de que Administración la revise (naranja)
+ *  · revisada y conforme (verde)
+ */
+export function supplierInvoiceState(p) {
+  if (!p.supplier_invoice_id) {
+    if (p.total_cents === 0) return null;
+    return p.status === 'pagado'
+      ? { key: 'falta', label: 'Falta factura', tone: 'danger' }
+      : { key: 'sin', label: 'Sin factura', tone: 'muted' };
+  }
+  return p.invoice_review === 'conforme'
+    ? { key: 'conforme', label: 'Con factura', tone: 'ok' }
+    : { key: 'revisar', label: 'Factura por revisar', tone: 'orange' };
 }
 
 export function invoiceState(i, now) {
@@ -69,8 +87,10 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const toPay = sum(pendingRows, 'total_cents');
   const overdue = pendingRows.filter((p) => isDate(p.due_date) && p.due_date < now);
   const soon = pendingRows.filter((p) => isDate(p.due_date) && p.due_date >= now && daysBetween(now, p.due_date) <= SOON_DAYS);
-  const withoutInvoice = payments.filter((p) => !p.invoice_number && p.total_cents !== 0);
+  const withoutInvoice = payments.filter((p) => !p.supplier_invoice_id && p.total_cents !== 0);
   const paidWithoutInvoice = withoutInvoice.filter((p) => p.status === 'pagado');
+  // Facturas subidas que Administración aún no ha revisado (una factura puede cubrir varios pagos)
+  const toReview = [...new Set(payments.filter((p) => p.supplier_invoice_id && p.invoice_review !== 'conforme').map((p) => p.supplier_invoice_id))];
 
   // Facturas al cliente (las anuladas no cuentan)
   const live = invoices.filter((i) => i.status !== 'anulada');
@@ -105,7 +125,7 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const margin = sales.base - cost.base;
 
   return {
-    sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice,
+    sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview,
     sales, invoiced, collected, toCollect, toIssue, uncollected, overdueInvoices,
     poRows, poTotal, poLeft, poMissing,
     expectedMargin, margin,
@@ -127,6 +147,7 @@ export function nextSteps(e, s, now) {
   if (s.toIssue.length) steps.push({ tone: 'warn', tab: 'cobros', text: `${plural(s.toIssue.length, 'factura', 'facturas')} al cliente por emitir (${eur(sum(s.toIssue, 'total_cents'))})` });
   if (s.poLeft > 0) steps.push({ tone: 'warn', tab: 'cobros', text: `Hay ${eur(s.poLeft)} en PO sin facturar` });
   if (s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto` });
+  if (s.toReview.length) steps.push({ tone: 'warn', tab: 'pagos', text: `${plural(s.toReview.length, 'factura de proveedor', 'facturas de proveedor')} por revisar` });
   if (s.paidWithoutInvoice.length) steps.push({ tone: 'info', tab: 'pagos', text: `${plural(s.paidWithoutInvoice.length, 'pago hecho', 'pagos hechos')} sin la factura del proveedor` });
   if (!s.sale.base) steps.push({ tone: 'info', tab: 'presupuesto', text: 'Falta el presupuesto aprobado por el cliente' });
   return steps;
@@ -140,6 +161,7 @@ export function closingChecks(s) {
   return [
     { ok: !s.pending.length, text: s.pending.length ? `Quedan ${eur(s.toPay)} por pagar a proveedores` : 'Todos los proveedores están pagados' },
     { ok: s.withoutInvoice.length === 0, text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor` : 'Todos los costes tienen factura' },
+    { ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' },
     { ok: s.toIssue.length === 0, text: s.toIssue.length ? `${s.toIssue.length} ${s.toIssue.length === 1 ? 'factura' : 'facturas'} al cliente por emitir` : 'Todas las facturas al cliente están emitidas' },
     { ok: s.toCollect === 0, text: s.toCollect ? `Quedan ${eur(s.toCollect)} por cobrar` : 'Todo está cobrado' },
     { ok: s.poLeft === 0, text: s.poLeft ? `Hay ${eur(s.poLeft)} en PO sin facturar` : 'Las PO están facturadas' },

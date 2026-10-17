@@ -117,14 +117,26 @@ export const forecastRowSchema = (rates) => z.object({
 export const PaymentSchema = z.object({
   supplier: reqText('Proveedor', 2, 120),
   concept: optText('Concepto', 160),
-  invoice_number: optText('Nº de factura', 60),
-  invoice_date: optDate('Fecha de la factura'),
   due_date: optDate('Fecha límite de pago'),
   status: z.enum(['pendiente', 'pagado']),
   paid_on: optDate('Fecha de pago'),
   method,
   notes: optText('Notas', 1000),
 }).refine((d) => d.status !== 'pagado' || d.paid_on, { path: ['paid_on'], message: 'Fecha de pago: indica cuándo se pagó' });
+
+/** Factura de un proveedor (lo que se anota del documento) */
+export const SupplierInvoiceSchema = z.object({
+  invoice_number: optText('Nº de factura', 60),
+  invoice_date: optDate('Fecha de la factura'),
+  invoice_total: z.preprocess((v) => parseAmount(v), z.custom((v) => v === null || (typeof v === 'number' && !Number.isNaN(v)),
+    'Total de la factura: escríbelo con números, por ejemplo 50.000 o 3303,60')),
+}).transform((d) => ({ number: d.invoice_number, issued_on: d.invoice_date, total: d.invoice_total }));
+
+/** Administración la da por buena: el número es obligatorio */
+export const ConformSchema = z.object({
+  invoice_number: reqText('Nº de factura', 1, 60),
+  invoice_date: optDate('Fecha de la factura'),
+}).transform((d) => ({ number: d.invoice_number, issued_on: d.invoice_date }));
 
 export const PaySchema = z.object({
   paid_on: reqDate('Fecha de pago'),

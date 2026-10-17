@@ -1,19 +1,26 @@
 ---
-// Ficha de un pago a proveedor: de qué era, su factura, el desglose de IVA y cuándo se pagó.
-// Debajo, plegado, el formulario para añadirle la factura cuando llega o corregir algo.
+// Ficha de un pago a proveedor: de qué era, su desglose de IVA, cuándo se pagó y su FACTURA.
+// La factura es aparte del pago: se sube aquí (o se indica que es una ya subida, si una
+// misma factura cubre varios pagos), se puede cambiar o quitar, y Administración la revisa.
 import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
 import ExpHeader from '../../../../components/ExpHeader.astro';
 import PaymentForm from '../../../../components/PaymentForm.astro';
+import SupplierInvoiceFields from '../../../../components/SupplierInvoiceFields.astro';
+import FileField from '../../../../components/FileField.astro';
 import Pill from '../../../../components/Pill.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
-import { getExpediente, suggestions } from '../../../../lib/data.js';
-import { PaymentSchema, validate, formToObject } from '../../../../lib/validate.js';
+import { getExpediente, suggestions, PAYMENT_SELECT, PAYMENT_JOINS } from '../../../../lib/data.js';
+import { PaymentSchema, SupplierInvoiceSchema, ConformSchema, validate, formToObject } from '../../../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../../lib/vat.js';
-import { storeFile, getFile, deleteFiles, fileUrl, UploadError } from '../../../../lib/files.js';
-import { paymentState, PAYMENT_METHODS } from '../../../../lib/finance.js';
-import { eur } from '../../../../lib/money.js';
+import {
+  getSupplierInvoice, invoicePayments, expedienteInvoices, invoiceName, attachNewInvoice, linkExistingInvoice,
+  unlinkInvoice, replaceInvoiceFile, updateInvoiceData, conformInvoice, dropIfOrphan,
+} from '../../../../lib/supplier.js';
+import { getFile, fileUrl, UploadError } from '../../../../lib/files.js';
+import { paymentState, supplierInvoiceState, PAYMENT_METHODS } from '../../../../lib/finance.js';
+import { eur, amountInput } from '../../../../lib/money.js';
 import { today, nowIso, formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markPaid } from '../../../../lib/actions.js';
 
@@ -22,8 +29,7 @@ const id = parseId(Astro.params.id);
 const pid = parseId(Astro.params.pid);
 const exp = id ? await getExpediente(db, id) : null;
 const p = exp && pid ? await db.prepare(
-  `SELECT p.*, f.name AS file_name, u.name AS created_by_name FROM payments p
-     LEFT JOIN files f ON f.id = p.file_id LEFT JOIN users u ON u.id = p.created_by
+  `SELECT ${PAYMENT_SELECT}, u.name AS created_by_name FROM payments p ${PAYMENT_JOINS} LEFT JOIN users u ON u.id = p.created_by
     WHERE p.id = ? AND p.expediente_id = ?`,
 ).bind(pid, id).first() : null;
 if (!p) return Astro.rewrite('/404');
@@ -31,82 +37,138 @@ if (!p) return Astro.rewrite('/404');
 const me = Astro.locals.user;
 const now = today();
 const locked = isLocked(exp);
+const admin = can(me, 'supplier.review');
 const canDelete = !locked && (can(me, 'delete') || p.created_by === me.id);
 const back = `/expedientes/${id}/pagos`;
+const self = `/expedientes/${id}/pagos/${pid}`;
 const rates = await loadRates(db);
-let error = null;
+const docWarning = Astro.url.searchParams.get('aviso_doc');
+let error = docWarning ? `El pago se ha guardado, pero no la factura: ${docWarning.slice(0, 300)}` : null;
 let errors = {};
 let v = { ...p };
 let lines = linesOf(p);
+let openEdit = Astro.url.searchParams.has('editar');
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
+  const invoice = p.supplier_invoice_id ? await getSupplierInvoice(db, p.supplier_invoice_id) : null;
+  error = null;
 
-  if (locked) {
-    error = LOCKED_MSG;
-  } else if (input.intent === 'pay') {
-    const r = await markPaid(db, who, input, id);
-    if (r.ok) return Astro.redirect(`/expedientes/${id}/pagos/${pid}?ok=pagado`, 303);
-    error = r.message;
-  } else if (input.intent === 'delete' && canDelete) {
-    await db.batch([
-      db.prepare('DELETE FROM payments WHERE id = ?').bind(pid),
-      activityStmt(db, who, id, 'payment.delete', `borró ${p.invoice_number ? `la factura ${p.invoice_number}` : 'el pago'} de ${p.supplier} (${eur(p.total_cents)})`),
-    ]);
-    await deleteFiles(db, env.DOCS, [p.file_id]);
-    return Astro.redirect(`${back}?ok=borrado`, 303);
-  } else if (input.intent === 'save') {
-    v = { ...p, ...input };
-    lines = rawVatLines(form);
-    const parsed = validate(PaymentSchema, input);
-    const amounts = parseVatLines(form, rates);
-    if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-    } else if (!amounts.ok) {
-      error = amounts.message;
-      errors = { amount: amounts.message };
-    } else {
-      const d = parsed.data;
-      try {
-        const file = getFile(form, 'file');
-        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : p.file_id;
-        // Qué ha cambiado, para la actividad
+  try {
+    if (locked) {
+      error = LOCKED_MSG;
+    } else if (input.intent === 'pay') {
+      const r = await markPaid(db, who, input, id);
+      if (r.ok) return Astro.redirect(`${self}?ok=pagado`, 303);
+      error = r.message;
+    } else if (input.intent === 'delete' && canDelete) {
+      await db.batch([
+        db.prepare('DELETE FROM payments WHERE id = ?').bind(pid),
+        activityStmt(db, who, id, 'payment.delete', `borró el pago a ${p.supplier} (${eur(p.total_cents)})`),
+      ]);
+      // Si su factura no cubría otros pagos, se borra también (con su documento)
+      await dropIfOrphan(db, env.DOCS, p.supplier_invoice_id);
+      return Astro.redirect(`${back}?ok=borrado`, 303);
+    } else if (input.intent === 'invoice_new') {
+      v = { ...p, ...input };
+      const parsed = validate(SupplierInvoiceSchema, input);
+      const file = getFile(form, 'file');
+      if (!parsed.ok) {
+        error = parsed.message;
+        errors = parsed.errors;
+      } else if (!file && !parsed.data.number) {
+        error = 'Adjunta el documento de la factura (o escribe al menos su número).';
+      } else {
+        await attachNewInvoice({ db, bucket: env.DOCS, who, payment: p, file, data: parsed.data });
+        return Astro.redirect(`${self}?ok=subida`, 303);
+      }
+    } else if (input.intent === 'invoice_link') {
+      const r = await linkExistingInvoice({ db, bucket: env.DOCS, who, payment: p, invoiceId: Number(input.invoice_id) });
+      if (r.ok) return Astro.redirect(`${self}?ok=guardado`, 303);
+      error = r.message;
+    } else if (input.intent === 'invoice_remove' && invoice) {
+      await unlinkInvoice({ db, bucket: env.DOCS, who, payment: p });
+      return Astro.redirect(`${self}?ok=quitada`, 303);
+    } else if (input.intent === 'invoice_file' && invoice) {
+      const file = getFile(form, 'file');
+      if (!file) {
+        error = 'Elige el documento nuevo de la factura.';
+      } else {
+        await replaceInvoiceFile({ db, bucket: env.DOCS, who, invoice, file });
+        return Astro.redirect(`${self}?ok=subida`, 303);
+      }
+    } else if (input.intent === 'invoice_data' && invoice) {
+      const parsed = validate(SupplierInvoiceSchema, input);
+      if (!parsed.ok) {
+        error = parsed.message;
+        errors = parsed.errors;
+      } else {
+        await updateInvoiceData({ db, who, invoice, data: parsed.data });
+        return Astro.redirect(`${self}?ok=guardado`, 303);
+      }
+    } else if (input.intent === 'invoice_conform' && invoice) {
+      const parsed = validate(ConformSchema, input);
+      if (!parsed.ok) {
+        error = parsed.message;
+        errors = parsed.errors;
+      } else {
+        const r = await conformInvoice({ db, who, invoiceId: invoice.id, data: parsed.data });
+        if (r.ok) return Astro.redirect(`${self}?ok=revisada`, 303);
+        error = r.message;
+      }
+    } else if (input.intent === 'save') {
+      openEdit = true;
+      v = { ...p, ...input };
+      lines = rawVatLines(form);
+      const parsed = validate(PaymentSchema, input);
+      const amounts = parseVatLines(form, rates);
+      if (!parsed.ok) {
+        error = parsed.message;
+        errors = parsed.errors;
+      } else if (!amounts.ok) {
+        error = amounts.message;
+        errors = { amount: amounts.message };
+      } else {
+        const d = parsed.data;
         const what = [];
-        if (d.invoice_number && !p.invoice_number) what.push(`añadió la factura ${d.invoice_number}`);
-        if (file && p.file_id) what.push('cambió el documento');
-        else if (file) what.push('adjuntó el documento');
         if (amounts.total !== p.total_cents) what.push(`importe ${eur(p.total_cents)} → ${eur(amounts.total)}`);
         if (d.status === 'pagado' && p.status !== 'pagado') what.push('lo marcó como pagado');
         if (d.status !== 'pagado' && p.status === 'pagado') what.push('lo volvió a dejar por pagar');
         await db.batch([
           db.prepare(
-            `UPDATE payments SET supplier = ?, concept = ?, invoice_number = ?, invoice_date = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
-                    due_date = ?, status = ?, paid_on = ?, method = ?, file_id = ?, notes = ?, updated_at = ? WHERE id = ?`,
-          ).bind(d.supplier, d.concept, d.invoice_number, d.invoice_date, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
-            d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, fileId, d.notes, nowIso(), pid),
-          activityStmt(db, who, id, 'payment.update', `${what.length ? what.join(', ') : 'editó'} · ${d.supplier}`),
+            `UPDATE payments SET supplier = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
+                    due_date = ?, status = ?, paid_on = ?, method = ?, notes = ?, updated_at = ? WHERE id = ?`,
+          ).bind(d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
+            d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, d.notes, nowIso(), pid),
+          activityStmt(db, who, id, 'payment.update', `${what.length ? what.join(', ') : 'editó el pago'} · ${d.supplier}`),
         ]);
-        if (file && p.file_id) await deleteFiles(db, env.DOCS, [p.file_id]);
-        return Astro.redirect(`/expedientes/${id}/pagos/${pid}?ok=guardado`, 303);
-      } catch (err) {
-        if (!(err instanceof UploadError)) throw err;
-        error = err.message;
+        return Astro.redirect(`${self}?ok=guardado`, 303);
       }
+    } else {
+      error = 'Esa acción no está permitida.';
     }
+  } catch (err) {
+    if (!(err instanceof UploadError)) throw err;
+    error = err.message;
   }
   Astro.response.status = 400;
 }
 
-const { suppliers } = await suggestions(db);
+const [{ suppliers }, invoice, others] = await Promise.all([
+  suggestions(db),
+  p.supplier_invoice_id ? getSupplierInvoice(db, p.supplier_invoice_id) : null,
+  p.supplier_invoice_id ? [] : expedienteInvoices(db, id),
+]);
+const covered = invoice ? await invoicePayments(db, invoice.id) : [];
+const coveredTotal = covered.reduce((a, x) => a + x.total_cents, 0);
 const state = paymentState(p, now);
+const invState = supplierInvoiceState(p);
 const saved = linesOf(p);
-const doc = fileUrl(p);
-const missingInvoice = !p.invoice_number && p.total_cents !== 0;
-// El formulario sale abierto si hay un error, si aún falta la factura o si se pide (?editar)
-const openEdit = !!error || (missingInvoice && !locked) || Astro.url.searchParams.has('editar');
+const doc = invoice ? fileUrl({ file_id: invoice.file_id, file_name: invoice.file_name }) : null;
+// Las facturas del mismo proveedor, primero
+const choices = [...others].sort((a, b) => (b.supplier === p.supplier) - (a.supplier === p.supplier));
 const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURIComponent(p.supplier)}`;
 ---
 <App title={`${p.supplier} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
@@ -115,20 +177,14 @@ const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURICompon
 
   <section class="card">
     <div class="sec-head">
-      <h2><Icon name="receipt" /> {p.supplier} <Pill state={state} /></h2>
+      <h2><Icon name="wallet" /> {p.supplier} <Pill state={state} /></h2>
       <span class:list={['big-money money', { neg: p.total_cents < 0 }]}>{eur(p.total_cents)}</span>
     </div>
     <dl class="kv">
       {p.concept && <><dt>Concepto</dt><dd>{p.concept}</dd></>}
-      <dt>Factura</dt>
-      <dd>{p.invoice_number ? <>{p.invoice_number}{p.invoice_date && ` · ${formatDate(p.invoice_date)}`}</> : <span class="pill pill-warn">Aún sin factura del proveedor</span>}</dd>
-      <dt>Documento</dt>
-      <dd>{doc ? <a href={doc} target="_blank" rel="noopener"><Icon name="paperclip" size={15} /> {p.file_name}</a> : '—'}</dd>
       <dt>Importe</dt>
       <dd>
-        {saved.map((l) => (
-          <span class="vat-line money">{l.label}: {eur(l.base)} sin IVA → <strong>{eur(l.total)}</strong></span>
-        ))}
+        {saved.map((l) => <span class="vat-line money">{l.label}: {eur(l.base)} sin IVA → <strong>{eur(l.total)}</strong></span>)}
         {saved.length > 1 && <span class="vat-line money">Total: {eur(p.base_cents)} sin IVA → <strong>{eur(p.total_cents)}</strong></span>}
       </dd>
       {p.status === 'pagado'
@@ -155,20 +211,149 @@ const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURICompon
           </form>
         )}
         <a class="btn btn-ghost btn-sm" href={sameSupplier}><Icon name="plus" size={16} /> Otro pago a {p.supplier}</a>
+        {canDelete && (
+          <form method="post">
+            <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete"
+              data-confirm={`¿Borrar el pago a ${p.supplier} de ${eur(p.total_cents)}?${invoice && covered.length === 1 ? ' También se borra su factura.' : ''}`}
+              data-confirm-ok="Borrar pago"><Icon name="trash-2" size={16} /> Borrar pago</button>
+          </form>
+        )}
       </div>
+    )}
+    {!locked && !canDelete && <p class="muted small mt">Sólo Administración o quien añadió el pago puede borrarlo.</p>}
+  </section>
+
+  <section class="card mt" id="factura">
+    <div class="sec-head">
+      <h2><Icon name="paperclip" /> Factura del proveedor {invState && <Pill state={invState} />}</h2>
+    </div>
+
+    {invoice ? (
+      <>
+        <dl class="kv">
+          <dt>Nº de factura</dt><dd>{invoice.number ?? <span class="muted">Sin número todavía</span>}{invoice.issued_on && ` · ${formatDate(invoice.issued_on)}`}</dd>
+          <dt>Documento</dt><dd>{doc ? <a href={doc} target="_blank" rel="noopener"><Icon name="file-text" size={15} /> {invoice.file_name}</a> : <span class="muted">Sin documento</span>}</dd>
+          <dt>Subida</dt><dd>{invoice.uploaded_by_name ?? '—'} · {formatStamp(invoice.uploaded_at)}</dd>
+          <dt>Revisión</dt>
+          <dd>{invoice.review === 'conforme'
+            ? <>Conforme · {invoice.reviewed_by_name ?? '—'}{invoice.reviewed_at && ` · ${formatStamp(invoice.reviewed_at)}`}</>
+            : <span class="warn-text">Pendiente de que Administración la revise</span>}</dd>
+          {covered.length > 1 && (
+            <>
+              <dt>Cubre {covered.length} pagos</dt>
+              <dd>
+                {covered.map((c) => <span class="vat-line money">{c.id === p.id ? <strong>Este pago</strong> : <a href={`/expedientes/${id}/pagos/${c.id}`}>{c.supplier}{c.concept && ` · ${c.concept}`}</a>}: {eur(c.total_cents)}</span>)}
+                <span class="vat-line money">Suma de los pagos: <strong>{eur(coveredTotal)}</strong></span>
+              </dd>
+            </>
+          )}
+          {invoice.total_cents != null && (
+            <>
+              <dt>Total factura</dt>
+              <dd class="money">{eur(invoice.total_cents)}{' '}
+                {invoice.total_cents === coveredTotal
+                  ? <span class="pill pill-ok">Cuadra con los pagos</span>
+                  : <span class="pill pill-danger">No cuadra: los pagos suman {eur(coveredTotal)}</span>}</dd>
+            </>
+          )}
+        </dl>
+
+        {!locked && admin && invoice.review !== 'conforme' && (
+          <form method="post" class="form-section mt">
+            <h3><Icon name="circle-check" size={18} /> Revisar la factura</h3>
+            <p class="muted small">Abre el documento, comprueba que es correcta y anota su número.</p>
+            <div class="row row-2">
+              <div class:list={['field', { 'has-error': errors.invoice_number }]}>
+                <label for="conf-number">Nº de factura</label>
+                <input id="conf-number" name="invoice_number" type="text" required maxlength="60" value={invoice.number ?? ''} autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="conf-date">Fecha de la factura</label>
+                <input id="conf-date" name="invoice_date" type="date" value={invoice.issued_on ?? ''} />
+              </div>
+            </div>
+            <div><button class="btn btn-primary" type="submit" name="intent" value="invoice_conform" data-busy="Guardando…"><Icon name="check" size={18} /> Conforme</button></div>
+          </form>
+        )}
+
+        {!locked && (
+          <div class="actions-inline mt no-print">
+            <details class="add">
+              <summary class="btn btn-ghost btn-sm"><Icon name="upload" size={16} /> {invoice.file_id ? 'Cambiar documento' : 'Subir documento'}</summary>
+              <form method="post" enctype="multipart/form-data" class="form-section">
+                <FileField id="replace-file" label="Documento nuevo" required />
+                <p class="hint muted small">La factura vuelve a quedar pendiente de revisar.</p>
+                <div><button class="btn btn-primary btn-sm" type="submit" name="intent" value="invoice_file" data-busy="Subiendo…">Subir</button></div>
+              </form>
+            </details>
+            <details class="add">
+              <summary class="btn btn-ghost btn-sm"><Icon name="pencil" size={16} /> Corregir número, fecha o total</summary>
+              <form method="post" class="form-section">
+                <div class="row row-3">
+                  <div class:list={['field', { 'has-error': errors.invoice_number }]}>
+                    <label for="data-number">Nº de factura</label>
+                    <input id="data-number" name="invoice_number" type="text" maxlength="60" value={invoice.number ?? ''} />
+                  </div>
+                  <div class="field">
+                    <label for="data-date">Fecha</label>
+                    <input id="data-date" name="invoice_date" type="date" value={invoice.issued_on ?? ''} />
+                  </div>
+                  <div class:list={['field', { 'has-error': errors.invoice_total }]}>
+                    <label for="data-total">Total de la factura</label>
+                    <input id="data-total" name="invoice_total" type="text" inputmode="decimal" value={amountInput(invoice.total_cents ?? null)} placeholder="IVA incluido" />
+                  </div>
+                </div>
+                <div><button class="btn btn-primary btn-sm" type="submit" name="intent" value="invoice_data">Guardar</button></div>
+              </form>
+            </details>
+            <form method="post">
+              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="invoice_remove"
+                data-confirm={covered.length > 1
+                  ? `¿Quitar la ${invoiceName(invoice)} de este pago? Seguirá en los otros ${covered.length - 1} pagos que cubre.`
+                  : `¿Quitar la ${invoiceName(invoice)}? Se borra también su documento.`}
+                data-confirm-ok="Quitar factura"><Icon name="trash-2" size={16} /> Quitar factura</button>
+            </form>
+          </div>
+        )}
+      </>
+    ) : (
+      <>
+        <p class="muted">{p.status === 'pagado' ? 'Este pago ya está hecho y falta la factura del proveedor: reclámala y súbela aquí.' : 'Todavía no tiene factura.'}</p>
+        {!locked && (
+          <>
+            <form method="post" enctype="multipart/form-data" class="form-section mt">
+              <h3><Icon name="upload" size={18} /> Subir la factura</h3>
+              <SupplierInvoiceFields v={v} errors={errors} id="inv" />
+              <div><button class="btn btn-primary" type="submit" name="intent" value="invoice_new" data-busy="Subiendo…"><Icon name="upload" size={18} /> Subir factura</button></div>
+            </form>
+            {choices.length > 0 && (
+              <form method="post" class="form-section mt">
+                <h3><Icon name="link" size={18} /> ¿Es una factura que ya está subida?</h3>
+                <p class="muted small">Cuando el proveedor manda una única factura para varios pagos (p. ej. dos anticipos), súbela en uno y elígela aquí en los demás.</p>
+                <div class="field">
+                  <label for="invoice_id">Factura</label>
+                  <select id="invoice_id" name="invoice_id" required>
+                    {choices.map((c) => (
+                      <option value={c.id}>{c.supplier} · {c.number ? `nº ${c.number}` : 'sin número'}{c.file_name ? ` · ${c.file_name}` : ''} · cubre {c.payment_count} {c.payment_count === 1 ? 'pago' : 'pagos'}</option>
+                    ))}
+                  </select>
+                </div>
+                <div><button class="btn btn-ghost" type="submit" name="intent" value="invoice_link"><Icon name="link" size={18} /> Usar esta factura</button></div>
+              </form>
+            )}
+          </>
+        )}
+      </>
     )}
   </section>
 
   {!locked && (
     <details class="add mt" open={openEdit}>
-      <summary class="btn btn-ghost"><Icon name={missingInvoice ? 'paperclip' : 'pencil'} size={18} />
-        <span class="when-closed">{missingInvoice ? 'Añadir la factura' : 'Editar'}</span><span class="when-open">Cerrar edición</span></summary>
-      <form method="post" enctype="multipart/form-data" class="form-section">
-        <PaymentForm v={v} errors={errors} suppliers={suppliers} current={p.file_id ? p : null} rates={rates} lines={lines} id="edit" />
+      <summary class="btn btn-ghost"><Icon name="pencil" size={18} /> <span class="when-closed">Editar el pago</span><span class="when-open">Cerrar edición</span></summary>
+      <form method="post" class="form-section">
+        <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} id="edit" />
         <div class="actions-inline">
           <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…">Guardar cambios</button>
-          {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm="¿Borrar esta línea? También se borra su documento.">
-            <Icon name="trash-2" size={16} /> Borrar</button>}
         </div>
       </form>
     </details>

@@ -1,23 +1,30 @@
 ---
 // Bandeja de pagos a proveedores de TODOS los expedientes.
 //  · Pendientes: por fecha límite (vencidos, próximos días, este mes…). La lista de trabajo de Administración.
-//  · Pagados: el historial por meses, con buscador (proveedor, nº de factura, expediente).
+//  · Por revisar: facturas de proveedor subidas que Administración aún no ha dado por buenas.
+//  · Pagados: el historial por meses.
+// Las tres con buscador (proveedor, nº de factura, expediente).
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import PaymentItem from '../components/PaymentItem.astro';
-import { actor, readForm } from '../lib/app.js';
-import { pendingPayments, paidWithoutInvoice, paidPayments, byMonth } from '../lib/data.js';
+import ReviewItem from '../components/ReviewItem.astro';
+import SearchBox from '../components/SearchBox.astro';
+import { actor, readForm, can } from '../lib/app.js';
+import { pendingPayments, paidWithoutInvoice, paidPayments, invoicesToReview, byMonth } from '../lib/data.js';
 import { markPaid } from '../lib/actions.js';
-import { formToObject } from '../lib/validate.js';
+import { conformInvoice } from '../lib/supplier.js';
+import { ConformSchema, validate, formToObject } from '../lib/validate.js';
 import { plural, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { today, addDays, formatMonth } from '../lib/dates.js';
 
 const db = env.DB;
 const now = today();
-const view = Astro.url.searchParams.get('ver') === 'pagados' ? 'pagados' : 'pendientes';
+const VIEWS = ['pendientes', 'revisar', 'pagados'];
+const view = VIEWS.includes(Astro.url.searchParams.get('ver')) ? Astro.url.searchParams.get('ver') : 'pendientes';
 const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const reviewer = can(Astro.locals.user, 'supplier.review');
 let error = null;
 
 if (Astro.request.method === 'POST') {
@@ -25,16 +32,24 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   if (input.intent === 'pay') {
     const r = await markPaid(db, actor(Astro), input);
-    if (r.ok) return Astro.redirect('/pagos?ok=pagado', 303);
+    if (r.ok) return Astro.redirect(`/pagos${q ? `?q=${encodeURIComponent(q)}&ok=pagado` : '?ok=pagado'}`, 303);
+    error = r.message;
+  } else if (input.intent === 'conform') {
+    const parsed = validate(ConformSchema, input);
+    const r = parsed.ok
+      ? await conformInvoice({ db, who: actor(Astro), invoiceId: Number(input.supplier_invoice_id), data: parsed.data })
+      : parsed;
+    if (r.ok) return Astro.redirect('/pagos?ver=revisar&ok=revisada', 303);
     error = r.message;
   }
   Astro.response.status = 400;
 }
 
 const total = (rows) => rows.reduce((a, p) => a + p.total_cents, 0);
-const [pending, noInvoice, paid] = await Promise.all([
-  pendingPayments(db),
-  paidWithoutInvoice(db),
+const [pending, noInvoice, review, paid] = await Promise.all([
+  view === 'pendientes' ? pendingPayments(db, q) : [],
+  view === 'pendientes' ? paidWithoutInvoice(db, q) : [],
+  invoicesToReview(db, view === 'revisar' ? q : ''),
   view === 'pagados' ? paidPayments(db, q) : [],
 ]);
 const soonLimit = addDays(now, SOON_DAYS);
@@ -47,29 +62,37 @@ const groups = [
   { key: 'sinfecha', title: 'Sin fecha límite', rows: pending.filter((p) => !p.due_date) },
 ];
 const months = byMonth(paid, 'paid_on');
+const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura o expediente' : 'Proveedor, nº de factura o expediente';
 ---
 <App title="Pagos" section="pagos" error={error}>
   <div class="page-top">
     <div>
       <h1>Pagos a proveedores</h1>
-      <p>De todos los expedientes: lo pendiente por fecha límite y el historial de lo pagado</p>
+      <p>De todos los expedientes: lo pendiente por fecha límite, las facturas por revisar y el historial de lo pagado</p>
     </div>
   </div>
 
   <nav class="x-tabs" aria-label="Pagos">
-    <a href="/pagos" aria-current={view === 'pendientes' ? 'page' : undefined}>Pendientes {pending.length > 0 && <small class:list={{ 'is-alert': groups[0].rows.length > 0 }}>{pending.length}</small>}</a>
+    <a href="/pagos" aria-current={view === 'pendientes' ? 'page' : undefined}>Pendientes</a>
+    <a href="/pagos?ver=revisar" aria-current={view === 'revisar' ? 'page' : undefined}>Facturas por revisar {review.length > 0 && <small class="is-alert">{review.length}</small>}</a>
     <a href="/pagos?ver=pagados" aria-current={view === 'pagados' ? 'page' : undefined}>Pagados</a>
   </nav>
 
-  {view === 'pendientes' ? (
+  <SearchBox action="/pagos" view={view === 'pendientes' ? null : view} q={q} placeholder={placeholder} />
+
+  {view === 'pendientes' && (
     <>
-      <div class="kpis">
-        {groups.slice(0, 4).map((g) => (
-          <a class:list={['kpi', { 'is-danger': g.danger && g.rows.length > 0 }]} href={`#${g.key}`}>
-            <span>{g.title}</span><b class="money">{eur(total(g.rows))}</b><small>{plural(g.rows.length, 'pago', 'pagos')}</small>
-          </a>
-        ))}
-      </div>
+      {q
+        ? <p class="muted mt">{plural(pending.length, 'pago pendiente', 'pagos pendientes')} para «{q}» · {eur(total(pending))}</p>
+        : (
+          <div class="kpis mt">
+            {groups.slice(0, 4).map((g) => (
+              <a class:list={['kpi', { 'is-danger': g.danger && g.rows.length > 0 }]} href={`#${g.key}`}>
+                <span>{g.title}</span><b class="money">{eur(total(g.rows))}</b><small>{plural(g.rows.length, 'pago', 'pagos')}</small>
+              </a>
+            ))}
+          </div>
+        )}
 
       {groups.filter((g) => g.rows.length).map((g) => (
         <section id={g.key}>
@@ -80,7 +103,7 @@ const months = byMonth(paid, 'paid_on');
           <ul class="list">{g.rows.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
         </section>
       ))}
-      {!pending.length && <p class="empty"><Icon name="circle-check" /> No hay nada pendiente de pagar.</p>}
+      {!pending.length && <p class="empty mt">{q ? 'No hay pagos pendientes que coincidan.' : <><Icon name="circle-check" /> No hay nada pendiente de pagar.</>}</p>}
 
       {noInvoice.length > 0 && (
         <section id="sin-factura">
@@ -88,19 +111,25 @@ const months = byMonth(paid, 'paid_on');
             <h2><Icon name="paperclip" /> Pagados sin factura del proveedor ({noInvoice.length})</h2>
             <p>Pagos hechos (anticipos, tarjeta…) de los que aún falta la factura. Reclámala y súbela en el pago.</p>
           </div>
-          <ul class="list">{noInvoice.map((p) => <PaymentItem p={p} now={now} showExp />)}</ul>
+          <ul class="list">{noInvoice.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
         </section>
       )}
     </>
-  ) : (
+  )}
+
+  {view === 'revisar' && (
     <>
-      <form method="get" class="quick-form" role="search">
-        <input type="hidden" name="ver" value="pagados" />
-        <label class="visually-hidden" for="q">Buscar</label>
-        <input id="q" name="q" type="search" value={q} placeholder="Proveedor, nº de factura o expediente" />
-        <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
-        {q && <a class="btn btn-ghost btn-sm" href="/pagos?ver=pagados">Quitar búsqueda</a>}
-      </form>
+      <p class="muted mt">{reviewer
+        ? 'Facturas que ha subido el equipo. Abre el documento, comprueba que es correcta, anota su número y dale a «Conforme»: el pago pasa a «Con factura».'
+        : 'Facturas subidas que Administración aún no ha revisado.'}</p>
+      {review.length
+        ? <ul class="list mt">{review.map((si) => <ReviewItem si={si} canReview={reviewer} />)}</ul>
+        : <p class="empty mt">{q ? 'No hay facturas por revisar que coincidan.' : <><Icon name="circle-check" /> No hay facturas pendientes de revisar.</>}</p>}
+    </>
+  )}
+
+  {view === 'pagados' && (
+    <>
       {q && <p class="muted mt">{plural(paid.length, 'pago', 'pagos')} para «{q}» · {eur(total(paid))}</p>}
       {months.map((m) => (
         <section>

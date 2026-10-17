@@ -68,6 +68,13 @@ if (Astro.request.method === 'POST') {
       activityStmt(db, who, id, 'invoice.void', `anuló ${label} (${eur(inv.total_cents)}). Sus PO vuelven a quedar sin facturar.`),
     ]);
     return Astro.redirect(`${back}?ok=guardado`, 303);
+  } else if (input.intent === 'remove_file' && admin && inv.file_id) {
+    await db.batch([
+      db.prepare('UPDATE invoices SET file_id = NULL, updated_at = ? WHERE id = ?').bind(nowIso(), fid),
+      activityStmt(db, who, id, 'invoice.file', `quitó el PDF de ${label}`),
+    ]);
+    await deleteFiles(db, env.DOCS, [inv.file_id]);
+    return Astro.redirect(`/expedientes/${id}/facturas/${fid}?ok=guardado`, 303);
   } else if (input.intent === 'delete' && canDelete) {
     await db.batch([
       db.prepare('DELETE FROM invoices WHERE id = ?').bind(fid),
@@ -186,18 +193,18 @@ const poList = fin.allocations.filter((a) => a.invoice_id === fid);
     <form method="post" enctype="multipart/form-data" class="form-section mt">
       <h2><Icon name="pencil" /> {inv.status === 'por_emitir' && admin ? 'Revisar y emitir' : 'Editar'}</h2>
       {inv.status === 'por_emitir' && admin && <p class="muted">Haz la factura en el programa de contabilidad y anota aquí su número, la fecha y el PDF.</p>}
-      <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} current={inv.file_id ? inv : null} rates={rates} lines={lines}
+      <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} current={inv.file_id ? inv : null} removable={admin} rates={rates} lines={lines}
         allocated={allocated} checked={checked} id="edit" />
       <div class="actions-inline">
         {inv.status === 'por_emitir' && admin && (
           <button class="btn btn-primary" type="submit" name="intent" value="issue" data-busy="Emitiendo…"><Icon name="send" size={18} /> Guardar como emitida</button>
         )}
         <button class:list={['btn', inv.status === 'por_emitir' && admin ? 'btn-ghost' : 'btn-primary']} type="submit" name="intent" value="save" data-busy="Guardando…">Guardar</button>
-        {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm="¿Borrar esta factura?"><Icon name="trash-2" size={16} /> Borrar</button>}
+        {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm="¿Borrar esta factura? No se puede deshacer." data-confirm-ok="Borrar factura"><Icon name="trash-2" size={16} /> Borrar</button>}
       </div>
     </form>
   )}
   {!editable && canDelete && (
-    <form method="post" class="mt"><button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm="¿Borrar esta factura anulada?"><Icon name="trash-2" size={16} /> Borrar</button></form>
+    <form method="post" class="mt"><button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm="¿Borrar esta factura anulada?" data-confirm-ok="Borrar factura"><Icon name="trash-2" size={16} /> Borrar</button></form>
   )}
 </App>

@@ -8,6 +8,7 @@ const ONLY = {
   'expediente.open': ['admin'],      // dar número al expediente
   'expediente.close': ['admin'],     // cerrar, reabrir y cancelar
   'invoice.issue': ['admin'],        // poner nº a una factura, marcarla cobrada o anularla
+  'supplier.review': ['admin'],      // revisar y dar por buena una factura de proveedor
   'delete': ['admin'],               // borrar filas de otras personas
   'users': ['admin'],
   'settings': ['admin'],             // tipos de IVA y numeración
@@ -74,6 +75,9 @@ export const FLASH = {
   emitida: 'Factura emitida',
   cobrada: 'Cobro registrado',
   pedida: 'Factura pedida a Administración',
+  subida: 'Factura subida. Administración la revisará.',
+  revisada: 'Factura revisada: conforme',
+  quitada: 'Factura quitada del pago',
   nota: 'Nota añadida',
   password: 'Contraseña cambiada. Se ha cerrado la sesión en tus otros dispositivos.',
   sesiones: 'Se ha cerrado la sesión en tus otros dispositivos.',

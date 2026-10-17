@@ -3,7 +3,7 @@
 import FileField from './FileField.astro';
 import { amountInput } from '../lib/money.js';
 
-const { v = {}, errors = {}, companies = [], current = null, id = 'po' } = Astro.props;
+const { v = {}, errors = {}, companies = [], current = null, id = 'po', removable = false } = Astro.props;
 const amount = typeof v.amount === 'string' ? v.amount : amountInput(v.amount_cents ?? null);
 ---
 <div class="row row-2">
@@ -28,7 +28,7 @@ const amount = typeof v.amount === 'string' ? v.amount : amountInput(v.amount_ce
     <input id={`${id}-issued_on`} name="issued_on" type="date" value={v.issued_on ?? ''} />
   </div>
 </div>
-<FileField id={`${id}-file`} label="PO (PDF o el correo del cliente)" current={current} />
+<FileField id={`${id}-file`} label="PO (PDF o el correo del cliente)" current={current} removable={removable} />
 <div class:list={['field', { 'has-error': errors.notes }]}>
   <label for={`${id}-notes`}>Notas <span class="opt">(opcional)</span></label>
   <input id={`${id}-notes`} name="notes" type="text" maxlength="1000" value={v.notes ?? ''} placeholder="Para qué es: hotel, audiovisuales…" />

@@ -2,7 +2,7 @@
 // Una fila de coste / pago a proveedor (en el expediente y en la bandeja de pagos).
 import Icon from './Icon.astro';
 import Pill from './Pill.astro';
-import { paymentState, PAYMENT_METHODS } from '../lib/finance.js';
+import { paymentState, supplierInvoiceState, PAYMENT_METHODS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { formatDate, dueText } from '../lib/dates.js';
 import { fileUrl } from '../lib/files.js';
@@ -11,7 +11,8 @@ const { p, now, showExp = false, canEdit = true } = Astro.props;
 const state = paymentState(p, now);
 const href = fileUrl(p);
 const edit = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
-const missingInvoice = !p.invoice_number && p.total_cents !== 0;
+const invoice = supplierInvoiceState(p);
+const missingInvoice = !p.supplier_invoice_id && p.total_cents !== 0;
 const canPay = canEdit && p.status !== 'pagado';
 ---
 <li class="item is-row">
@@ -19,14 +20,16 @@ const canPay = canEdit && p.status !== 'pagado';
     {showExp && <a class="item-meta" href={`/expedientes/${p.expediente_id}/pagos`}><strong>{p.exp_number ? `EXP ${p.exp_number}` : 'Solicitud'}</strong> · {p.exp_name}</a>}
     <a class="item-title" href={edit}>{p.supplier}{p.concept && <span class="muted"> · {p.concept}</span>}</a>
     <span class="item-meta">
-      {p.invoice_number ? <span>Factura {p.invoice_number}{p.invoice_date && ` · ${formatDate(p.invoice_date)}`}</span> : <span>Sin factura todavía</span>}
+      {p.supplier_invoice_id
+        ? <span>Factura {p.invoice_number ?? 'sin número todavía'}{p.invoice_date && ` · ${formatDate(p.invoice_date)}`}</span>
+        : <span>Sin factura todavía</span>}
       {p.status === 'pagado'
         ? <span>Pagado el {formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</span>
         : p.due_date ? <span>Límite {formatDate(p.due_date)} · {dueText(p.due_date, now)}</span> : <span>Sin fecha límite</span>}
     </span>
     <span class="item-flags">
       <Pill state={state} />
-      {!p.invoice_number && p.status === 'pagado' && p.total_cents !== 0 && <span class="pill pill-warn">Falta factura</span>}
+      {invoice && invoice.key !== 'sin' && <Pill state={invoice} />}
       {!p.planned && <span class="pill pill-gold" title="No estaba en la previsión de pagos de la solicitud">Añadido después</span>}
       {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{p.file_name}</a>}
     </span>

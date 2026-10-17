@@ -7,6 +7,7 @@ import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import PoItem from '../components/PoItem.astro';
+import SearchBox from '../components/SearchBox.astro';
 import { actor, readForm, can } from '../lib/app.js';
 import { openInvoices, posWithBalance, collectedInvoices, byMonth } from '../lib/data.js';
 import { markCollected } from '../lib/actions.js';
@@ -33,8 +34,9 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
+const pendingQ = view === 'pendientes' ? q : '';
 const [invoices, pos, collected] = await Promise.all([
-  openInvoices(db), posWithBalance(db), view === 'cobradas' ? collectedInvoices(db, q) : [],
+  openInvoices(db, pendingQ), posWithBalance(db, pendingQ), view === 'cobradas' ? collectedInvoices(db, q) : [],
 ]);
 const months = byMonth(collected, 'collected_on');
 const toIssue = invoices.filter((i) => i.status === 'por_emitir');
@@ -55,9 +57,12 @@ const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
     <a href="/cobros?ver=cobradas" aria-current={view === 'cobradas' ? 'page' : undefined}>Cobradas</a>
   </nav>
 
+  <SearchBox action="/cobros" view={view === 'cobradas' ? 'cobradas' : null} q={q} placeholder="Cliente, nº de factura, PO o expediente" />
+  {view === 'pendientes' && q && <p class="muted mt">{plural(toIssue.length + toCollect.length, 'factura', 'facturas')} y {plural(pos.length, 'PO', 'PO')} para «{q}»</p>}
+
   {view === 'pendientes' ? (
     <>
-      <div class="kpis">
+      <div class="kpis mt">
         <a class="kpi" href="#emitir"><span>Por emitir</span><b class="money">{eur(total(toIssue))}</b><small>{plural(toIssue.length, 'factura pedida', 'facturas pedidas')}</small></a>
         <a class="kpi" href="#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(total(toCollect))}</b><small>{plural(toCollect.length, 'factura', 'facturas')}</small></a>
         <a class:list={['kpi', { 'is-danger': overdue.length > 0 }]} href="#cobrar"><span>Cobro vencido</span><b class="money">{eur(total(overdue))}</b><small>{plural(overdue.length, 'factura', 'facturas')}</small></a>
@@ -89,13 +94,6 @@ const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
     </>
   ) : (
     <>
-      <form method="get" class="quick-form" role="search">
-        <input type="hidden" name="ver" value="cobradas" />
-        <label class="visually-hidden" for="q">Buscar</label>
-        <input id="q" name="q" type="search" value={q} placeholder="Cliente, nº de factura o expediente" />
-        <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
-        {q && <a class="btn btn-ghost btn-sm" href="/cobros?ver=cobradas">Quitar búsqueda</a>}
-      </form>
       {q && <p class="muted mt">{plural(collected.length, 'factura', 'facturas')} para «{q}» · {eur(total(collected))}</p>}
       {months.map((m) => (
         <section>

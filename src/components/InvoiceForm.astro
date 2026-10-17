@@ -10,6 +10,7 @@ const {
   allocated = new Map(), // po_id → importe que esta factura ya tiene de esa PO (al editar)
   checked = null,        // po_id marcados tras un error
   rates = [], lines = [], // tipos de IVA y desglose (guardado o lo escrito antes de un error)
+  removable = false,      // botón «Quitar documento» junto al PDF actual
 } = Astro.props;
 // PO que se pueden usar: las que tienen saldo y las que ya usa esta factura
 const usable = poRows.filter((po) => po.left_cents > 0 || allocated.has(po.id));
@@ -75,7 +76,7 @@ const amountFor = (po) => {
         <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
       </div>
     </div>
-    <FileField id={`${id}-file`} label="Factura emitida (PDF)" current={current} />
+    <FileField id={`${id}-file`} label="Factura emitida (PDF)" current={current} removable={removable} />
   </>
 )}
 <div class:list={['field', { 'has-error': errors.notes }]}>

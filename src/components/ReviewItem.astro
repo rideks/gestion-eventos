@@ -1,0 +1,47 @@
+---
+// Una factura de proveedor pendiente de revisar (bandeja de Administración).
+// Acceso directo al documento y, para Administración, «Conforme» con su número en la misma fila.
+import Icon from './Icon.astro';
+import { eur } from '../lib/money.js';
+import { formatStamp } from '../lib/dates.js';
+import { fileUrl } from '../lib/files.js';
+
+const { si, canReview = false } = Astro.props;
+const doc = fileUrl({ file_id: si.file_id, file_name: si.file_name });
+const payment = `/expedientes/${si.expediente_id}/pagos/${si.first_payment_id}`;
+const closed = si.exp_status === 'cerrado';
+---
+<li class="item is-row">
+  <div class="item-body">
+    <a class="item-meta" href={`/expedientes/${si.expediente_id}/pagos`}><strong>{si.exp_number ? `EXP ${si.exp_number}` : 'Solicitud'}</strong> · {si.exp_name}</a>
+    <a class="item-title" href={payment}>{si.supplier} <span class="muted">· {si.number ? `factura ${si.number}` : 'factura sin número'}</span></a>
+    <span class="item-meta">
+      <span>Subida por {si.uploaded_by_name ?? '—'} · {formatStamp(si.uploaded_at)}</span>
+      <span>Cubre {si.payment_count} {si.payment_count === 1 ? 'pago' : 'pagos'}: {eur(si.payments_total)}</span>
+    </span>
+    <span class="item-flags">
+      <span class="pill pill-orange">Por revisar</span>
+      {si.total_cents != null && (si.total_cents === si.payments_total
+        ? <span class="pill pill-ok">La factura cuadra con los pagos</span>
+        : <span class="pill pill-danger">Factura de {eur(si.total_cents)}: no cuadra</span>)}
+    </span>
+  </div>
+  <div class="item-amount">
+    <span class="big-money money">{eur(si.total_cents ?? si.payments_total)}</span>
+    <small>{si.total_cents != null ? 'total factura' : 'suma de los pagos'}</small>
+  </div>
+  <div class="item-foot">
+    {doc ? <a class="btn btn-ghost btn-sm" href={doc} target="_blank" rel="noopener"><Icon name="file-text" size={16} /> Ver documento</a> : <span class="muted small">Sin documento</span>}
+    {canReview && !closed ? (
+      <form method="post" class="quick-form">
+        <input type="hidden" name="intent" value="conform" />
+        <input type="hidden" name="supplier_invoice_id" value={si.id} />
+        <label class="visually-hidden" for={`num-${si.id}`}>Nº de factura</label>
+        <input id={`num-${si.id}`} type="text" name="invoice_number" required maxlength="60" value={si.number ?? ''} placeholder="Nº de factura" autocomplete="off" />
+        <label class="visually-hidden" for={`date-${si.id}`}>Fecha de la factura</label>
+        <input id={`date-${si.id}`} type="date" name="invoice_date" value={si.issued_on ?? ''} />
+        <button class="btn btn-sm btn-primary" type="submit" data-busy="Guardando…"><Icon name="check" size={16} /> Conforme</button>
+      </form>
+    ) : <a class="btn btn-ghost btn-sm" href={payment}><Icon name="eye" size={16} /> Ver pago</a>}
+  </div>
+</li>

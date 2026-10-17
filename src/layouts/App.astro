@@ -17,6 +17,8 @@ const user = Astro.locals.user;
 const company = env.COMPANY_NAME || 'Seven Worlds';
 const counts = await navCounts(env.DB, today());
 const admin = can(user, 'expediente.open');
+const reviewer = can(user, 'supplier.review');
+const toReview = reviewer ? counts.to_review : 0;
 
 const ok = FLASH[Astro.url.searchParams.get('ok') ?? ''];
 const warn = Astro.url.searchParams.get('aviso') === 'permiso' ? 'Eso sólo lo puede hacer Administración.' : null;
@@ -57,6 +59,14 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
       </a>
       <span class="spacer"></span>
       {user && <span class="a-user">{user.name} · {roleLabel}</span>}
+      {reviewer && (
+        <a class:list={['bell', { 'has-news': toReview > 0 }]} href="/pagos?ver=revisar"
+          aria-label={toReview ? `${toReview} ${toReview === 1 ? 'factura nueva' : 'facturas nuevas'} por revisar` : 'Facturas por revisar'}
+          title={toReview ? `${toReview} ${toReview === 1 ? 'factura nueva' : 'facturas nuevas'} por revisar` : 'No hay facturas por revisar'}>
+          <Icon name="bell" size={22} />
+          {toReview > 0 && <span class="bell-count">{toReview}</span>}
+        </a>
+      )}
       <a class="btn btn-primary btn-sm" href="/expedientes/nuevo"><Icon name="plus" size={18} /><span class="btn-label">Nueva solicitud</span></a>
     </header>
 
@@ -102,11 +112,51 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
       </form>
     </div>
 
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-text">
+      <form method="dialog">
+        <span class="confirm-icon"><Icon name="triangle-alert" size={26} /></span>
+        <p id="confirm-text" data-confirm-text>¿Seguro?</p>
+        <div class="confirm-actions">
+          <button class="btn btn-ghost" value="cancel" autofocus>Cancelar</button>
+          <button class="btn btn-danger-solid" value="ok" data-confirm-ok>Sí, continuar</button>
+        </div>
+      </form>
+    </dialog>
+
     <script>
-      // Confirmación antes de acciones delicadas: <button data-confirm="¿Seguro?">
+      // Confirmación antes de acciones delicadas: <button data-confirm="¿Borrar…?" data-confirm-ok="Borrar">
+      // Ventana propia (no la del navegador, que algunos bloquean). Al confirmar se repite el clic.
+      const dialog = document.getElementById('confirm-dialog');
+      const text = dialog?.querySelector('[data-confirm-text]');
+      const ok = dialog?.querySelector('[data-confirm-ok]');
+      let confirmed = null;
       document.addEventListener('click', (e) => {
         const btn = e.target instanceof Element ? e.target.closest('[data-confirm]') : null;
-        if (btn && !window.confirm(btn.getAttribute('data-confirm') || '¿Seguro?')) e.preventDefault();
+        if (!(btn instanceof HTMLElement)) return;
+        if (confirmed === btn) {
+          confirmed = null;
+          return;
+        }
+        e.preventDefault();
+        const message = btn.dataset.confirm || '¿Seguro?';
+        if (!(dialog instanceof HTMLDialogElement) || typeof dialog.showModal !== 'function') {
+          if (window.confirm(message)) {
+            confirmed = btn;
+            btn.click();
+          }
+          return;
+        }
+        text.textContent = message;
+        ok.textContent = btn.dataset.confirmOk || 'Sí, continuar';
+        ok.className = btn.classList.contains('btn-danger') ? 'btn btn-danger-solid' : 'btn btn-primary';
+        dialog.returnValue = '';
+        dialog.addEventListener('close', () => {
+          if (dialog.returnValue === 'ok') {
+            confirmed = btn;
+            btn.click();
+          }
+        }, { once: true });
+        dialog.showModal();
       });
       // Evita el doble envío (y da feedback mientras se suben documentos)
       document.addEventListener('submit', (e) => {

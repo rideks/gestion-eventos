@@ -8,13 +8,15 @@ import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import PaymentForm from '../../../components/PaymentForm.astro';
+import SupplierInvoiceFields from '../../../components/SupplierInvoiceFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
 import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
-import { PaymentSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
+import { PaymentSchema, SupplierInvoiceSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
+import { attachNewInvoice } from '../../../lib/supplier.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../../lib/vat.js';
-import { storeFile, getFile, UploadError } from '../../../lib/files.js';
+import { getFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { plural } from '../../../lib/finance.js';
 import { today } from '../../../lib/dates.js';
@@ -55,6 +57,7 @@ if (Astro.request.method === 'POST') {
     open = 'uno';
     lines = rawVatLines(form);
     const parsed = validate(PaymentSchema, input);
+    const inv = validate(SupplierInvoiceSchema, input);
     const amounts = parseVatLines(form, rates);
     if (!parsed.ok) {
       error = parsed.message;
@@ -62,26 +65,27 @@ if (Astro.request.method === 'POST') {
     } else if (!amounts.ok) {
       error = amounts.message;
       errors = { amount: amounts.message };
+    } else if (!inv.ok) {
+      error = inv.message;
+      errors = inv.errors;
     } else {
       const d = parsed.data;
+      const payment = await db.prepare(
+        `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines,
+                               due_date, status, paid_on, method, planned, notes, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, supplier_invoice_id`,
+      ).bind(id, d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
+        d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, d.notes, me.id).first();
+      await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${d.supplier} (${eur(amounts.total)})`).run();
+      // La factura (si se ha adjuntado o se sabe su número) queda pendiente de revisar
+      const file = getFile(form, 'file');
       try {
-        const file = getFile(form, 'file');
-        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
-        await db.batch([
-          db.prepare(
-            `INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, vat_lines,
-                                   due_date, status, paid_on, method, planned, file_id, notes, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-          ).bind(id, d.supplier, d.concept, d.invoice_number, d.invoice_date, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
-            d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, fileId, d.notes, me.id),
-          activityStmt(db, who, id, 'payment.add', d.invoice_number
-            ? `añadió la factura ${d.invoice_number} de ${d.supplier} (${eur(amounts.total)})`
-            : `añadió un pago a ${d.supplier} (${eur(amounts.total)})`),
-        ]);
+        if (file || inv.data.number) await attachNewInvoice({ db, bucket: env.DOCS, who, payment, file, data: inv.data });
         return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
       } catch (err) {
         if (!(err instanceof UploadError)) throw err;
-        error = err.message;
+        // El pago ya está guardado: se lleva a su ficha para volver a intentar subir la factura
+        return Astro.redirect(`/expedientes/${id}/pagos/${payment.id}?aviso_doc=${encodeURIComponent(err.message)}`, 303);
       }
     }
   } else if (input.intent === 'add_many') {
@@ -130,10 +134,12 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
       <details class="add" open={open === 'uno'} name="nuevo-pago">
         <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Añadir factura o pago</span><span class="when-open">Cerrar formulario</span></summary>
         <form method="post" enctype="multipart/form-data" class="form-section">
-          <h2><Icon name="receipt" /> Factura o pago a proveedor</h2>
-          <p class="muted">Una factura que ha llegado (aunque no estuviera prevista), un pago con tarjeta o un abono/comisión (en negativo).
+          <h2><Icon name="receipt" /> Pago a proveedor</h2>
+          <p class="muted">Un pago nuevo (aunque no estuviera previsto), un pago con tarjeta o un abono/comisión (en negativo).
             Si es la factura de un pago que ya está en la lista, ábrelo y añádesela allí.</p>
           <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} id="new" />
+          <h3 class="form-sub"><Icon name="paperclip" size={18} /> Factura del proveedor <span class="opt muted">(si ya la tienes)</span></h3>
+          <SupplierInvoiceFields v={v} errors={errors} id="newinv" />
           <div class="actions-inline">
             <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…">Guardar</button>
           </div>

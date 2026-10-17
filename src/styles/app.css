@@ -551,3 +551,34 @@ fieldset.form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .vat-line + .vat-line { margin-top: 2px; }
 .vat-line:last-child:not(:first-child) { padding-top: 4px; border-top: 1px dashed var(--line); }
 .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+/* Naranja: factura de proveedor subida, pendiente de que Administración la revise */
+.pill-orange { background: #ffedd5; color: #c2410c; border-color: transparent; }
+.form-sub { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 14px; border-top: 1px dashed var(--line); font-size: 1.02rem; }
+.form-sub svg { color: var(--c1); }
+.warn-text { color: #c2410c; font-weight: 700; }
+.form-section > h3 { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
+.form-section > h3 svg { color: var(--c1); }
+.actions-inline > details.add { margin-bottom: 0; }
+.actions-inline > details.add[open] { flex-basis: 100%; }
+/* Campana de Administración: facturas de proveedor subidas por revisar */
+.bell { position: relative; display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: var(--brand-gray); text-decoration: none; }
+.bell:hover { background: rgb(255 255 255 / 0.1); color: #fff; }
+.bell.has-news { color: #fff; }
+.bell-count {
+  position: absolute; top: 2px; right: 0; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px;
+  display: grid; place-items: center; background: #f97316; color: #fff; font-size: 0.75rem; font-weight: 800; border: 2px solid #000;
+}
+.card.card-alert { border-color: #fdba74; box-shadow: inset 4px 0 0 #f97316; }
+/* Ventana de confirmación (borrar, quitar, cerrar…) */
+.btn-danger-solid { background: var(--danger); color: #fff; }
+.btn-danger-solid:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
+.confirm-dialog {
+  width: min(100% - 32px, 440px); padding: 24px 22px 20px; border: 0; border-radius: 18px;
+  background: var(--surface); color: var(--text); box-shadow: 0 30px 80px -20px rgb(0 0 0 / 0.45);
+}
+.confirm-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+.confirm-dialog form { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.confirm-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: var(--danger-bg); color: var(--danger); }
+.confirm-dialog p { font-size: 1.05rem; font-weight: 600; line-height: 1.4; }
+.confirm-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%; }
+.confirm-actions .btn { flex: 1 1 140px; }

@@ -3,7 +3,8 @@
 import Icon from './Icon.astro';
 import { ACCEPT, MAX_FILE_BYTES, fileUrl } from '../lib/files.js';
 
-const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name } = Astro.props;
+// removable: botón «Quitar» junto al documento actual (envía intent=remove_file en el mismo formulario)
+const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false } = Astro.props;
 const href = fileUrl(current);
 ---
 <div class="field">
@@ -13,6 +14,11 @@ const href = fileUrl(current);
       <Icon name="paperclip" size={16} />
       <a href={href} target="_blank" rel="noopener">{current.file_name}</a>
       <span class="muted small">· si subes otro, sustituye a este</span>
+      {removable && (
+        <button class="btn btn-danger btn-sm" type="submit" name="intent" value="remove_file" formnovalidate
+          data-confirm={`¿Quitar el documento «${current.file_name}»? Se borra del expediente.`} data-confirm-ok="Quitar documento">
+          <Icon name="trash-2" size={14} /> Quitar documento</button>
+      )}
     </p>
   )}
   <label class="dropzone" for={id} data-file-field>

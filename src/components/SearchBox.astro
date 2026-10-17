@@ -1,0 +1,14 @@
+---
+// Buscador de las bandejas (GET): conserva la pestaña en la que se está
+import Icon from './Icon.astro';
+
+const { action, view = null, q = '', placeholder = 'Buscar' } = Astro.props;
+const clear = view ? `${action}?ver=${view}` : action;
+---
+<form method="get" action={action} class="quick-form search-box" role="search">
+  {view && <input type="hidden" name="ver" value={view} />}
+  <label class="visually-hidden" for="q">Buscar</label>
+  <input id="q" name="q" type="search" value={q} placeholder={placeholder} />
+  <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+  {q && <a class="btn btn-ghost btn-sm" href={clear}>Quitar búsqueda</a>}
+</form>

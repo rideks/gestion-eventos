@@ -110,7 +110,7 @@ const [rates, first, next] = await Promise.all([
               )}
             <form method="post">
               <input type="hidden" name="id" value={r.id} />
-              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Quitar «${r.label}» de la lista?`} aria-label={`Quitar ${r.label}`}><Icon name="trash-2" size={16} /></button>
+              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Quitar «${r.label}» de la lista?`} data-confirm-ok="Quitar" aria-label={`Quitar ${r.label}`}><Icon name="trash-2" size={16} /></button>
             </form>
           </div>
         </li>

@@ -1,11 +1,11 @@
 ---
-// Campos de una factura / pago a proveedor (alta y edición)
+// Campos de un pago a proveedor (alta y edición). La factura va aparte (SupplierInvoiceFields):
+// una misma factura puede cubrir varios pagos.
 import VatLines from './VatLines.astro';
-import FileField from './FileField.astro';
 import { PAYMENT_METHODS } from '../lib/finance.js';
 
 // lines: desglose por tipos de IVA (guardado o lo escrito antes de un error)
-const { v = {}, errors = {}, suppliers = [], current = null, id = 'pay', rates = [], lines = [] } = Astro.props;
+const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [] } = Astro.props;
 const status = v.status ?? 'pendiente';
 ---
 <div class="row row-2">
@@ -17,16 +17,6 @@ const status = v.status ?? 'pendiente';
   <div class:list={['field', { 'has-error': errors.concept }]}>
     <label for={`${id}-concept`}>Concepto <span class="opt">(opcional)</span></label>
     <input id={`${id}-concept`} name="concept" type="text" maxlength="160" value={v.concept ?? ''} placeholder="Alojamiento, transferencia, comisión…" />
-  </div>
-</div>
-<div class="row row-2">
-  <div class:list={['field', { 'has-error': errors.invoice_number }]}>
-    <label for={`${id}-invoice_number`}>Nº de factura del proveedor</label>
-    <input id={`${id}-invoice_number`} name="invoice_number" type="text" maxlength="60" value={v.invoice_number ?? ''} placeholder="Vacío si aún no ha llegado" />
-  </div>
-  <div class:list={['field', { 'has-error': errors.invoice_date }]}>
-    <label for={`${id}-invoice_date`}>Fecha de la factura</label>
-    <input id={`${id}-invoice_date`} name="invoice_date" type="date" value={v.invoice_date ?? ''} />
   </div>
 </div>
 <VatLines id={id} lines={lines} rates={rates} error={errors.amount} />
@@ -57,7 +47,6 @@ const status = v.status ?? 'pendiente';
     </select>
   </div>
 </div>
-<FileField id={`${id}-file`} label="Factura (PDF o foto)" current={current} />
 <div class:list={['field', { 'has-error': errors.notes }]}>
   <label for={`${id}-notes`}>Notas <span class="opt">(opcional)</span></label>
   <textarea id={`${id}-notes`} name="notes" class="short" maxlength="1000">{v.notes ?? ''}</textarea>

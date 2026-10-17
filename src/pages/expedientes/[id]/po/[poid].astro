@@ -38,6 +38,13 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   if (locked) {
     error = LOCKED_MSG;
+  } else if (input.intent === 'remove_file' && po.file_id) {
+    await db.batch([
+      db.prepare('UPDATE purchase_orders SET file_id = NULL WHERE id = ?').bind(poid),
+      activityStmt(db, who, id, 'po.file', `quitó el documento de la PO ${po.number}`),
+    ]);
+    await deleteFiles(db, env.DOCS, [po.file_id]);
+    return Astro.redirect(`/expedientes/${id}/po/${poid}?ok=guardado`, 303);
   } else if (input.intent === 'delete' && canDelete) {
     if (fin.allocations.some((a) => a.po_id === poid)) {
       error = 'Esta PO ya está en alguna factura: quítala de la factura antes de borrarla.';
@@ -88,13 +95,13 @@ const { companies } = await suggestions(db);
     <h2><Icon name="file-text" /> PO {po.number}</h2>
     <p class="muted small">Facturado {eur(used)} · sin facturar {eur(row.left_cents)}</p>
     <fieldset disabled={locked} class="form">
-      <PoForm v={v} errors={errors} companies={companies} current={po.file_id ? po : null} id="edit" />
+      <PoForm v={v} errors={errors} companies={companies} current={po.file_id ? po : null} removable={!locked} id="edit" />
     </fieldset>
     {!locked && (
       <div class="actions-inline">
         <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…">Guardar cambios</button>
         <a class="btn btn-ghost" href={back}>Cancelar</a>
-        {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm="¿Borrar esta PO?"><Icon name="trash-2" size={16} /> Borrar</button>}
+        {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm={`¿Borrar la PO ${po.number}? Se borra también su documento.`} data-confirm-ok="Borrar PO"><Icon name="trash-2" size={16} /> Borrar</button>}
       </div>
     )}
   </form>
