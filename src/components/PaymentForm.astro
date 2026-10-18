@@ -14,6 +14,8 @@ const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [],
 const status = v.status ?? 'pendiente';
 // Eventos sólo registra como pagados los pagos con tarjeta (el resto lo marca Administración)
 const cardOnly = !can(Astro.locals.user, 'payment.any_method');
+// El justificante bancario sólo lo sube Administración
+const canReceipt = can(Astro.locals.user, 'payment.receipt');
 const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHODS;
 ---
 <div class="row row-2">
@@ -61,9 +63,7 @@ const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHOD
       {cardOnly && <p class="hint">Sólo los pagos con tarjeta. Si se ha pagado por transferencia u otro medio, déjalo «Por pagar»: lo marca Administración.</p>}
     </div>
   </div>
-  {receipt && (cardOnly
-    ? <FileField id={`${id}-receipt`} name="receipt" label="Recibo del pago" hint="El ticket o recibo de la tarjeta, si lo tienes." error={errors.receipt} />
-    : <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} />)}
+  {receipt && canReceipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} />}
 </div>
 )}
 <div class:list={['field', { 'has-error': errors.notes }]}>

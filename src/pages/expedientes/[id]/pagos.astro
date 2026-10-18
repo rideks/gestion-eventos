@@ -59,7 +59,8 @@ if (Astro.request.method === 'POST') {
     const doc = validate(SupplierDocSchema, input);
     const amounts = parseVatLines(form, rates);
     const file = form ? getFile(form, 'file') : null;
-    const receipt = form ? getFile(form, 'receipt') : null;
+    // El justificante sólo lo sube Administración
+    const receipt = form && can(me, 'payment.receipt') ? getFile(form, 'receipt') : null;
     const paidIssue = parsed.ok && parsed.data.status === 'pagado'
       ? paidProblem({ method: parsed.data.method, hasReceipt: !!receipt, cardOnly: !can(me, 'payment.any_method') })
       : null;

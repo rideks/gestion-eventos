@@ -42,6 +42,8 @@ export async function markPaid(db, who, input, expedienteId = null, receipt = nu
   if (isLocked({ status: p.exp_status })) return { ok: false, message: LOCKED_MSG };
   if (p.status === 'pagado') return { ok: true, expedienteId: p.expediente_id };
   const { paid_on, method } = parsed.data;
+  // El justificante sólo lo sube Administración (a Eventos no se le ofrece)
+  if (receipt?.file && !can(who.user, 'payment.receipt')) return { ok: false, message: 'El justificante lo sube Administración.' };
   const problem = paidProblem({ method, hasReceipt: !!(p.receipt_file_id || receipt?.file), cardOnly: !can(who.user, 'payment.any_method') });
   if (problem) return { ok: false, message: problem };
   if (receipt?.file) {

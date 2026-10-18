@@ -17,6 +17,7 @@ const missingInvoice = !p.invoice_count && p.total_cents !== 0;
 const canPay = canEdit && p.status !== 'pagado';
 // Eventos sólo marca pagados los pagos con tarjeta; las transferencias (con justificante) las marca Administración
 const cardOnly = !can(Astro.locals.user, 'payment.any_method');
+const canReceipt = can(Astro.locals.user, 'payment.receipt');
 const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name });
 ---
 <li class="item is-row">
@@ -63,7 +64,7 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
           <select id={`method-${p.id}`} name="method">
             {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option value={k}>{v}</option>)}
           </select>
-          {!p.receipt_file_id && (
+          {!p.receipt_file_id && canReceipt && (
             <label class="btn btn-ghost btn-sm file-btn" title="Justificante bancario (obligatorio si es por transferencia)">
               <Icon name="paperclip" size={16} /><span data-file-button>Justificante</span>
               <input type="file" name="receipt" accept={ACCEPT} class="visually-hidden" title="" />

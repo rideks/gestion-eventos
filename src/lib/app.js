@@ -11,6 +11,7 @@ const ONLY = {
   'supplier.review': ['admin'],      // revisar y dar por buena una factura de proveedor
   'payment.unpay': ['admin'],        // «Deshacer pagado» (un pago hecho no se puede modificar)
   'payment.any_method': ['admin'],   // marcar pagado por transferencia u otro medio (Eventos: sólo con tarjeta)
+  'payment.receipt': ['admin'],      // subir o quitar el justificante bancario de un pago
   'po.manage': ['admin'],            // subir, editar, cerrar y borrar las PO del cliente, y facturar desde ellas
   'delete': ['admin'],               // borrar filas de otras personas
   'users': ['admin'],

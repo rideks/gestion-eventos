@@ -679,3 +679,6 @@ fieldset.form-block > legend { margin-bottom: 4px; }
 .todo-text small { font-weight: 500; color: var(--muted); overflow-wrap: anywhere; }
 .todo-amount { margin-left: auto; padding-left: 8px; white-space: nowrap; font-weight: 700; }
 .todo-amount ~ .chev { margin-left: 0; }
+/* Ficha del pago: «Modificar pago» se abre dentro de la tarjeta, debajo de sus botones */
+.actions-inline > details.edit-inline[open] { order: 99; }
+.edit-form { padding-top: 14px; border-top: 1px dashed var(--line-2); }
