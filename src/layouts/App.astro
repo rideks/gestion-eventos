@@ -32,7 +32,7 @@ const nav = [
   { key: 'inicio', href: '/', label: 'Inicio', icon: 'house' },
   { key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: admin ? counts.requests : 0, tone: 'warn' },
   { key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' },
-  { key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: admin ? counts.to_issue : 0, tone: 'warn' },
+  ...(can(user, 'cobros') ? [{ key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: counts.to_issue, tone: 'warn' }] : []),
   { key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true },
   ...(admin ? [
     { key: 'usuarios', href: '/usuarios', label: 'Usuarios', icon: 'user-plus' },
@@ -40,8 +40,9 @@ const nav = [
   ] : []),
   { key: 'cuenta', href: '/cuenta', label: 'Mi cuenta', icon: 'user-round' },
 ];
-const tabs = nav.slice(0, 4);
-const more = nav.slice(4);
+const MAIN = ['inicio', 'expedientes', 'pagos', 'cobros'];
+const tabs = nav.filter((n) => MAIN.includes(n.key));
+const more = nav.filter((n) => !MAIN.includes(n.key));
 const roleLabel = admin ? 'Administración' : 'Eventos';
 ---
 <!doctype html>

@@ -2,6 +2,7 @@
 // y nunca en caché compartida. PDF y fotos se abren en el navegador; Excel y Word se descargan.
 import { env } from 'cloudflare:workers';
 import { isInline } from '../../../lib/files.js';
+import { can } from '../../../lib/app.js';
 
 const notFound = () => new Response('No encontrado', { status: 404, headers: { 'cache-control': 'no-store' } });
 
@@ -9,8 +10,13 @@ export async function GET({ params, locals }) {
   if (!locals.user) return notFound();
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) return notFound();
-  const row = await env.DB.prepare('SELECT key, name, mime FROM files WHERE id = ?').bind(id).first();
-  if (!row) return notFound();
+  const row = await env.DB.prepare(
+    `SELECT f.key, f.name, f.mime,
+            EXISTS (SELECT 1 FROM invoices i WHERE i.file_id = f.id) OR EXISTS (SELECT 1 FROM purchase_orders po WHERE po.file_id = f.id) AS billing
+       FROM files f WHERE f.id = ?`,
+  ).bind(id).first();
+  // Los documentos de cobros (facturas al cliente y PO) sólo los ve quien puede ver los cobros
+  if (!row || (row.billing && !can(locals.user, 'cobros'))) return notFound();
   const object = await env.DOCS.get(row.key);
   if (!object) return notFound();
 

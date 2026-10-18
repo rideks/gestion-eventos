@@ -43,11 +43,13 @@ if (Astro.request.method === 'POST') {
 
 const soon = addDays(now, SOON_DAYS);
 const reviewer = can(me, 'supplier.review');
+// Los cobros (facturas al cliente, PO, por facturar) sólo los ve Administración
+const cobros = can(me, 'cobros');
 const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice, billing] = await Promise.all([
   reviewer ? invoicesToReview(db) : [],
   pendingPayments(db, '', { until: soon }),
-  openInvoices(db),
-  posWithBalance(db),
+  cobros ? openInvoices(db) : [],
+  cobros ? posWithBalance(db) : [],
   // Administración ve las solicitudes en su propio bloque («Solicitudes por abrir»): aquí sólo las abiertas.
   // Eventos ve aquí todo lo suyo, también lo que ha pedido y aún no está abierto.
   db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id
@@ -61,10 +63,11 @@ const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: op
                WHERE status = 'abierto' AND COALESCE(end_date, start_date) < ? ORDER BY end_date LIMIT 8`).bind(now).all().then((r) => r.results),
   db.prepare(`SELECT a.user_name, a.text, a.action, a.at, a.expediente_id, e.number, e.name
                 FROM activity a JOIN expedientes e ON e.id = a.expediente_id
+               ${cobros ? '' : "WHERE a.action NOT LIKE 'invoice.%' AND a.action NOT LIKE 'po.%'"}
                ORDER BY a.at DESC, a.id DESC LIMIT 12`).all().then((r) => r.results),
   db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
   admin ? [] : paidWithoutInvoice(db),
-  toInvoiceByExpediente(db),
+  cobros ? toInvoiceByExpediente(db) : [],
 ]);
 // «Te toca» (Eventos): lo que depende de quien lleva el expediente
 const mine = (rows) => rows.filter((r) => r.exp_manager_id === me.id);
@@ -90,11 +93,16 @@ const firstName = me.name.split(' ')[0];
     </div>
   </div>
 
-  <div class="kpis">
+  <div class:list={['kpis', { 'is-3': !cobros }]}>
     <a class="kpi" href="/expedientes"><span>Expedientes en curso</span><b>{openCount}</b><small>{requests.length ? `${plural(requests.length, 'solicitud', 'solicitudes')} por abrir` : 'ninguna solicitud pendiente'}</small></a>
     <a class:list={['kpi', { 'is-danger': overdueCount > 0 }]} href="/pagos"><span>Pagos en {SOON_DAYS} días</span><b class="money">{eur(sum(urgent))}</b><small>{overdueCount ? plural(overdueCount, 'vencido', 'vencidos') : plural(urgent.length, 'pago', 'pagos')}</small></a>
-    <a class:list={['kpi', { 'is-danger': overdueInvoices.length > 0 }]} href="/cobros#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(sum(toCollect))}</b><small>{overdueInvoices.length ? plural(overdueInvoices.length, 'vencida', 'vencidas') : plural(toCollect.length, 'factura', 'facturas')}</small></a>
-    <a class="kpi is-gold" href="/cobros#facturar"><span>Por facturar</span><b class="money">{eur(toBill.reduce((a, n) => a + n, 0))}</b><small>{plural(toBill.length, 'expediente', 'expedientes')} · sin IVA</small></a>
+    {cobros && <a class:list={['kpi', { 'is-danger': overdueInvoices.length > 0 }]} href="/cobros#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(sum(toCollect))}</b><small>{overdueInvoices.length ? plural(overdueInvoices.length, 'vencida', 'vencidas') : plural(toCollect.length, 'factura', 'facturas')}</small></a>}
+    {cobros && <a class="kpi is-gold" href="/cobros#facturar"><span>Por facturar</span><b class="money">{eur(toBill.reduce((a, n) => a + n, 0))}</b><small>{plural(toBill.length, 'expediente', 'expedientes')} · sin IVA</small></a>}
+    {!cobros && (
+      <a class:list={['kpi', { 'is-danger': chase.length > 0 }]} href="/pagos#sin-factura">
+        <span>Facturas que reclamar</span><b>{chase.length}</b><small>pagos hechos sin la factura del proveedor</small>
+      </a>
+    )}
   </div>
 
   <div class="two-col">
@@ -153,10 +161,10 @@ const firstName = me.name.split(' ')[0];
         {urgent.length > 6 && <p class="muted small mt">Y {urgent.length - 6} más en la bandeja de pagos.</p>}
       </section>
 
-      {(toIssue.length > 0 || overdueInvoices.length > 0) && (
+      {cobros && (toIssue.length > 0 || overdueInvoices.length > 0) && (
         <section class="card">
           <div class="sec-head">
-            <h2><Icon name="arrow-down-left" /> {admin ? 'Facturas por emitir y cobros vencidos' : 'Facturas pedidas y cobros vencidos'}</h2>
+            <h2><Icon name="arrow-down-left" /> Facturas por emitir y cobros vencidos</h2>
             <a class="btn btn-ghost btn-sm" href="/cobros">Ver todos</a>
           </div>
           <ul class="list">{[...toIssue, ...overdueInvoices].slice(0, 6).map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul>

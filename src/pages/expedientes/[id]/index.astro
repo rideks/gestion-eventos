@@ -74,12 +74,16 @@ if (Astro.request.method === 'POST') {
 // Todo lo que pinta la página, a la vez
 const [fin, { results: activity }, suggested, { results: admins }] = await Promise.all([
   loadFinance(db, id, now),
-  db.prepare('SELECT user_name, action, text, at FROM activity WHERE expediente_id = ? ORDER BY at DESC, id DESC LIMIT 60').bind(id).all(),
+  db.prepare(`SELECT user_name, action, text, at FROM activity WHERE expediente_id = ?
+               ${can(me, 'cobros') ? '' : "AND action NOT LIKE 'invoice.%' AND action NOT LIKE 'po.%'"}
+               ORDER BY at DESC, id DESC LIMIT 60`).bind(id).all(),
   exp.status === 'solicitado' && admin ? suggestNumber(db) : null,
   exp.status === 'solicitado' && !admin ? db.prepare("SELECT email FROM users WHERE role = 'admin' AND active = 1").all() : { results: [] },
 ]);
 const s = fin.summary;
-const steps = nextSteps(exp, s, now, { po: can(me, 'po.manage') });
+// Los cobros (facturas al cliente, PO) sólo los ve Administración: a Eventos no le salen sus pasos ni sus cifras
+const cobros = can(me, 'cobros');
+const steps = nextSteps(exp, s, now, { po: can(me, 'po.manage') }).filter((st) => cobros || st.tab !== 'cobros');
 const link = `${Astro.url.origin}/expedientes/${id}`;
 const mailto = `mailto:${admins.map((a) => a.email).join(',')}?subject=${encodeURIComponent(`Nuevo expediente: ${exp.name} (${exp.company})`)}&body=${encodeURIComponent(
   `Hola:\n\nEl cliente ha aprobado el presupuesto de «${exp.name}» (${exp.company}, ${formatRange(exp.start_date, exp.end_date)}).\n`
@@ -121,7 +125,7 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
       <a class="btn btn-primary btn-sm" href={`/expedientes/${id}/pagos?nuevo`}><Icon name="receipt" size={16} /> Añadir pago o factura de proveedor</a>
       <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/pagos?nuevo=varios`}><Icon name="wallet" size={16} /> Varios pagos previstos</a>
       {can(me, 'po.manage') && <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cobros?nuevo=po`}><Icon name="file-text" size={16} /> Subir PO</a>}
-      <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/facturas/nueva`}><Icon name="send" size={16} /> {admin ? 'Nueva factura al cliente' : 'Pedir factura'}</a>
+      {cobros && <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/facturas/nueva`}><Icon name="send" size={16} /> Nueva factura al cliente</a>}
       <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/presupuesto?nuevo`}><Icon name="file-spreadsheet" size={16} /> Nueva versión del presupuesto</a>
     </nav>
   )}
@@ -142,12 +146,20 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
       <b class="money">{eur(margin)}</b>
       <small>{pct(margin, s.sale.base || s.sales.base)} sobre la venta</small>
     </a>
-    <a class:list={['kpi', { 'is-ok': s.collected > 0 && s.collected >= s.sale.total }]} href={`/expedientes/${id}/cobros`}>
-      <span>Cobrado</span>
-      <b class="money">{eur(s.collected)}</b>
-      <small class="money">de {eur(s.sale.total)} con IVA</small>
-      <progress class="bar is-ok" max="100" value={s.sale.total ? Math.round(Math.min(1, s.collected / s.sale.total) * 100) : 0}></progress>
-    </a>
+    {cobros ? (
+      <a class:list={['kpi', { 'is-ok': s.collected > 0 && s.collected >= s.sale.total }]} href={`/expedientes/${id}/cobros`}>
+        <span>Cobrado</span>
+        <b class="money">{eur(s.collected)}</b>
+        <small class="money">de {eur(s.sale.total)} con IVA</small>
+        <progress class="bar is-ok" max="100" value={s.sale.total ? Math.round(Math.min(1, s.collected / s.sale.total) * 100) : 0}></progress>
+      </a>
+    ) : (
+      <a class:list={['kpi', { 'is-danger': s.overdue.length > 0 }]} href={`/expedientes/${id}/pagos`}>
+        <span>Por pagar</span>
+        <b class="money">{eur(s.toPay)}</b>
+        <small>{s.overdue.length ? plural(s.overdue.length, 'pago vencido', 'pagos vencidos') : plural(s.pending.length, 'pago pendiente', 'pagos pendientes')}</small>
+      </a>
+    )}
   </div>
 
   <div class="two-col">
@@ -168,7 +180,7 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
               ))}
             </ul>
           ) : (
-            <ul class="steps"><li class="tone-ok"><span><Icon name="circle-check" /> Todo al día. Cuando acabe el evento y esté todo cobrado, ciérralo desde «Cierre».</span></li></ul>
+            <ul class="steps"><li class="tone-ok"><span><Icon name="circle-check" /> {cobros ? 'Todo al día. Cuando acabe el evento y esté todo cobrado, ciérralo desde «Cierre».' : 'Todo al día.'}</span></li></ul>
           )}
         </section>
       )}
@@ -179,12 +191,16 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
           <dt>Pagado a proveedores</dt>
           <dd><span class="money">{eur(s.paid)}</span> <span class="muted">de {eur(s.cost.total)}</span>
             <progress class="bar" max="100" value={s.cost.total > 0 ? Math.round(Math.min(1, Math.max(0, s.paid / s.cost.total)) * 100) : 0}></progress></dd>
-          <dt>PO del cliente</dt>
-          <dd><span class="money">{eur(s.poTotal)}</span> <span class="muted">de {eur(s.sale.base)} sin IVA</span>
-            <progress class="bar is-gold" max="100" value={s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.base) * 100) : 0}></progress></dd>
-          <dt>Facturado al cliente</dt>
-          <dd><span class="money">{eur(s.invoiced.base)}</span> <span class="muted">de {eur(s.sale.base)} sin IVA</span>
-            <progress class="bar" max="100" value={s.sale.base > 0 ? Math.round(Math.min(1, s.invoiced.base / s.sale.base) * 100) : 0}></progress></dd>
+          {cobros && (
+            <>
+              <dt>PO del cliente</dt>
+              <dd><span class="money">{eur(s.poTotal)}</span> <span class="muted">de {eur(s.sale.base)} sin IVA</span>
+                <progress class="bar is-gold" max="100" value={s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.base) * 100) : 0}></progress></dd>
+              <dt>Facturado al cliente</dt>
+              <dd><span class="money">{eur(s.invoiced.base)}</span> <span class="muted">de {eur(s.sale.base)} sin IVA</span>
+                <progress class="bar" max="100" value={s.sale.base > 0 ? Math.round(Math.min(1, s.invoiced.base / s.sale.base) * 100) : 0}></progress></dd>
+            </>
+          )}
         </dl>
       </section>
 

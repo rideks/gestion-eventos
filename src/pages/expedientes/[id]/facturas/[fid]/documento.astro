@@ -8,13 +8,16 @@ import '@fontsource/barlow/latin-700.css';
 import '@fontsource/barlow-condensed/latin-800.css';
 import '../../../../../styles/invoice.css';
 import { env } from 'cloudflare:workers';
-import { parseId } from '../../../../../lib/app.js';
+import { parseId, deny } from '../../../../../lib/app.js';
 import { getExpediente } from '../../../../../lib/data.js';
 import { invoiceSettings } from '../../../../../lib/invoicing.js';
 import { linesOf, pctText } from '../../../../../lib/vat.js';
 import { num } from '../../../../../lib/money.js';
 import { formatDate } from '../../../../../lib/dates.js';
 
+// Sólo Administración ve los cobros
+const denied = deny(Astro, 'cobros');
+if (denied) return denied;
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const fid = parseId(Astro.params.fid);

@@ -283,8 +283,10 @@ export function byMonth(rows, field) {
  * Búsqueda en todo (cabecera): expedientes, pagos a proveedores (también por el nº de sus facturas
  * y proformas), facturas al cliente y PO. Hasta 20 de cada cosa, lo más reciente primero.
  */
-export async function searchAll(db, q) {
+export async function searchAll(db, q, { cobros = true } = {}) {
   const term = likeTerm(q);
+  // Sin permiso de cobros (Eventos) no se buscan facturas al cliente ni PO
+  const none = 'SELECT NULL AS id WHERE 0';
   const [expedientes, payments, invoices, pos] = await db.batch([
     db.prepare(
       `SELECT e.id, e.number, e.name, e.company, e.destination, e.status, e.start_date, e.end_date FROM expedientes e
@@ -297,22 +299,22 @@ export async function searchAll(db, q) {
         WHERE p.supplier LIKE ?1 OR p.concept LIKE ?1 OR EXISTS (SELECT 1 ${DOCS_OF('d.number LIKE ?1')})
         ORDER BY p.id DESC LIMIT 20`,
     ).bind(term),
-    db.prepare(
+    cobros ? db.prepare(
       `SELECT * FROM (
          SELECT i.*, e.number AS exp_number, e.name AS exp_name, f.name AS file_name,
                 (SELECT group_concat(po.number, ', ') FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = i.id) AS po_numbers
            FROM invoices i JOIN expedientes e ON e.id = i.expediente_id LEFT JOIN files f ON f.id = i.file_id
        ) WHERE number LIKE ?1 OR billed_to LIKE ?1 OR concept LIKE ?1 OR po_numbers LIKE ?1
        ORDER BY id DESC LIMIT 20`,
-    ).bind(term),
-    db.prepare(
+    ).bind(term) : db.prepare(none),
+    cobros ? db.prepare(
       `SELECT po.*, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, f.name AS file_name,
               po.amount_cents - COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
                                            WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) AS left_cents
          FROM purchase_orders po JOIN expedientes e ON e.id = po.expediente_id LEFT JOIN files f ON f.id = po.file_id
         WHERE po.number LIKE ?1 OR po.billed_to LIKE ?1
         ORDER BY po.id DESC LIMIT 20`,
-    ).bind(term),
+    ).bind(term) : db.prepare(none),
   ]).then((rs) => rs.map((r) => r.results));
   return { expedientes, payments, invoices, pos };
 }

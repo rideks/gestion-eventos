@@ -10,7 +10,7 @@ import ExpHeader from '../../../components/ExpHeader.astro';
 import PoForm from '../../../components/PoForm.astro';
 import PoItem from '../../../components/PoItem.astro';
 import InvoiceItem from '../../../components/InvoiceItem.astro';
-import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
+import { parseId, readForm, actor, can, activityStmt, deny } from '../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
 import { PoSchema, validate, formToObject } from '../../../lib/validate.js';
 import { storeFile, getFile, UploadError } from '../../../lib/files.js';
@@ -18,6 +18,9 @@ import { eur } from '../../../lib/money.js';
 import { today } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
 
+// Sólo Administración ve los cobros
+const denied = deny(Astro, 'cobros');
+if (denied) return denied;
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const now = today();

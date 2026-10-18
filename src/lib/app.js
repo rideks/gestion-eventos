@@ -13,6 +13,7 @@ const ONLY = {
   'payment.any_method': ['admin'],   // marcar pagado por transferencia u otro medio (Eventos: sólo con tarjeta)
   'payment.receipt': ['admin'],      // subir o quitar el justificante bancario de un pago
   'po.manage': ['admin'],            // subir, editar, cerrar y borrar las PO del cliente, y facturar desde ellas
+  'cobros': ['admin'],               // ver los cobros: bandeja, pestaña del expediente, facturas al cliente y PO
   'delete': ['admin'],               // borrar filas de otras personas
   'users': ['admin'],
   'settings': ['admin'],             // tipos de IVA y numeración

@@ -10,6 +10,7 @@ import PaymentItem from '../components/PaymentItem.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import PoItem from '../components/PoItem.astro';
 import { searchAll } from '../lib/data.js';
+import { can } from '../lib/app.js';
 import { expedienteState, expLabel, plural } from '../lib/finance.js';
 import { today, formatRange } from '../lib/dates.js';
 
@@ -20,14 +21,15 @@ if (/^\d{1,6}$/.test(q)) {
   const exact = await db.prepare('SELECT id FROM expedientes WHERE number = ?').bind(Number(q)).first();
   if (exact) return Astro.redirect(`/expedientes/${exact.id}`, 303);
 }
-const r = q.length >= 2 ? await searchAll(db, q) : null;
+const cobros = can(Astro.locals.user, 'cobros');
+const r = q.length >= 2 ? await searchAll(db, q, { cobros }) : null;
 const total = r ? r.expedientes.length + r.payments.length + r.invoices.length + r.pos.length : 0;
 ---
 <App title={q ? `Buscar «${q}»` : 'Buscar'} section="" origin={q ? `Búsqueda «${q}»` : null}>
   <div class="page-top">
     <div>
       <h1>Buscar</h1>
-      <p>Expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO</p>
+      <p>{cobros ? 'Expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO' : 'Expedientes, proveedores y nº de factura o proforma'}</p>
     </div>
   </div>
   <SearchBox action="/buscar" q={q} placeholder="Nº de expediente, cliente, proveedor, nº de factura o de PO" />

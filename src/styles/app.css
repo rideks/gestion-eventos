@@ -640,7 +640,7 @@ form:has(input[name='status'][value='pendiente']:checked) [data-paid-only] { dis
   .a-search-btn { display: none; }
 }
 /* El justificante sólo hace falta (y sólo se ofrece) si se paga por transferencia */
-.quick-form:not(:has(select[name='method'] option[value='transferencia']:checked)) .file-btn { display: none; }
+.quick-form:has(select[name='method']):not(:has(select[name='method'] option[value='transferencia']:checked)) .file-btn { display: none; }
 
 /* Pasos de un pago: 1. justificante → 2. pagado → 3. factura conforme */
 .flow-steps { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -679,3 +679,4 @@ fieldset.form-block > legend { margin-bottom: 4px; }
 /* Cobros: el embudo 1. por facturar → 2. por emitir → 3. por cobrar */
 section.funnel-step { margin-top: 28px; }
 section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
+@media (min-width: 760px) { .kpis.is-3 { grid-template-columns: repeat(3, 1fr); } }

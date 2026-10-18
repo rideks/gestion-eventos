@@ -9,7 +9,7 @@ import Icon from '../components/Icon.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import BillingItem from '../components/BillingItem.astro';
 import SearchBox from '../components/SearchBox.astro';
-import { actor, readForm, can } from '../lib/app.js';
+import { actor, readForm, can, deny } from '../lib/app.js';
 import { openInvoices, posWithBalance, collectedInvoices, byMonth, toInvoiceByExpediente } from '../lib/data.js';
 import { markCollected, isLocked } from '../lib/actions.js';
 import { formToObject } from '../lib/validate.js';
@@ -17,6 +17,9 @@ import { eur } from '../lib/money.js';
 import { today, formatMonth } from '../lib/dates.js';
 import { plural, leftToInvoice } from '../lib/finance.js';
 
+// Sólo Administración ve los cobros
+const denied = deny(Astro, 'cobros');
+if (denied) return denied;
 const db = env.DB;
 const now = today();
 const admin = can(Astro.locals.user, 'invoice.issue');
