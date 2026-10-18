@@ -2,7 +2,7 @@
 import { getClientIp } from './security.js';
 
 // ── Permisos ───────────────────────────────────────────────────────────────
-// Lo que no aparece aquí lo pueden hacer los dos roles (subir facturas, PO, presupuestos…).
+// Lo que no aparece aquí lo pueden hacer los dos roles (subir facturas de proveedor, presupuestos…).
 // Para cambiar quién hace qué, basta con tocar esta tabla.
 const ONLY = {
   'expediente.open': ['admin'],      // dar número al expediente
@@ -10,6 +10,8 @@ const ONLY = {
   'invoice.issue': ['admin'],        // poner nº a una factura, marcarla cobrada o anularla
   'supplier.review': ['admin'],      // revisar y dar por buena una factura de proveedor
   'payment.unpay': ['admin'],        // «Deshacer pagado» (un pago hecho no se puede modificar)
+  'payment.any_method': ['admin'],   // marcar pagado por transferencia u otro medio (Eventos: sólo con tarjeta)
+  'po.manage': ['admin'],            // subir, editar, cerrar y borrar las PO del cliente, y facturar desde ellas
   'delete': ['admin'],               // borrar filas de otras personas
   'users': ['admin'],
   'settings': ['admin'],             // tipos de IVA y numeración

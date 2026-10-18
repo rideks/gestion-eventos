@@ -60,10 +60,10 @@ UPDATE payments SET vat_lines = '[{"rate":1000,"label":"IVA 10 %","base":82145,"
  WHERE invoice_number = '10000002019';
 
 INSERT INTO purchase_orders (id, expediente_id, number, billed_to, amount_cents, issued_on, notes, created_by) VALUES
-  (1, 1, '4500881200', 'BMW Ibérica', 1452046, '2026-07-20', 'Alojamiento y sala', 2),
-  (2, 1, '4500881201', 'BMW Ibérica', 1998000, '2026-07-31', 'Restauración y audiovisuales', 2),
-  (3, 1, '4500890045', 'BMW Ibérica', 1392220, '2026-09-15', 'Cena concesionarios', 2),
-  (4, 1, '4500890046', 'BMW Ibérica', 1351700, '2026-08-20', 'Merchandising y extras', 2);
+  (1, 1, '4500881200', 'BMW Ibérica', 1452046, '2026-07-20', 'Alojamiento y sala', 1),
+  (2, 1, '4500881201', 'BMW Ibérica', 1998000, '2026-07-31', 'Restauración y audiovisuales', 1),
+  (3, 1, '4500890045', 'BMW Ibérica', 1392220, '2026-09-15', 'Cena concesionarios', 1),
+  (4, 1, '4500890046', 'BMW Ibérica', 1351700, '2026-08-20', 'Merchandising y extras', 1);
 
 INSERT INTO invoices (id, expediente_id, number, billed_to, concept, base_cents, total_cents, vat, status, issued_on, due_date, collected_on, created_by) VALUES
   (1, 1, 'G/000808/26/01', 'BMW Ibérica', 'Alojamiento y sala', 1452046, 1667777, 'mixto', 'cobrada', '2026-07-25', '2026-08-24', '2026-08-24', 2),
@@ -91,7 +91,7 @@ INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_
   (2, 'Hotel 1881 Madrid', 'Alojamiento 05/05', 'H1881-7781', '2026-05-06', 224545, 247000, '10', '2026-04-30', 'pagado', '2026-04-29', 'transferencia', 1, 2),
   (2, 'Sonido Toledo', 'Audiovisuales y técnico', 'ST-118', '2026-05-08', 264350, 319864, '21', '2026-06-08', 'pagado', '2026-06-05', 'transferencia', 0, 2);
 INSERT INTO purchase_orders (id, expediente_id, number, billed_to, amount_cents, issued_on, created_by) VALUES
-  (5, 2, '4100223344', 'ELECNOR', 1894000, '2026-03-10', 2);
+  (5, 2, '4100223344', 'ELECNOR', 1894000, '2026-03-10', 1);
 INSERT INTO invoices (id, expediente_id, number, billed_to, concept, base_cents, total_cents, vat, status, issued_on, due_date, collected_on, created_by) VALUES
   (14, 2, 'G/000412/26/01', 'ELECNOR', 'Jornadas de trabajo Toledo', 1894000, 2151240, 'mixto', 'cobrada', '2026-05-08', '2026-06-07', '2026-06-05', 1);
 INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (14, 5, 1894000);
@@ -104,7 +104,7 @@ INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_
   (3, 'Autocares Sevilla', 'Traslados aeropuerto', NULL, NULL, 250000, 302500, '21', '2026-10-22', 'pendiente', NULL, NULL, 1, 2),
   (3, 'Catering Lazo', 'Señal cena de gala', NULL, NULL, 200000, 220000, '10', NULL, 'pagado', '2026-10-01', 'tarjeta', 0, 2);
 INSERT INTO purchase_orders (id, expediente_id, number, billed_to, amount_cents, issued_on, notes, created_by) VALUES
-  (6, 3, '4700112233', 'ROCHE FARMA', 4820000, '2026-10-05', 'Anticipo 50 %', 2);
+  (6, 3, '4700112233', 'ROCHE FARMA', 4820000, '2026-10-05', 'Anticipo 50 %', 1);
 INSERT INTO invoices (id, expediente_id, number, billed_to, concept, base_cents, total_cents, vat, vat_lines, status, created_by, created_at) VALUES
   (15, 3, NULL, 'ROCHE FARMA', 'Anticipo 50 % convención', 4820000, 5502200, 'mixto',
    '[{"rate":1000,"label":"IVA 10 %","base":3000000,"total":3300000},{"rate":2100,"label":"IVA 21 %","base":1820000,"total":2202200}]',
@@ -167,7 +167,7 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (1, 1, 'Tania Ruiz', 'expediente.open', 'abrió el expediente con el número 1287', '2026-06-10T11:40:00Z'),
   (1, 2, 'Marta López', 'budget.add', 'subió la versión 2 del presupuesto: 63.000,00 € sin IVA (+4.500,00 €). Cena para concesionarios y merchandising', '2026-07-28T12:00:00Z'),
   (1, 1, 'Tania Ruiz', 'invoice.issue', 'emitió la factura G/000903/26/01 a BMW Ibérica (15.289,23 €) con la PO 4500890046', '2026-09-01T10:00:00Z'),
-  (1, 2, 'Marta López', 'po.add', 'subió la PO 4500890045 de BMW Ibérica (13.922,20 € sin IVA)', '2026-09-15T08:20:00Z'),
+  (1, 1, 'Tania Ruiz', 'po.add', 'subió la PO 4500890045 de BMW Ibérica (13.922,20 € sin IVA)', '2026-09-15T08:20:00Z'),
   (1, 2, 'Marta López', 'invoice.request', 'pidió una factura a BMW Ibérica por 16.845,86 € con la PO 4500890045', '2026-10-15T09:00:00Z'),
   (1, 2, 'Marta López', 'note', 'BMW confirma que la PO de la cena ya está aprobada en su sistema: se puede facturar.', '2026-10-15T09:05:00Z'),
   (1, 2, 'Marta López', 'supplier_invoice.add', 'subió la factura 0234 / 2026 de Gráficas Mercurio (473,11 €) · pendiente de revisar', '2026-10-16T10:00:00Z'),
@@ -177,6 +177,6 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (3, 1, 'Tania Ruiz', 'expediente.open', 'abrió el expediente con el número 1289', '2026-09-21T08:15:00Z'),
   (3, 2, 'Marta López', 'supplier_proforma.add', 'subió la proforma PF-2026-118 de Hotel Alfonso XIII (35.000,00 €). Comentario: Proforma del 1er pago: el hotel la pide pagada antes del 15/10', '2026-09-26T09:00:00Z'),
   (3, 2, 'Marta López', 'payment.add', 'añadió un pago a Catering Lazo (2.200,00 €)', '2026-10-01T13:00:00Z'),
-  (3, 2, 'Marta López', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
+  (3, 1, 'Tania Ruiz', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
   (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.022,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),
   (4, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z');

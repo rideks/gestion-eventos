@@ -11,12 +11,16 @@ import { UploadError } from './files.js';
 export const isLocked = (exp) => exp.status === 'cerrado' || exp.status === 'cancelado';
 export const LOCKED_MSG = 'El expediente está cerrado: reábrelo para cambiar algo.';
 
+export const CARD_ONLY = 'Desde Eventos sólo se marcan como pagados los pagos hechos con tarjeta. Las transferencias y los demás pagos los marca Administración.';
+
 /**
  * Al pasar un pago a «pagado»: hace falta la forma de pago y, si es por transferencia, el justificante.
+ * cardOnly: quien lo marca sólo puede registrar pagos con tarjeta (Eventos).
  * @returns {string | null} el problema, o null si se puede
  */
-export function paidProblem({ method, hasReceipt }) {
+export function paidProblem({ method, hasReceipt, cardOnly = false }) {
   if (!method) return 'Forma de pago: elige cómo se ha pagado.';
+  if (cardOnly && method !== 'tarjeta') return CARD_ONLY;
   if (needsReceipt(method) && !hasReceipt) return RECEIPT_MISSING;
   return null;
 }
@@ -38,7 +42,7 @@ export async function markPaid(db, who, input, expedienteId = null, receipt = nu
   if (isLocked({ status: p.exp_status })) return { ok: false, message: LOCKED_MSG };
   if (p.status === 'pagado') return { ok: true, expedienteId: p.expediente_id };
   const { paid_on, method } = parsed.data;
-  const problem = paidProblem({ method, hasReceipt: !!(p.receipt_file_id || receipt?.file) });
+  const problem = paidProblem({ method, hasReceipt: !!(p.receipt_file_id || receipt?.file), cardOnly: !can(who.user, 'payment.any_method') });
   if (problem) return { ok: false, message: problem };
   if (receipt?.file) {
     try {

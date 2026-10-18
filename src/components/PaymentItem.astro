@@ -6,6 +6,7 @@ import { paymentState, supplierInvoiceState, PAYMENT_METHODS } from '../lib/fina
 import { eur } from '../lib/money.js';
 import { formatDate, dueText } from '../lib/dates.js';
 import { fileUrl, ACCEPT } from '../lib/files.js';
+import { can } from '../lib/app.js';
 
 const { p, now, showExp = false, canEdit = true } = Astro.props;
 const state = paymentState(p, now);
@@ -14,6 +15,8 @@ const edit = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
 const invoice = supplierInvoiceState(p);
 const missingInvoice = !p.invoice_count && p.total_cents !== 0;
 const canPay = canEdit && p.status !== 'pagado';
+// Eventos sólo marca pagados los pagos con tarjeta; las transferencias (con justificante) las marca Administración
+const cardOnly = !can(Astro.locals.user, 'payment.any_method');
 const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name });
 ---
 <li class="item is-row">
@@ -40,7 +43,17 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
     <small class="money">{eur(p.base_cents)} sin IVA</small>
   </div>
   <div class="item-foot">
-      {canPay && (
+      {canPay && cardOnly && (
+        <form method="post" class="quick-form">
+          <input type="hidden" name="intent" value="pay" />
+          <input type="hidden" name="payment_id" value={p.id} />
+          <input type="hidden" name="method" value="tarjeta" />
+          <label class="visually-hidden" for={`paid-${p.id}`}>Fecha del pago con tarjeta</label>
+          <input id={`paid-${p.id}`} type="date" name="paid_on" value={now} required />
+          <button class="btn btn-sm" type="submit" data-busy="Guardando…" title="Sólo si se ha pagado con tarjeta: las transferencias las marca Administración"><Icon name="credit-card" size={16} /> Pagado con tarjeta</button>
+        </form>
+      )}
+      {canPay && !cardOnly && (
         <form method="post" enctype="multipart/form-data" class="quick-form" data-has-receipt={p.receipt_file_id ? '1' : '0'} data-receipt-href={`${edit}#justificante`}>
           <input type="hidden" name="intent" value="pay" />
           <input type="hidden" name="payment_id" value={p.id} />

@@ -11,7 +11,7 @@ import PaymentForm from '../../../components/PaymentForm.astro';
 import SupplierDocFields from '../../../components/SupplierDocFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
-import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
+import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
 import { PaymentSchema, SupplierDocSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
 import { attachDocument } from '../../../lib/supplier.js';
@@ -20,7 +20,7 @@ import { getFile, storeFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { plural } from '../../../lib/finance.js';
 import { today } from '../../../lib/dates.js';
-import { isLocked, LOCKED_MSG, markPaid, paidProblem } from '../../../lib/actions.js';
+import { isLocked, LOCKED_MSG, markPaid, paidProblem, CARD_ONLY } from '../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
@@ -60,7 +60,9 @@ if (Astro.request.method === 'POST') {
     const amounts = parseVatLines(form, rates);
     const file = form ? getFile(form, 'file') : null;
     const receipt = form ? getFile(form, 'receipt') : null;
-    const paidIssue = parsed.ok && parsed.data.status === 'pagado' ? paidProblem({ method: parsed.data.method, hasReceipt: !!receipt }) : null;
+    const paidIssue = parsed.ok && parsed.data.status === 'pagado'
+      ? paidProblem({ method: parsed.data.method, hasReceipt: !!receipt, cardOnly: !can(me, 'payment.any_method') })
+      : null;
     if (!parsed.ok) {
       error = parsed.message;
       errors = parsed.errors;
@@ -69,7 +71,7 @@ if (Astro.request.method === 'POST') {
       errors = { amount: amounts.message };
     } else if (paidIssue) {
       error = paidIssue;
-      errors = parsed.data.method ? { receipt: paidIssue } : { method: paidIssue };
+      errors = parsed.data.method && paidIssue !== CARD_ONLY ? { receipt: paidIssue } : { method: paidIssue };
     } else if (!doc.ok) {
       error = doc.message;
       errors = doc.errors;

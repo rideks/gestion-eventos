@@ -51,6 +51,8 @@ const paid = p.status === 'pagado';
 // Un pago hecho no se modifica ni se borra; uno con una factura conforme tampoco se borra (se borraría con ella)
 const canDelete = !locked && !paid && !withConforme && (can(me, 'delete') || p.created_by === me.id);
 const canUnpay = !locked && paid && can(me, 'payment.unpay');
+// Eventos sólo marca pagados los pagos con tarjeta (las transferencias las marca Administración)
+const cardOnly = !can(me, 'payment.any_method');
 // Al justificante de un pago hecho por transferencia no se le puede quitar
 const receiptLocked = paid && needsReceipt(p.method);
 const back = `/expedientes/${id}/pagos`;
@@ -223,12 +225,13 @@ const flow = [
     ...(p.receipt_file_id ? { state: 'is-done', text: 'Subido' }
       : paid && needed ? { state: 'is-warn', text: 'Falta (pago por transferencia)' }
       : paid ? { state: 'is-done', text: `No hace falta · ${PAYMENT_METHODS[p.method] ?? 'sin transferencia'}` }
+      : cardOnly ? { state: 'is-waiting', text: 'Si es por transferencia, lo sube Administración' }
       : { state: 'is-current', text: 'Súbelo antes de pagar (si es por transferencia)' }),
   },
   {
     n: 2, href: '#justificante', title: 'Pagado',
     ...(paid ? { state: 'is-done', text: `El ${formatDate(p.paid_on)}${p.method ? ` · ${PAYMENT_METHODS[p.method]}` : ''}` }
-      : { state: p.receipt_file_id ? 'is-current' : 'is-waiting', text: p.due_date ? `Límite ${formatDate(p.due_date)}` : 'Sin fecha límite' }),
+      : { state: p.receipt_file_id || cardOnly ? 'is-current' : 'is-waiting', text: p.due_date ? `Límite ${formatDate(p.due_date)}` : 'Sin fecha límite' }),
   },
   {
     n: 3, href: '#factura', title: 'Factura conforme',
@@ -314,24 +317,39 @@ const flow = [
     {!locked && !paid && (
       <form method="post" enctype="multipart/form-data" class="form mt" data-has-receipt={p.receipt_file_id ? '1' : '0'}>
         <input type="hidden" name="payment_id" value={p.id} />
-        <FileField id="pay-receipt" name="receipt" optional={false} label={p.receipt_file_id ? 'Cambiar el justificante' : 'Justificante bancario (PDF o foto)'}
-          hint="Obligatorio para marcar como pagado un pago por transferencia." />
+        {cardOnly ? (
+          <FileField id="pay-receipt" name="receipt" label={p.receipt_file_id ? 'Cambiar el recibo' : 'Recibo o justificante (PDF o foto)'}
+            hint="El ticket de la tarjeta, si lo tienes. Las transferencias las paga y las marca Administración con su justificante." />
+        ) : (
+          <FileField id="pay-receipt" name="receipt" optional={false} label={p.receipt_file_id ? 'Cambiar el justificante' : 'Justificante bancario (PDF o foto)'}
+            hint="Obligatorio para marcar como pagado un pago por transferencia." />
+        )}
         <>
             <div class="row row-2">
               <div class="field">
                 <label for="paid_on_quick">Fecha de pago</label>
                 <input id="paid_on_quick" type="date" name="paid_on" value={now} />
               </div>
-              <div class="field">
-                <label for="method_quick">Forma de pago</label>
-                <select id="method_quick" name="method">
-                  {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k}>{l}</option>)}
-                </select>
-              </div>
+              {cardOnly ? (
+                <div class="field">
+                  <span class="label">Forma de pago</span>
+                  <input type="hidden" name="method" value="tarjeta" />
+                  <p class="muted">{PAYMENT_METHODS.tarjeta}: desde Eventos sólo se marcan los pagos hechos con tarjeta.</p>
+                </div>
+              ) : (
+                <div class="field">
+                  <label for="method_quick">Forma de pago</label>
+                  <select id="method_quick" name="method">
+                    {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k}>{l}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
             <div class="actions-inline">
-              <button class="btn btn-primary" type="submit" name="intent" value="pay" data-receipt-check data-busy="Guardando…"><Icon name="check" size={18} /> Pagado</button>
-              <button class="btn btn-ghost" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={18} /> Sólo subir el justificante</button>
+              {cardOnly
+                ? <button class="btn btn-primary" type="submit" name="intent" value="pay" data-busy="Guardando…"><Icon name="credit-card" size={18} /> Pagado con tarjeta</button>
+                : <button class="btn btn-primary" type="submit" name="intent" value="pay" data-receipt-check data-busy="Guardando…"><Icon name="check" size={18} /> Pagado</button>}
+              <button class="btn btn-ghost" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={18} /> {cardOnly ? 'Sólo subir el recibo' : 'Sólo subir el justificante'}</button>
             </div>
         </>
       </form>

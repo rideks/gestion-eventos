@@ -66,10 +66,10 @@ const [{ companies }, users] = await Promise.all([suggestions(db), activeUsers(d
   <ExpHeader exp={exp} tab="resumen" current="Editar datos" />
   <div class="flash flash-warn">
     <Icon name="info" />
-    <span>Aquí se cambian los datos del evento. Los pagos a proveedores, las PO, las facturas y el presupuesto se añaden en cualquier momento desde sus pestañas:
+    <span>Aquí se cambian los datos del evento. Los pagos a proveedores, {admin && 'las PO, '}las facturas y el presupuesto se añaden en cualquier momento desde sus pestañas:
       <a href={`/expedientes/${id}/pagos?nuevo`}>añadir un pago</a> ·
       <a href={`/expedientes/${id}/pagos?nuevo=varios`}>varios pagos</a> ·
-      <a href={`/expedientes/${id}/cobros?nuevo=po`}>subir PO</a> ·
+      {admin && <><a href={`/expedientes/${id}/cobros?nuevo=po`}>subir PO</a> ·</>}
       <a href={`/expedientes/${id}/presupuesto?nuevo`}>nueva versión del presupuesto</a>.</span>
   </div>
   <form method="post" class="form">

@@ -188,9 +188,10 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
  * Próximos pasos de un expediente abierto, de lo más urgente a lo menos.
  * path: a dónde lleva dentro del expediente; si el paso es de una sola cosa (un pago, una factura,
  * una PO), directamente a su ficha.
+ * po: si quien mira gestiona las PO (Administración); si no, no salen los pasos de las PO.
  * @returns {{ tone: string, text: string, tab: string, path: string }[]}
  */
-export function nextSteps(e, s, now) {
+export function nextSteps(e, s, now, { po = true } = {}) {
   if (e.status !== 'abierto') return [];
   const steps = [];
   const add = (tone, tab, text, rows = [], one = null) => steps.push({ tone, tab, text, path: rows.length === 1 && one ? one(rows[0]) : tab });
@@ -201,11 +202,11 @@ export function nextSteps(e, s, now) {
   if (s.soon.length) add('warn', 'pagos', `${plural(s.soon.length, 'pago vence', 'pagos vencen')} en los próximos ${SOON_DAYS} días (${eur(sum(s.soon, 'total_cents'))})`, s.soon, toPayment);
   if (s.toIssue.length) add('warn', 'cobros', `${plural(s.toIssue.length, 'factura', 'facturas')} al cliente por emitir (${eur(sum(s.toIssue, 'total_cents'))})`, s.toIssue, toInvoice);
   if (s.unsent.length) add('warn', 'cobros', `${plural(s.unsent.length, 'factura emitida', 'facturas emitidas')} sin enviar al cliente`, s.unsent, (i) => `facturas/${i.id}#envio`);
-  if (s.poLeft > 0) {
+  if (po && s.poLeft > 0) {
     const open = s.poRows.filter((p) => p.billable_cents > 0);
     add('warn', 'cobros', `Hay ${eur(s.poLeft)} en PO sin facturar`, open, (p) => `facturas/nueva?po=${p.id}`);
   }
-  if (s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto`, path: 'cobros?nuevo=po' });
+  if (po && s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto`, path: 'cobros?nuevo=po' });
   // Sólo las que ya se pueden conformar (el pago está hecho); las demás esperan a su pago
   const toConform = s.payments.filter((p) => p.invoice_pending > 0 && p.status === 'pagado');
   if (toConform.length) {

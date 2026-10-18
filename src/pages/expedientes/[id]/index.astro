@@ -79,7 +79,7 @@ const [fin, { results: activity }, suggested, { results: admins }] = await Promi
   exp.status === 'solicitado' && !admin ? db.prepare("SELECT email FROM users WHERE role = 'admin' AND active = 1").all() : { results: [] },
 ]);
 const s = fin.summary;
-const steps = nextSteps(exp, s, now);
+const steps = nextSteps(exp, s, now, { po: can(me, 'po.manage') });
 const link = `${Astro.url.origin}/expedientes/${id}`;
 const mailto = `mailto:${admins.map((a) => a.email).join(',')}?subject=${encodeURIComponent(`Nuevo expediente: ${exp.name} (${exp.company})`)}&body=${encodeURIComponent(
   `Hola:\n\nEl cliente ha aprobado el presupuesto de «${exp.name}» (${exp.company}, ${formatRange(exp.start_date, exp.end_date)}).\n`
@@ -110,7 +110,7 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
     ) : (
       <div class="flash flash-warn">
         <Icon name="inbox" />
-        <span>Administración tiene la solicitud en su bandeja para abrir el expediente. Mientras tanto puedes ir subiendo facturas y PO.
+        <span>Administración tiene la solicitud en su bandeja para abrir el expediente. Mientras tanto puedes ir añadiendo pagos y facturas de proveedor.
           {admins.length > 0 && <> <a href={mailto}>Avisar por email</a></>}</span>
       </div>
     )
@@ -120,7 +120,7 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
     <nav class="quick-actions no-print" aria-label="Añadir al expediente">
       <a class="btn btn-primary btn-sm" href={`/expedientes/${id}/pagos?nuevo`}><Icon name="receipt" size={16} /> Añadir pago o factura de proveedor</a>
       <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/pagos?nuevo=varios`}><Icon name="wallet" size={16} /> Varios pagos previstos</a>
-      <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cobros?nuevo=po`}><Icon name="file-text" size={16} /> Subir PO</a>
+      {can(me, 'po.manage') && <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cobros?nuevo=po`}><Icon name="file-text" size={16} /> Subir PO</a>}
       <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/facturas/nueva`}><Icon name="send" size={16} /> {admin ? 'Nueva factura al cliente' : 'Pedir factura'}</a>
       <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/presupuesto?nuevo`}><Icon name="file-spreadsheet" size={16} /> Nueva versión del presupuesto</a>
     </nav>

@@ -27,6 +27,8 @@ if (!exp) return Astro.rewrite('/404');
 const me = Astro.locals.user;
 const admin = can(me, 'invoice.issue');
 const locked = isLocked(exp);
+// Las PO sólo las sube y gestiona Administración; Eventos las ve
+const managePo = can(me, 'po.manage') && !locked;
 let error = null;
 let errors = {};
 let poValues = { billed_to: exp.company };
@@ -43,6 +45,8 @@ if (Astro.request.method === 'POST') {
     const r = await markCollected(db, who, input, id);
     if (r.ok) return Astro.redirect(`/expedientes/${id}/cobros?ok=cobrada`, 303);
     error = r.message;
+  } else if (input.intent === 'add_po' && !managePo) {
+    error = 'Las PO del cliente sólo las sube Administración.';
   } else if (input.intent === 'add_po') {
     open = 'po';
     poValues = input;
@@ -96,16 +100,18 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
 
   <div class="sec-head">
     <h2><Icon name="file-text" /> Órdenes de compra (PO)</h2>
-    <p>Las PO que envía el cliente. Súbelas aquí en vez de reenviarlas por correo: Administración las ve al emitir la factura.</p>
+    <p>{managePo
+      ? 'Las PO que envía el cliente. Al guardarla puedes crear directamente su factura.'
+      : 'Las PO que envía el cliente. Las sube y gestiona Administración: si te llega una, reenvíasela.'}</p>
   </div>
-  {!locked && (
+  {managePo && (
     <details class="add" open={open === 'po'}>
       <summary class="btn btn-ghost"><Icon name="plus" size={18} /> <span class="when-closed">Subir PO</span><span class="when-open">Cerrar formulario</span></summary>
       <form method="post" enctype="multipart/form-data" class="form-section">
         <PoForm v={poValues} errors={open === 'po' ? errors : {}} companies={companies} id="newpo" />
         <input type="hidden" name="intent" value="add_po" />
         <div class="actions-inline">
-          <button class="btn btn-primary" type="submit" name="then" value="invoice" data-busy="Guardando…"><Icon name="send" size={18} /> {admin ? 'Guardar PO y crear la factura' : 'Guardar PO y pedir la factura'}</button>
+          <button class="btn btn-primary" type="submit" name="then" value="invoice" data-busy="Guardando…"><Icon name="send" size={18} /> Guardar PO y crear la factura</button>
           <button class="btn btn-ghost" type="submit" name="then" value="list" data-busy="Guardando…">Sólo guardar la PO</button>
         </div>
       </form>
@@ -113,7 +119,7 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
   )}
   {s.poRows.length ? (
     <>
-      <ul class="list">{s.poRows.map((po) => <PoItem po={po} canInvoice={!locked} invoiceLabel={admin ? 'Facturar' : 'Pedir factura'} />)}</ul>
+      <ul class="list">{s.poRows.map((po) => <PoItem po={po} canInvoice={managePo} />)}</ul>
       <p class="list-total"><span>Total PO <b class="money">{eur(s.poTotal)}</b></span><span>Sin facturar <b class="money">{eur(s.poLeft)}</b></span>{s.poClosedLeft > 0 && <span>No se facturan (PO cerradas) <b class="money">{eur(s.poClosedLeft)}</b></span>}</p>
     </>
   ) : <p class="empty">Aún no hay PO del cliente.</p>}

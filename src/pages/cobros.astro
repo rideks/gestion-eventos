@@ -19,6 +19,7 @@ import { plural } from '../lib/finance.js';
 const db = env.DB;
 const now = today();
 const admin = can(Astro.locals.user, 'invoice.issue');
+const managePo = can(Astro.locals.user, 'po.manage');
 const view = Astro.url.searchParams.get('ver') === 'cobradas' ? 'cobradas' : 'pendientes';
 const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
 let error = null;
@@ -89,7 +90,7 @@ const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
           <h2><Icon name="file-text" /> PO sin facturar ({pos.length})</h2>
           <p>Órdenes de compra recibidas con importe que aún no está en ninguna factura.</p>
         </div>
-        {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp canInvoice={!isLocked({ status: po.exp_status })} invoiceLabel={admin ? 'Facturar' : 'Pedir factura'} />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
+        {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp canInvoice={managePo && !isLocked({ status: po.exp_status })} />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
       </section>
     </>
   ) : (

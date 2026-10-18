@@ -93,6 +93,9 @@ test('nextSteps y closingChecks', () => {
   assert.equal(path(/Faltan PO/), 'cobros?nuevo=po');
   assert.equal(path(/sin la factura/), 'pagos/5#factura');
   assert.deepEqual(nextSteps({ status: 'cerrado' }, s, NOW), []);
+  // Eventos no gestiona las PO: no le salen sus pasos
+  const forEventos = nextSteps({ status: 'abierto' }, s, NOW, { po: false }).map((x) => x.text).join(' | ');
+  assert.ok(!/PO/.test(forEventos), forEventos);
   assert.ok(closingChecks(s).every((c) => !c.ok));
 
   const done = summarize({
@@ -212,6 +215,10 @@ test('justificante: obligatorio para marcar pagado por transferencia', () => {
   assert.equal(paidProblem({ method: 'transferencia', hasReceipt: true }), null);
   assert.equal(paidProblem({ method: 'tarjeta', hasReceipt: false }), null);
   assert.match(paidProblem({ method: null, hasReceipt: true }), /Forma de pago/);
+  // Eventos: sólo con tarjeta (aunque tenga el justificante de una transferencia)
+  assert.equal(paidProblem({ method: 'tarjeta', hasReceipt: false, cardOnly: true }), null);
+  assert.match(paidProblem({ method: 'transferencia', hasReceipt: true, cardOnly: true }), /sólo .* tarjeta/);
+  assert.match(paidProblem({ method: 'efectivo', hasReceipt: false, cardOnly: true }), /Administración/);
   assert.equal(validate(PaySchema, { paid_on: '2026-10-01' }).ok, false);
   assert.equal(validate(PaySchema, { paid_on: '2026-10-01', method: 'tarjeta' }).ok, true);
 });

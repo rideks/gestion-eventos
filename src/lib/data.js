@@ -139,7 +139,7 @@ export const LIST_COLUMNS = `
 export function pendingPayments(db, q = '', { until = null } = {}) {
   // until: sólo los que vencen hasta esa fecha (inicio: lo urgente)
   return db.prepare(
-    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
+    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, e.manager_id AS exp_manager_id
        FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
       WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND ${PAYMENT_SEARCH}
         AND (?2 IS NULL OR p.due_date <= ?2)
@@ -187,7 +187,7 @@ export function invoicesToReview(db, q = '') {
 export function openInvoices(db, q = '') {
   return db.prepare(
     `SELECT * FROM (
-       SELECT i.*, e.number AS exp_number, e.name AS exp_name, f.name AS file_name,
+       SELECT i.*, e.number AS exp_number, e.name AS exp_name, e.manager_id AS exp_manager_id, f.name AS file_name,
               (SELECT group_concat(po.number, ', ') FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = i.id) AS po_numbers
          FROM invoices i JOIN expedientes e ON e.id = i.expediente_id LEFT JOIN files f ON f.id = i.file_id
         WHERE i.status IN ('por_emitir', 'emitida') AND e.status != 'cancelado'

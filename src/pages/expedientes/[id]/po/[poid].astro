@@ -2,6 +2,7 @@
 // Una PO del cliente: qué facturas la cubren, cuánto queda, facturarla o darla por cerrada, y editarla.
 // Una PO está «facturada» cuando hay facturas al cliente que la incluyen («PO que cubre esta factura»);
 // si el resto ya no se va a facturar (el evento costó menos, el cliente la recortó…), se cierra.
+// Las PO sólo las gestiona Administración: Eventos ve la ficha, sin acciones.
 import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
@@ -11,10 +12,10 @@ import Pill from '../../../../components/Pill.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../../lib/data.js';
 import { PoSchema, PoCloseSchema, validate, formToObject } from '../../../../lib/validate.js';
-import { storeFile, getFile, deleteFiles, UploadError } from '../../../../lib/files.js';
+import { storeFile, getFile, deleteFiles, fileUrl, UploadError } from '../../../../lib/files.js';
 import { invoiceState } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
-import { today, nowIso, formatStamp } from '../../../../lib/dates.js';
+import { today, nowIso, formatDate, formatStamp } from '../../../../lib/dates.js';
 import { isLocked, LOCKED_MSG } from '../../../../lib/actions.js';
 
 const db = env.DB;
@@ -27,11 +28,11 @@ if (!row) return Astro.rewrite('/404');
 
 const po = row;
 const me = Astro.locals.user;
-const admin = can(me, 'invoice.issue');
 const locked = isLocked(exp);
+const manage = can(me, 'po.manage') && !locked;
 const used = row.used_cents;
 const left = row.left_cents;
-const canDelete = !locked && (can(me, 'delete') || po.created_by === me.id);
+const canDelete = manage;
 const back = `/expedientes/${id}/cobros`;
 const self = `/expedientes/${id}/po/${poid}`;
 // Facturas al cliente que llevan esta PO (las anuladas se ven, pero no cuentan)
@@ -49,6 +50,8 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   if (locked) {
     error = LOCKED_MSG;
+  } else if (!manage) {
+    error = 'Las PO del cliente sólo las gestiona Administración.';
   } else if (input.intent === 'close') {
     const parsed = validate(PoCloseSchema, input);
     closeNote = String(input.closed_note ?? '');
@@ -137,6 +140,9 @@ const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'dang
     </div>
     <dl class="kv">
       <dt>Cliente</dt><dd>{po.billed_to}</dd>
+      {po.issued_on && <><dt>Fecha</dt><dd>{formatDate(po.issued_on)}</dd></>}
+      {po.file_id && <><dt>Documento</dt><dd><a href={fileUrl(po)} target="_blank" rel="noopener">{po.file_name}</a></dd></>}
+      {po.notes && <><dt>Notas</dt><dd class="msg-body">{po.notes}</dd></>}
       <dt>Facturado</dt>
       <dd>
         {eur(used)}
@@ -156,11 +162,12 @@ const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'dang
         El documento adjunto aquí debe ser la PO que envía el cliente, no una factura.</p>
     )}
 
-    {!locked && (
+    {!manage && !locked && <p class="muted small mt"><Icon name="lock" size={14} /> Las PO las sube y gestiona Administración.</p>}
+    {manage && (
       <div class="actions-inline mt no-print">
         {!po.closed && left > 0 && (
           <a class="btn btn-primary btn-sm" href={`/expedientes/${id}/facturas/nueva?po=${poid}`}>
-            <Icon name="send" size={16} /> {admin ? 'Facturar' : 'Pedir factura'} {eur(left)}</a>
+            <Icon name="send" size={16} /> Facturar {eur(left)}</a>
         )}
         {!po.closed && left > 0 && (
           <form method="post" class="quick-form">
@@ -178,17 +185,17 @@ const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'dang
     )}
   </section>
 
+  {manage && (
   <form method="post" enctype="multipart/form-data" class="form-section mt">
     <h2><Icon name="pencil" /> Editar PO</h2>
-    <fieldset disabled={locked} class="form">
-      <PoForm v={v} errors={errors} companies={companies} current={po.file_id ? po : null} removable={!locked} id="edit" />
+    <fieldset class="form">
+      <PoForm v={v} errors={errors} companies={companies} current={po.file_id ? po : null} removable id="edit" />
     </fieldset>
-    {!locked && (
       <div class="actions-inline">
         <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…">Guardar cambios</button>
         <a class="btn btn-ghost" href={back}>Cancelar</a>
         {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm={`¿Borrar la PO ${po.number}? Se borra también su documento.`} data-confirm-ok="Borrar PO"><Icon name="trash-2" size={16} /> Borrar</button>}
       </div>
-    )}
   </form>
+  )}
 </App>

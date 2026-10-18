@@ -5,12 +5,16 @@
 import VatLines from './VatLines.astro';
 import FileField from './FileField.astro';
 import { PAYMENT_METHODS } from '../lib/finance.js';
+import { can } from '../lib/app.js';
 
 // lines: desglose por tipos de IVA (guardado o lo escrito antes de un error)
 // receipt: muestra el campo del justificante bancario (si se marca «Ya pagado» por transferencia)
 // withStatus: «Por pagar / Ya pagado» (en el alta); en la ficha se paga en su paso, no al editar
 const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [], receipt = false, withStatus = true } = Astro.props;
 const status = v.status ?? 'pendiente';
+// Eventos sólo registra como pagados los pagos con tarjeta (el resto lo marca Administración)
+const cardOnly = !can(Astro.locals.user, 'payment.any_method');
+const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHODS;
 ---
 <div class="row row-2">
   <div class:list={['field', { 'has-error': errors.supplier }]}>
@@ -51,12 +55,15 @@ const status = v.status ?? 'pendiente';
     <div class:list={['field', { 'has-error': errors.method }]}>
       <label for={`${id}-method`}>Forma de pago</label>
       <select id={`${id}-method`} name="method">
-        <option value="">—</option>
-        {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k} selected={v.method === k}>{l}</option>)}
+        {!cardOnly && <option value="">—</option>}
+        {Object.entries(methods).map(([k, l]) => <option value={k} selected={v.method === k}>{l}</option>)}
       </select>
+      {cardOnly && <p class="hint">Sólo los pagos con tarjeta. Si se ha pagado por transferencia u otro medio, déjalo «Por pagar»: lo marca Administración.</p>}
     </div>
   </div>
-  {receipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} />}
+  {receipt && (cardOnly
+    ? <FileField id={`${id}-receipt`} name="receipt" label="Recibo del pago" hint="El ticket o recibo de la tarjeta, si lo tienes." error={errors.receipt} />
+    : <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} />)}
 </div>
 )}
 <div class:list={['field', { 'has-error': errors.notes }]}>
