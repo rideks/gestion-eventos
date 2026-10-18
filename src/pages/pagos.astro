@@ -13,6 +13,7 @@ import SearchBox from '../components/SearchBox.astro';
 import { actor, readForm, can } from '../lib/app.js';
 import { pendingPayments, paidWithoutInvoice, paidPayments, invoicesToReview, byMonth } from '../lib/data.js';
 import { markPaid } from '../lib/actions.js';
+import { getFile } from '../lib/files.js';
 import { conformInvoice } from '../lib/supplier.js';
 import { ConformSchema, validate, formToObject } from '../lib/validate.js';
 import { plural, SOON_DAYS } from '../lib/finance.js';
@@ -31,7 +32,7 @@ if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
   if (input.intent === 'pay') {
-    const r = await markPaid(db, actor(Astro), input);
+    const r = await markPaid(db, actor(Astro), input, null, { bucket: env.DOCS, file: getFile(form, 'receipt') });
     if (r.ok) return Astro.redirect(`/pagos${q ? `?q=${encodeURIComponent(q)}&ok=pagado` : '?ok=pagado'}`, 303);
     error = r.message;
   } else if (input.intent === 'conform') {
@@ -64,7 +65,7 @@ const groups = [
 const months = byMonth(paid, 'paid_on');
 const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura o expediente' : 'Proveedor, nº de factura o expediente';
 ---
-<App title="Pagos" section="pagos" error={error}>
+<App title="Pagos" section="pagos" error={error} origin={{ pendientes: 'Pagos pendientes', revisar: 'Facturas por revisar', pagados: 'Pagos hechos' }[view]}>
   <div class="page-top">
     <div>
       <h1>Pagos a proveedores</h1>

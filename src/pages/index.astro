@@ -8,10 +8,12 @@ import Pill from '../components/Pill.astro';
 import PaymentItem from '../components/PaymentItem.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import ReviewItem from '../components/ReviewItem.astro';
+import PoItem from '../components/PoItem.astro';
 import { actor, readForm, can } from '../lib/app.js';
-import { pendingPayments, openInvoices, posWithBalance, invoicesToReview, LIST_COLUMNS } from '../lib/data.js';
+import { pendingPayments, paidWithoutInvoice, openInvoices, posWithBalance, invoicesToReview, LIST_COLUMNS } from '../lib/data.js';
 import { conformInvoice } from '../lib/supplier.js';
 import { markPaid, markCollected } from '../lib/actions.js';
+import { getFile } from '../lib/files.js';
 import { ConformSchema, validate, formToObject } from '../lib/validate.js';
 import { expedienteState, expLabel, plural, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
@@ -30,7 +32,7 @@ if (Astro.request.method === 'POST') {
     const parsed = validate(ConformSchema, input);
     return parsed.ok ? conformInvoice({ db, who: actor(Astro), invoiceId: Number(input.supplier_invoice_id), data: parsed.data }) : parsed;
   };
-  const r = input.intent === 'pay' ? await markPaid(db, actor(Astro), input)
+  const r = input.intent === 'pay' ? await markPaid(db, actor(Astro), input, null, { bucket: env.DOCS, file: getFile(form, 'receipt') })
     : input.intent === 'collect' ? await markCollected(db, actor(Astro), input)
       : input.intent === 'conform' ? await conform()
         : { ok: false, message: 'Acción no válida.' };
@@ -42,9 +44,9 @@ if (Astro.request.method === 'POST') {
 
 const soon = addDays(now, SOON_DAYS);
 const reviewer = can(me, 'supplier.review');
-const [review, pending, invoices, pos, open, requests, toClose, activity] = await Promise.all([
+const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice] = await Promise.all([
   reviewer ? invoicesToReview(db) : [],
-  pendingPayments(db),
+  pendingPayments(db, '', { until: soon }),
   openInvoices(db),
   posWithBalance(db),
   db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id
@@ -59,17 +61,21 @@ const [review, pending, invoices, pos, open, requests, toClose, activity] = awai
   db.prepare(`SELECT a.user_name, a.text, a.action, a.at, a.expediente_id, e.number, e.name
                 FROM activity a JOIN expedientes e ON e.id = a.expediente_id
                ORDER BY a.at DESC, a.id DESC LIMIT 12`).all().then((r) => r.results),
+  db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
+  admin ? [] : paidWithoutInvoice(db),
 ]);
-const urgent = pending.filter((p) => p.due_date && p.due_date <= soon);
-const overdueCount = pending.filter((p) => p.due_date && p.due_date < now).length;
+// «Te toca» (Eventos): lo que depende de quien lleva el expediente
+const mine = (rows) => rows.filter((r) => r.exp_manager_id === me.id);
+const chase = mine(noInvoice);
+const toRequest = admin ? [] : mine(pos);
+const overdueCount = urgent.filter((p) => p.due_date < now).length;
 const toIssue = invoices.filter((i) => i.status === 'por_emitir');
 const toCollect = invoices.filter((i) => i.status === 'emitida');
 const overdueInvoices = toCollect.filter((i) => i.due_date && i.due_date < now);
 const sum = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
-const { n: openCount } = await db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first();
 const firstName = me.name.split(' ')[0];
 ---
-<App title="Inicio" section="inicio" error={error}>
+<App title="Inicio" section="inicio" error={error} origin="Inicio">
   <div class="page-top">
     <div>
       <h1>Hola, {firstName}</h1>
@@ -86,6 +92,29 @@ const firstName = me.name.split(' ')[0];
 
   <div class="two-col">
     <div class="stack">
+      {(chase.length > 0 || toRequest.length > 0) && (
+        <section class="card card-alert">
+          <div class="sec-head">
+            <h2><Icon name="list-checks" /> Te toca</h2>
+            <p>Lo que depende de ti en tus expedientes.</p>
+          </div>
+          {chase.length > 0 && (
+            <>
+              <h3 class="form-sub"><Icon name="paperclip" size={18} /> Reclamar la factura al proveedor ({chase.length})</h3>
+              <p class="muted small">Pagos ya hechos de los que falta la factura: pídela y súbela en el pago.</p>
+              <ul class="list">{chase.slice(0, 5).map((p) => <PaymentItem p={p} now={now} showExp />)}</ul>
+              {chase.length > 5 && <p class="muted small mt"><a href="/pagos#sin-factura">Ver los {chase.length}</a></p>}
+            </>
+          )}
+          {toRequest.length > 0 && (
+            <>
+              <h3 class="form-sub"><Icon name="send" size={18} /> Pedir la factura al cliente ({toRequest.length})</h3>
+              <p class="muted small">PO con importe sin facturar: pide la factura a Administración.</p>
+              <ul class="list">{toRequest.slice(0, 5).map((po) => <PoItem po={po} showExp canInvoice invoiceLabel="Pedir factura" />)}</ul>
+            </>
+          )}
+        </section>
+      )}
       {reviewer && review.length > 0 && (
         <section class="card card-alert">
           <div class="sec-head">

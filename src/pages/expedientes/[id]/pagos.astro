@@ -24,13 +24,12 @@ import { isLocked, LOCKED_MSG, markPaid, paidProblem } from '../../../lib/action
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
-const exp = id ? await getExpediente(db, id) : null;
+const [exp, rates] = id ? await Promise.all([getExpediente(db, id), loadRates(db)]) : [];
 if (!exp) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
 const now = today();
 const locked = isLocked(exp);
-const rates = await loadRates(db);
 // ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?proveedor=… lo rellena
 const params = Astro.url.searchParams;
 let open = params.has('nuevo') ? (params.get('nuevo') === 'varios' ? 'varios' : 'uno') : null;
@@ -49,7 +48,7 @@ if (Astro.request.method === 'POST') {
   if (locked) {
     error = LOCKED_MSG;
   } else if (input.intent === 'pay') {
-    const r = await markPaid(db, who, input, id);
+    const r = await markPaid(db, who, input, id, { bucket: env.DOCS, file: getFile(form, 'receipt') });
     if (r.ok) return Astro.redirect(`/expedientes/${id}/pagos?ok=pagado`, 303);
     error = r.message;
   } else if (input.intent === 'add') {

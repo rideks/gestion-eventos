@@ -12,10 +12,13 @@ import { navCounts } from '../lib/data.js';
 import { today } from '../lib/dates.js';
 import { can, FLASH } from '../lib/app.js';
 
-const { title = 'Inicio', section = '', error = null, notice = null, wide = false } = Astro.props;
+// origin: las bandejas (Inicio, Pagos, Cobros, Expedientes, búsqueda) se recuerdan con este nombre para
+// que dentro de un expediente salga «Volver a …» con la bandeja de la que se vino (y sus filtros)
+const { title = 'Inicio', section = '', error = null, notice = null, wide = false, origin = null } = Astro.props;
 const user = Astro.locals.user;
 const company = env.COMPANY_NAME || 'Seven Worlds';
-const counts = await navCounts(env.DB, today());
+// Ya pedidos en el middleware (en paralelo con la página); si no, aquí
+const counts = (await Astro.locals.counts) ?? await navCounts(env.DB, today());
 const admin = can(user, 'expediente.open');
 const reviewer = can(user, 'supplier.review');
 const toReview = reviewer ? counts.to_review : 0;
@@ -51,13 +54,19 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <slot name="head" />
   </head>
-  <body>
+  <body data-origin={origin ?? undefined}>
     <header class="a-header">
       <a class="a-brand" href="/">
         <img src="/brand/logo.png" alt={`${company} · Events & Congresses`} width="105" height="50" />
         <span class="app-name">Gestión<br />de eventos</span>
       </a>
       <span class="spacer"></span>
+      <form class="a-search" method="get" action="/buscar" role="search">
+        <label class="visually-hidden" for="a-search-q">Buscar en todo</label>
+        <Icon name="search" size={16} />
+        <input id="a-search-q" name="q" type="search" placeholder="Buscar: nº, cliente, proveedor, factura…" autocomplete="off" />
+      </form>
+      <a class="a-search-btn" href="/buscar" aria-label="Buscar" title="Buscar"><Icon name="search" size={22} /></a>
       {user && <span class="a-user">{user.name} · {roleLabel}</span>}
       {reviewer && (
         <a class:list={['bell', { 'has-news': toReview > 0 }]} href="/pagos?ver=revisar"
@@ -130,6 +139,7 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         <div class="confirm-actions">
           <button class="btn btn-ghost" value="cancel" data-alert-close>Entendido</button>
           <a class="btn btn-primary" href="#" data-alert-link hidden>Subir justificante</a>
+          <button class="btn btn-primary" type="button" data-alert-pick hidden>Elegir el justificante</button>
         </div>
       </form>
     </dialog>
@@ -195,20 +205,35 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         }
         alertBox.querySelector('[data-alert-text]').textContent = RECEIPT_MISSING;
         const link = alertBox.querySelector('[data-alert-link]');
+        const pick = alertBox.querySelector('[data-alert-pick]');
         const close = alertBox.querySelector('[data-alert-close]');
-        const href = form.dataset.receiptHref;
+        // Si el formulario tiene dónde adjuntarlo: se elige el archivo y se marca pagado sin más pasos
+        const canPick = file instanceof HTMLInputElement;
+        const href = canPick ? null : form.dataset.receiptHref;
+        pick.hidden = !canPick;
         link.hidden = !href;
         if (href) link.href = href;
-        close.className = href ? 'btn btn-ghost' : 'btn btn-primary';
-        alertBox.addEventListener('close', () => {
-          // En la ficha: lleva al campo del justificante
-          if (!href && file instanceof HTMLInputElement) {
-            file.closest('[data-file-field]')?.scrollIntoView({ block: 'center' });
-            file.focus();
-          }
-        }, { once: true });
+        close.className = canPick || href ? 'btn btn-ghost' : 'btn btn-primary';
+        pick.onclick = () => {
+          alertBox.close();
+          file.addEventListener('change', () => {
+            if (file.files?.length) form.requestSubmit(btn);
+          }, { once: true });
+          file.click();
+        };
         alertBox.showModal();
       }, true);
+
+      // Botones de adjuntar (p. ej. el justificante en las listas): muestran el nombre del archivo elegido
+      document.addEventListener('change', (e) => {
+        const input = e.target;
+        if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
+        const label = input.closest('.file-btn')?.querySelector('[data-file-button]');
+        if (!label) return;
+        const name = input.files?.[0]?.name ?? '';
+        label.textContent = name ? (name.length > 18 ? `${name.slice(0, 16)}…` : name) : 'Justificante';
+        input.closest('.file-btn').classList.toggle('has-file', !!name);
+      });
 
       // Desplegables: las sugerencias (proveedores, clientes…) salen al escribir, no nada más entrar en el
       // campo, y el navegador no propone lo escrito otras veces: así se ve el ejemplo del campo.
@@ -226,6 +251,35 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
       });
       document.querySelectorAll('.a-main input:not([type="hidden"]):not([autocomplete]), .a-main textarea:not([autocomplete])')
         .forEach((el) => el.setAttribute('autocomplete', 'off'));
+
+      // Navegación: «Volver a …» lleva a la bandeja de la que se vino; si se vino de la lista de
+      // expedientes, la miga «Expedientes» vuelve a ella con sus filtros y su búsqueda.
+      const ORIGIN_KEY = 'ge:origen';
+      const here = () => {
+        const u = new URL(window.location.href);
+        ['ok', 'aviso', 'aviso_doc'].forEach((k) => u.searchParams.delete(k));
+        return u.pathname + u.search;
+      };
+      let origin = null;
+      try {
+        origin = JSON.parse(sessionStorage.getItem(ORIGIN_KEY) ?? 'null');
+      } catch { /* sin almacenamiento: sólo las migas */ }
+      if (origin?.href && origin.href !== here()) {
+        const list = document.querySelector('[data-crumb-list]');
+        const back = document.querySelector('[data-return]');
+        if (list instanceof HTMLAnchorElement && origin.href.startsWith('/expedientes')) {
+          list.href = origin.href;
+        } else if (back instanceof HTMLAnchorElement) {
+          back.href = origin.href;
+          back.querySelector('[data-return-label]').textContent = origin.label;
+          back.hidden = false;
+        }
+      }
+      if (document.body.dataset.origin) {
+        try {
+          sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ href: here(), label: document.body.dataset.origin }));
+        } catch { /* sin almacenamiento */ }
+      }
 
       // Evita el doble envío (y da feedback mientras se suben documentos)
       document.addEventListener('submit', (e) => {

@@ -41,12 +41,23 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
 ## Pantallas
 
 - **Inicio**: lo que hay que mover hoy (solicitudes por abrir, pagos urgentes, facturas por emitir,
-  cobros vencidos, expedientes celebrados por cerrar y actividad reciente).
+  cobros vencidos, expedientes celebrados por cerrar y actividad reciente). A Eventos le sale arriba **«Te toca»**:
+  las facturas que reclamar a proveedores (pagos ya hechos sin factura) y las que pedir al cliente (PO sin facturar)
+  de sus expedientes.
+- **Buscar** (cabecera): expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO. Un número de
+  expediente exacto (`1287`) abre directamente el expediente.
 - **Expedientes**: pestañas En curso · Por cerrar · Por abrir · Míos · Cerrados, y buscador.
 - **Expediente**: Resumen (venta, coste, beneficio previsto, cobrado, próximos pasos, datos y actividad) ·
-  Pagos · Cobros (PO y facturas) · Presupuesto (versiones) · Cierre.
+  Pagos · Cobros (PO y facturas) · Presupuesto (versiones) · Cierre. Cada próximo paso lleva a donde se resuelve:
+  si es de una sola cosa (un pago vencido, una factura por emitir…), directamente a su ficha.
+- **Navegación**: arriba, las **migas de pan** dicen dónde estás (`Expedientes › EXP 1287 › Pagos › Hotel…`) y cada
+  paso es un enlace; en el móvil sólo sale el anterior («← Pagos»). Si se ha entrado desde una bandeja (Inicio, Pagos,
+  Facturas por revisar, Cobros, una búsqueda), sale **«Volver a …»** para regresar a ella; si se vino de la lista de
+  expedientes, la miga «Expedientes» vuelve con sus filtros y su búsqueda.
 - **Pagos** y **Cobros**: bandejas de trabajo con todos los expedientes, con **buscador** en todas las pestañas:
   pendientes, **facturas de proveedor por revisar** y el **historial** de lo pagado y lo cobrado por meses.
+  Para pagar por transferencia se adjunta el **justificante en la misma fila** (o desde el aviso, si falta) y queda
+  pagado de una vez, sin entrar en la ficha.
 - Cada pago, PO y factura tiene su **ficha** (botón «Ver»): de qué era, su documento, el desglose de IVA y
   cuándo se pagó o cobró. En la ficha de una PO: las facturas que la cubren, «Facturar», «Cerrar PO» y «Reabrir». En la ficha de un pago:
   «Pago y justificante» (subir el justificante y marcarlo pagado), sus facturas y proformas (subir otra, elegir una ya
@@ -96,6 +107,19 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 
 El primer número de expediente sale de la tabla `settings` (`first_number`, 1001 por defecto);
 después siempre se propone el mayor + 1.
+
+## Base de datos y rendimiento
+
+- Cada pantalla pide a D1 lo que necesita **a la vez** (en paralelo o en un `batch`), no una consulta detrás de otra;
+  los contadores del menú se piden en el middleware mientras se cargan los datos de la página.
+- Las consultas van por **índices** (expediente, estado y fecha de los pagos, facturas y PO, documentos de cada pago).
+  Los historiales «Pagados» y «Cobradas» se leen ya ordenados por fecha y se paran en los últimos 300 (migración 0006).
+- Las bandejas sólo recorren lo que está en marcha (p. ej. «PO sin facturar» sólo mira los expedientes abiertos), así
+  que no se hacen más lentas con los años de histórico.
+- El resumen de documentos de cada pago (facturas, proformas, pendientes de revisar) se calcula en la misma consulta
+  de la lista, sin una consulta por fila.
+- Las sugerencias de proveedores y clientes (autocompletar) se guardan 5 minutos en memoria.
+- Para revisar los planes de las consultas: `EXPLAIN QUERY PLAN` sobre la base local (`.wrangler/state/v3/d1/…`).
 
 ## Seguridad
 

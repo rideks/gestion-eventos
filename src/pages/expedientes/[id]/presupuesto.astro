@@ -18,7 +18,7 @@ import { isLocked, LOCKED_MSG } from '../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
-const exp = id ? await getExpediente(db, id) : null;
+const [exp, rates] = id ? await Promise.all([getExpediente(db, id), loadRates(db)]) : [];
 if (!exp) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
@@ -28,7 +28,6 @@ let error = null;
 let errors = {};
 let v = {};
 let lines = [];
-const rates = await loadRates(db);
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);

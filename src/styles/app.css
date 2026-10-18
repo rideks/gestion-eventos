@@ -122,7 +122,6 @@ p { margin: 0; }
 .page-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 .page-top h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(1.8rem, 6vw, 2.4rem); text-transform: uppercase; }
 .page-top p { color: var(--muted); margin-top: 2px; }
-.back { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); text-decoration: none; font-weight: 600; margin-bottom: 8px; }
 
 /* ── Avisos ─────────────────────────────────────────────────────────────── */
 .flash { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 12px; margin-bottom: 18px; font-weight: 600; }
@@ -599,3 +598,40 @@ form:has(input[name='status'][value='pendiente']:checked) [data-paid-only] { dis
 .doc-note svg { flex: none; margin-top: 2px; }
 .doc-actions { margin-top: 4px; }
 .doc-current { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* ── Migas de pan: dónde estás y a dónde se vuelve ───────────────────────── */
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-bottom: 10px; }
+.crumbs ol { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-weight: 600; font-size: 0.95rem; color: var(--muted); min-width: 0; }
+.crumbs li { display: inline-flex; align-items: center; min-width: 0; }
+.crumbs li + li::before { content: '›'; margin: 0 8px; color: var(--brand-gray); font-weight: 700; }
+.crumbs a { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); text-decoration: none; }
+.crumbs a:hover { color: var(--text); text-decoration: underline; }
+.crumbs [aria-current] { color: var(--text); max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumbs .crumb-arrow { display: none; }
+.return-link { margin-left: auto; }
+/* En el móvil sólo el paso anterior, como «← Pagos» */
+@media (max-width: 639px) {
+  .crumbs li { display: none; }
+  .crumbs li.is-parent { display: inline-flex; }
+  .crumbs li.is-parent::before { content: none; }
+  .crumbs .crumb-arrow { display: inline; }
+}
+
+/* Adjuntar desde una lista (el justificante al marcar «Pagado») */
+.file-btn { cursor: pointer; }
+.file-btn.has-file { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); }
+.file-btn:has(input:focus-visible) { outline: 3px solid var(--c1); outline-offset: 2px; }
+
+/* Buscador de la cabecera (en el móvil, un botón que lleva a /buscar) */
+.a-search { display: none; align-items: center; gap: 6px; padding: 0 10px; height: 38px; border-radius: 10px; background: rgb(255 255 255 / 0.1); color: var(--brand-gray); }
+.a-search input { width: 240px; border: 0; background: transparent; color: #fff; font: inherit; font-size: 0.92rem; outline: none; }
+.a-search input::placeholder { color: var(--brand-gray); }
+.a-search:focus-within { background: rgb(255 255 255 / 0.18); outline: 2px solid var(--c2); }
+.a-search-btn { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: var(--brand-gray); }
+.a-search-btn:hover { background: rgb(255 255 255 / 0.1); color: #fff; }
+@media (min-width: 760px) {
+  .a-search { display: flex; }
+  .a-search-btn { display: none; }
+}
+/* El justificante sólo hace falta (y sólo se ofrece) si se paga por transferencia */
+.quick-form:not(:has(select[name='method'] option[value='transferencia']:checked)) .file-btn { display: none; }

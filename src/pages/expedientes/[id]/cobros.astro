@@ -20,21 +20,19 @@ import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
-const exp = id ? await getExpediente(db, id) : null;
+const now = today();
+const [exp, fin, rates] = id ? await Promise.all([getExpediente(db, id), loadFinance(db, id, now), loadRates(db)]) : [];
 if (!exp) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
 const admin = can(me, 'invoice.issue');
-const now = today();
 const locked = isLocked(exp);
-const fin = await loadFinance(db, id, now);
 let error = null;
 let errors = {};
 let poValues = { billed_to: exp.company };
 let invValues = { billed_to: exp.company };
 let checked = null;
 let invLines = [];
-const rates = await loadRates(db);
 let open = Astro.url.searchParams.get('nuevo');
 
 // «Facturar» desde una PO: la factura nueva sale con esa PO marcada, su cliente y su saldo

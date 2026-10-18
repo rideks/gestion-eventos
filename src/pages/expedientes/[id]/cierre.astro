@@ -13,12 +13,11 @@ import { today, nowIso, formatRange } from '../../../lib/dates.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
-const exp = id ? await getExpediente(db, id) : null;
+const now = today();
+const [exp, fin] = id ? await Promise.all([getExpediente(db, id), loadFinance(db, id, now)]) : [];
 if (!exp) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
-const now = today();
-const fin = await loadFinance(db, id, now);
 const s = fin.summary;
 const checks = closingChecks(s);
 const allOk = checks.every((c) => c.ok);

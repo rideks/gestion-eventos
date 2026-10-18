@@ -20,10 +20,9 @@ import { isLocked, LOCKED_MSG } from '../../../../lib/actions.js';
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const poid = parseId(Astro.params.poid);
-const exp = id ? await getExpediente(db, id) : null;
 const now = today();
-const fin = exp && poid ? await loadFinance(db, id, now) : null;
-const row = fin?.summary.poRows.find((r) => r.id === poid);
+const [exp, fin] = id && poid ? await Promise.all([getExpediente(db, id), loadFinance(db, id, now)]) : [];
+const row = exp && fin?.summary.poRows.find((r) => r.id === poid);
 if (!row) return Astro.rewrite('/404');
 
 const po = row;
@@ -129,8 +128,7 @@ const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'dang
   : { label: `Sin facturar ${eur(left)}`, tone: 'warn' };
 ---
 <App title={`PO ${po.number}`} section="expedientes" error={error}>
-  <ExpHeader exp={exp} tab="cobros" />
-  <a class="back" href={back}><Icon name="arrow-left" size={18} /> Cobros del expediente</a>
+  <ExpHeader exp={exp} tab="cobros" current={`PO ${po.number}`} />
 
   <section class="card">
     <div class="sec-head">

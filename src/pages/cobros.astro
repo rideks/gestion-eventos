@@ -44,7 +44,7 @@ const toCollect = invoices.filter((i) => i.status === 'emitida');
 const overdue = toCollect.filter((i) => i.due_date && i.due_date < now);
 const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
 ---
-<App title="Cobros" section="cobros" error={error}>
+<App title="Cobros" section="cobros" error={error} origin={view === 'cobradas' ? 'Cobradas' : 'Cobros pendientes'}>
   <div class="page-top">
     <div>
       <h1>Cobros a clientes</h1>

@@ -15,9 +15,8 @@ const line = (cells) => cells.map(cell).join(';');
 
 export async function GET({ params }) {
   const id = Number(params.id);
-  const exp = Number.isInteger(id) && id > 0 ? await getExpediente(env.DB, id) : null;
+  const [exp, fin] = Number.isInteger(id) && id > 0 ? await Promise.all([getExpediente(env.DB, id), loadFinance(env.DB, id, today())]) : [];
   if (!exp) return new Response('No encontrado', { status: 404 });
-  const fin = await loadFinance(env.DB, id, today());
   const s = fin.summary;
   const sales = fin.invoices.filter((i) => i.status !== 'anulada').sort((a, b) => a.id - b.id);
   const salesRows = sales.length

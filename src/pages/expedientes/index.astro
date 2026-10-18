@@ -40,7 +40,7 @@ const counts = await db.prepare(
      FROM expedientes`,
 ).bind(now, me.id).first();
 ---
-<App title="Expedientes" section="expedientes">
+<App title="Expedientes" section="expedientes" origin="Expedientes">
   <div class="page-top">
     <div>
       <h1>Expedientes</h1>

@@ -5,7 +5,7 @@ import Pill from './Pill.astro';
 import { paymentState, supplierInvoiceState, PAYMENT_METHODS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { formatDate, dueText } from '../lib/dates.js';
-import { fileUrl } from '../lib/files.js';
+import { fileUrl, ACCEPT } from '../lib/files.js';
 
 const { p, now, showExp = false, canEdit = true } = Astro.props;
 const state = paymentState(p, now);
@@ -41,7 +41,7 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
   </div>
   <div class="item-foot">
       {canPay && (
-        <form method="post" class="quick-form" data-has-receipt={p.receipt_file_id ? '1' : '0'} data-receipt-href={`${edit}#justificante`}>
+        <form method="post" enctype="multipart/form-data" class="quick-form" data-has-receipt={p.receipt_file_id ? '1' : '0'} data-receipt-href={`${edit}#justificante`}>
           <input type="hidden" name="intent" value="pay" />
           <input type="hidden" name="payment_id" value={p.id} />
           <label class="visually-hidden" for={`paid-${p.id}`}>Fecha de pago</label>
@@ -50,6 +50,12 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
           <select id={`method-${p.id}`} name="method">
             {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option value={k}>{v}</option>)}
           </select>
+          {!p.receipt_file_id && (
+            <label class="btn btn-ghost btn-sm file-btn" title="Justificante bancario (obligatorio si es por transferencia)">
+              <Icon name="paperclip" size={16} /><span data-file-button>Justificante</span>
+              <input type="file" name="receipt" accept={ACCEPT} class="visually-hidden" />
+            </label>
+          )}
           <button class="btn btn-sm" type="submit" data-receipt-check data-busy="Guardando…"><Icon name="check" size={16} /> Pagado</button>
         </form>
       )}

@@ -1,0 +1,74 @@
+---
+// Búsqueda en todo desde la cabecera: expedientes, pagos a proveedores (y el nº de sus facturas o
+// proformas), facturas al cliente y PO. Un número de expediente exacto (p. ej. 1287) lleva directamente a él.
+import { env } from 'cloudflare:workers';
+import App from '../layouts/App.astro';
+import Icon from '../components/Icon.astro';
+import Pill from '../components/Pill.astro';
+import SearchBox from '../components/SearchBox.astro';
+import PaymentItem from '../components/PaymentItem.astro';
+import InvoiceItem from '../components/InvoiceItem.astro';
+import PoItem from '../components/PoItem.astro';
+import { searchAll } from '../lib/data.js';
+import { expedienteState, expLabel, plural } from '../lib/finance.js';
+import { today, formatRange } from '../lib/dates.js';
+
+const db = env.DB;
+const now = today();
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+if (/^\d{1,6}$/.test(q)) {
+  const exact = await db.prepare('SELECT id FROM expedientes WHERE number = ?').bind(Number(q)).first();
+  if (exact) return Astro.redirect(`/expedientes/${exact.id}`, 303);
+}
+const r = q.length >= 2 ? await searchAll(db, q) : null;
+const total = r ? r.expedientes.length + r.payments.length + r.invoices.length + r.pos.length : 0;
+---
+<App title={q ? `Buscar «${q}»` : 'Buscar'} section="" origin={q ? `Búsqueda «${q}»` : null}>
+  <div class="page-top">
+    <div>
+      <h1>Buscar</h1>
+      <p>Expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO</p>
+    </div>
+  </div>
+  <SearchBox action="/buscar" q={q} placeholder="Nº de expediente, cliente, proveedor, nº de factura o de PO" />
+
+  {q.length === 1 && <p class="muted mt">Escribe al menos dos letras.</p>}
+  {r && !total && <p class="empty mt">No hay nada que coincida con «{q}».</p>}
+  {r && total > 0 && <p class="muted mt">{plural(total, 'resultado', 'resultados')} para «{q}»</p>}
+
+  {r?.expedientes.length > 0 && (
+    <section>
+      <div class="sec-head"><h2><Icon name="folder" /> Expedientes ({r.expedientes.length})</h2></div>
+      <ul class="list">
+        {r.expedientes.map((e) => (
+          <li><a class="item" href={`/expedientes/${e.id}`}>
+            <div class="item-body">
+              <span class="item-title"><span class:list={['exp-num', { 'is-draft': !e.number }]}>{expLabel(e)}</span> {e.name}</span>
+              <span class="item-meta"><span>{e.company}</span>{e.destination && <span>{e.destination}</span>}<span>{formatRange(e.start_date, e.end_date)}</span></span>
+              <span class="item-flags"><Pill state={expedienteState(e, now)} /></span>
+            </div>
+            <Icon name="chevron-right" class="chev" />
+          </a></li>
+        ))}
+      </ul>
+    </section>
+  )}
+  {r?.payments.length > 0 && (
+    <section>
+      <div class="sec-head"><h2><Icon name="arrow-up-right" /> Pagos a proveedores ({r.payments.length})</h2></div>
+      <ul class="list">{r.payments.map((p) => <PaymentItem p={p} now={now} showExp canEdit={false} />)}</ul>
+    </section>
+  )}
+  {r?.invoices.length > 0 && (
+    <section>
+      <div class="sec-head"><h2><Icon name="receipt" /> Facturas al cliente ({r.invoices.length})</h2></div>
+      <ul class="list">{r.invoices.map((i) => <InvoiceItem i={i} now={now} showExp canEdit={false} />)}</ul>
+    </section>
+  )}
+  {r?.pos.length > 0 && (
+    <section>
+      <div class="sec-head"><h2><Icon name="file-text" /> Órdenes de compra ({r.pos.length})</h2></div>
+      <ul class="list">{r.pos.map((po) => <PoItem po={po} showExp />)}</ul>
+    </section>
+  )}
+</App>

@@ -63,7 +63,7 @@ if (Astro.request.method === 'POST') {
 const [{ companies }, users] = await Promise.all([suggestions(db), activeUsers(db)]);
 ---
 <App title="Editar datos" section="expedientes" error={error}>
-  <ExpHeader exp={exp} tab="resumen" />
+  <ExpHeader exp={exp} tab="resumen" current="Editar datos" />
   <div class="flash flash-warn">
     <Icon name="info" />
     <span>Aquí se cambian los datos del evento. Los pagos a proveedores, las PO, las facturas y el presupuesto se añaden en cualquier momento desde sus pestañas:

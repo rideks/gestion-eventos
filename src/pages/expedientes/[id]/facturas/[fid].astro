@@ -19,19 +19,23 @@ import { isLocked, LOCKED_MSG, markCollected } from '../../../../lib/actions.js'
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const fid = parseId(Astro.params.fid);
-const exp = id ? await getExpediente(db, id) : null;
-const inv = exp && fid ? await db.prepare(
-  `SELECT i.*, f.name AS file_name, u.name AS created_by_name FROM invoices i
-     LEFT JOIN files f ON f.id = i.file_id LEFT JOIN users u ON u.id = i.created_by
-    WHERE i.id = ? AND i.expediente_id = ?`,
-).bind(fid, id).first() : null;
-if (!inv) return Astro.rewrite('/404');
+const now = today();
+// Todo a la vez (una sola espera a la base de datos)
+const [exp, inv, fin, rates] = id && fid ? await Promise.all([
+  getExpediente(db, id),
+  db.prepare(
+    `SELECT i.*, f.name AS file_name, u.name AS created_by_name FROM invoices i
+       LEFT JOIN files f ON f.id = i.file_id LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.id = ? AND i.expediente_id = ?`,
+  ).bind(fid, id).first(),
+  loadFinance(db, id, now),
+  loadRates(db),
+]) : [];
+if (!exp || !inv) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
 const admin = can(me, 'invoice.issue');
-const now = today();
 const locked = isLocked(exp);
-const fin = await loadFinance(db, id, now);
 const allocated = new Map(fin.allocations.filter((a) => a.invoice_id === fid).map((a) => [a.po_id, a.amount_cents]));
 // Quién puede tocar qué: la pedida la puede corregir cualquiera; la emitida, sólo Administración
 const editable = !locked && (inv.status === 'por_emitir' || (admin && inv.status !== 'anulada'));
@@ -42,7 +46,6 @@ let errors = {};
 let v = { ...inv };
 let checked = null;
 let lines = linesOf(inv);
-const rates = await loadRates(db);
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -146,8 +149,7 @@ const state = invoiceState(inv, now);
 const poList = fin.allocations.filter((a) => a.invoice_id === fid);
 ---
 <App title={inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} section="expedientes" error={error}>
-  <ExpHeader exp={exp} tab="cobros" />
-  <a class="back" href={back}><Icon name="arrow-left" size={18} /> Cobros del expediente</a>
+  <ExpHeader exp={exp} tab="cobros" current={inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} />
 
   <section class="card">
     <div class="sec-head">

@@ -4,6 +4,8 @@ import { PaySchema, CollectSchema, validate } from './validate.js';
 import { eur } from './money.js';
 import { formatDate, nowIso } from './dates.js';
 import { PAYMENT_METHODS, needsReceipt, RECEIPT_MISSING } from './finance.js';
+import { saveReceipt } from './supplier.js';
+import { UploadError } from './files.js';
 
 /** ¿Se puede tocar el expediente? Los cerrados y cancelados son de sólo lectura. */
 export const isLocked = (exp) => exp.status === 'cerrado' || exp.status === 'cancelado';
@@ -20,10 +22,11 @@ export function paidProblem({ method, hasReceipt }) {
 }
 
 /**
- * Marca un pago a proveedor como hecho (si es por transferencia, con su justificante ya subido).
+ * Marca un pago a proveedor como hecho (si es por transferencia, con su justificante).
+ * receipt: { bucket, file } si el justificante se adjunta en el mismo momento (desde cualquier lista).
  * @returns {Promise<{ ok: true, expedienteId: number } | { ok: false, message: string }>}
  */
-export async function markPaid(db, who, input, expedienteId = null) {
+export async function markPaid(db, who, input, expedienteId = null, receipt = null) {
   const id = Number(input.payment_id);
   const parsed = validate(PaySchema, input);
   if (!parsed.ok) return parsed;
@@ -35,8 +38,16 @@ export async function markPaid(db, who, input, expedienteId = null) {
   if (isLocked({ status: p.exp_status })) return { ok: false, message: LOCKED_MSG };
   if (p.status === 'pagado') return { ok: true, expedienteId: p.expediente_id };
   const { paid_on, method } = parsed.data;
-  const problem = paidProblem({ method, hasReceipt: !!p.receipt_file_id });
+  const problem = paidProblem({ method, hasReceipt: !!(p.receipt_file_id || receipt?.file) });
   if (problem) return { ok: false, message: problem };
+  if (receipt?.file) {
+    try {
+      await saveReceipt({ db, bucket: receipt.bucket, who, payment: p, file: receipt.file });
+    } catch (err) {
+      if (!(err instanceof UploadError)) throw err;
+      return { ok: false, message: `Justificante · ${err.message}` };
+    }
+  }
   await db.batch([
     db.prepare("UPDATE payments SET status = 'pagado', paid_on = ?, method = ?, updated_at = ? WHERE id = ?")
       .bind(paid_on, method, nowIso(), id),

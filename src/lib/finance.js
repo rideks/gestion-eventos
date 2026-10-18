@@ -147,7 +147,7 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const margin = sales.base - cost.base;
 
   return {
-    sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview,
+    payments, sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview,
     sales, invoiced, collected, toCollect, toIssue, uncollected, overdueInvoices,
     poRows, poTotal, poLeft, poClosedLeft, poMissing,
     expectedMargin, margin,
@@ -158,20 +158,31 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
 
 /**
  * Próximos pasos de un expediente abierto, de lo más urgente a lo menos.
- * @returns {{ tone: string, text: string, tab: string }[]}
+ * path: a dónde lleva dentro del expediente; si el paso es de una sola cosa (un pago, una factura,
+ * una PO), directamente a su ficha.
+ * @returns {{ tone: string, text: string, tab: string, path: string }[]}
  */
 export function nextSteps(e, s, now) {
   if (e.status !== 'abierto') return [];
   const steps = [];
-  if (s.overdue.length) steps.push({ tone: 'danger', tab: 'pagos', text: `${plural(s.overdue.length, 'pago vencido', 'pagos vencidos')} a proveedores (${eur(sum(s.overdue, 'total_cents'))})` });
-  if (s.overdueInvoices.length) steps.push({ tone: 'danger', tab: 'cobros', text: `${plural(s.overdueInvoices.length, 'factura', 'facturas')} con el cobro vencido (${eur(sum(s.overdueInvoices, 'total_cents'))})` });
-  if (s.soon.length) steps.push({ tone: 'warn', tab: 'pagos', text: `${plural(s.soon.length, 'pago vence', 'pagos vencen')} en los próximos ${SOON_DAYS} días (${eur(sum(s.soon, 'total_cents'))})` });
-  if (s.toIssue.length) steps.push({ tone: 'warn', tab: 'cobros', text: `${plural(s.toIssue.length, 'factura', 'facturas')} al cliente por emitir (${eur(sum(s.toIssue, 'total_cents'))})` });
-  if (s.poLeft > 0) steps.push({ tone: 'warn', tab: 'cobros', text: `Hay ${eur(s.poLeft)} en PO sin facturar` });
-  if (s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto` });
-  if (s.toReview.length) steps.push({ tone: 'warn', tab: 'pagos', text: `${plural(s.toReview.length, 'factura de proveedor', 'facturas de proveedor')} por revisar` });
-  if (s.paidWithoutInvoice.length) steps.push({ tone: 'info', tab: 'pagos', text: `${plural(s.paidWithoutInvoice.length, 'pago hecho', 'pagos hechos')} sin la factura del proveedor` });
-  if (!s.sale.base) steps.push({ tone: 'info', tab: 'presupuesto', text: 'Falta el presupuesto aprobado por el cliente' });
+  const add = (tone, tab, text, rows = [], one = null) => steps.push({ tone, tab, text, path: rows.length === 1 && one ? one(rows[0]) : tab });
+  const toPayment = (p) => `pagos/${p.id}`;
+  const toInvoice = (i) => `facturas/${i.id}`;
+  if (s.overdue.length) add('danger', 'pagos', `${plural(s.overdue.length, 'pago vencido', 'pagos vencidos')} a proveedores (${eur(sum(s.overdue, 'total_cents'))})`, s.overdue, toPayment);
+  if (s.overdueInvoices.length) add('danger', 'cobros', `${plural(s.overdueInvoices.length, 'factura', 'facturas')} con el cobro vencido (${eur(sum(s.overdueInvoices, 'total_cents'))})`, s.overdueInvoices, toInvoice);
+  if (s.soon.length) add('warn', 'pagos', `${plural(s.soon.length, 'pago vence', 'pagos vencen')} en los próximos ${SOON_DAYS} días (${eur(sum(s.soon, 'total_cents'))})`, s.soon, toPayment);
+  if (s.toIssue.length) add('warn', 'cobros', `${plural(s.toIssue.length, 'factura', 'facturas')} al cliente por emitir (${eur(sum(s.toIssue, 'total_cents'))})`, s.toIssue, toInvoice);
+  if (s.poLeft > 0) {
+    const open = s.poRows.filter((p) => p.billable_cents > 0);
+    add('warn', 'cobros', `Hay ${eur(s.poLeft)} en PO sin facturar`, open, (p) => `po/${p.id}`);
+  }
+  if (s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto`, path: 'cobros?nuevo=po' });
+  if (s.toReview.length) {
+    const withPending = s.payments.filter((p) => p.invoice_pending > 0);
+    add('warn', 'pagos', `${plural(s.toReview.length, 'factura de proveedor', 'facturas de proveedor')} por revisar`, withPending, (p) => `pagos/${p.id}#factura`);
+  }
+  if (s.paidWithoutInvoice.length) add('info', 'pagos', `${plural(s.paidWithoutInvoice.length, 'pago hecho', 'pagos hechos')} sin la factura del proveedor`, s.paidWithoutInvoice, (p) => `pagos/${p.id}#factura`);
+  if (!s.sale.base) steps.push({ tone: 'info', tab: 'presupuesto', text: 'Falta el presupuesto aprobado por el cliente', path: 'presupuesto' });
   return steps;
 }
 

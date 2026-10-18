@@ -1,11 +1,13 @@
 ---
-// Cabecera común de las páginas de un expediente: número, nombre, estado, datos y pestañas.
+// Cabecera común de las páginas de un expediente: dónde estás (migas de pan), número, nombre, estado,
+// datos y pestañas. current: en una ficha (un pago, una PO, una factura), su nombre.
+// «Volver a …» (oculto) lo muestra la plantilla si se llegó desde una bandeja (Inicio, Pagos, Cobros, búsqueda).
 import Icon from './Icon.astro';
 import Pill from './Pill.astro';
 import { expedienteState, expLabel } from '../lib/finance.js';
 import { formatRange, today } from '../lib/dates.js';
 
-const { exp, tab = 'resumen', fin = null } = Astro.props;
+const { exp, tab = 'resumen', fin = null, current = null } = Astro.props;
 const now = today();
 const base = `/expedientes/${exp.id}`;
 const s = fin?.summary;
@@ -16,9 +18,31 @@ const tabs = [
   { key: 'presupuesto', href: `${base}/presupuesto`, label: fin?.budget ? `Presupuesto v${fin.budget.version}` : 'Presupuesto' },
   { key: 'cierre', href: `${base}/cierre`, label: 'Cierre' },
 ];
+const section = tabs.find((t) => t.key === tab);
+// Expedientes › EXP 1287 (› Pagos › Hotel…): el último es donde estás; el anterior, a dónde se vuelve
+const crumbs = [
+  { href: '/expedientes', label: 'Expedientes', list: true },
+  { href: base, label: exp.number ? `EXP ${exp.number}` : exp.name },
+  ...(current ? [{ href: section.href, label: section.key === 'presupuesto' ? 'Presupuesto' : section.label }, { label: current }] : []),
+];
+if (!current) delete crumbs[1].href;
+const parent = crumbs.length - 2;
 ---
+<div class="crumbs no-print">
+  <nav aria-label="Estás en">
+    <ol>
+      {crumbs.map((c, i) => (
+        <li class:list={{ 'is-parent': i === parent }}>
+          {c.href
+            ? <a href={c.href} data-crumb-list={c.list ? '' : undefined}><Icon name="arrow-left" size={16} class="crumb-arrow" />{c.label}</a>
+            : <span aria-current="page">{c.label}</span>}
+        </li>
+      ))}
+    </ol>
+  </nav>
+  <a class="btn btn-ghost btn-sm return-link" href="/" data-return hidden><Icon name="corner-up-left" size={16} /> Volver a <span data-return-label></span></a>
+</div>
 <div class="exp-head">
-  <a class="back no-print" href="/expedientes"><Icon name="arrow-left" size={18} /> Expedientes</a>
   <div class="exp-title">
     <span class:list={['exp-num', { 'is-draft': !exp.number }]}>{expLabel(exp)}</span>
     <h1>{exp.name}</h1>

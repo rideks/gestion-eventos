@@ -16,7 +16,7 @@ import { getExpediente, suggestions, PAYMENT_SELECT, PAYMENT_JOINS } from '../..
 import { PaymentSchema, SupplierDocSchema, ConformSchema, validate, formToObject } from '../../../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../../lib/vat.js';
 import {
-  paymentDocuments, documentPayments, expedienteDocuments, docName, isConforme, hasConformeInvoice, canRemoveDocument,
+  paymentDocuments, documentsCoverage, expedienteDocuments, docName, isConforme, hasConformeInvoice, canRemoveDocument,
   attachDocument, linkDocument, removeDocument, conformInvoice, dropIfOrphan, saveReceipt, removeReceipt,
 } from '../../../../lib/supplier.js';
 import { getFile, fileUrl, deleteFiles, UploadError } from '../../../../lib/files.js';
@@ -28,18 +28,22 @@ import { isLocked, LOCKED_MSG, markPaid, paidProblem } from '../../../../lib/act
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const pid = parseId(Astro.params.pid);
-const exp = id ? await getExpediente(db, id) : null;
-const p = exp && pid ? await db.prepare(
-  `SELECT ${PAYMENT_SELECT}, u.name AS created_by_name FROM payments p ${PAYMENT_JOINS} LEFT JOIN users u ON u.id = p.created_by
-    WHERE p.id = ? AND p.expediente_id = ?`,
-).bind(pid, id).first() : null;
-if (!p) return Astro.rewrite('/404');
+// Todo a la vez (una sola espera a la base de datos)
+const [exp, p, docs, rates] = id && pid ? await Promise.all([
+  getExpediente(db, id),
+  db.prepare(
+    `SELECT ${PAYMENT_SELECT}, u.name AS created_by_name FROM payments p ${PAYMENT_JOINS} LEFT JOIN users u ON u.id = p.created_by
+      WHERE p.id = ? AND p.expediente_id = ?`,
+  ).bind(pid, id).first(),
+  paymentDocuments(db, pid),
+  loadRates(db),
+]) : [];
+if (!exp || !p) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
 const now = today();
 const locked = isLocked(exp);
 const admin = can(me, 'supplier.review');
-const docs = await paymentDocuments(db, pid);
 const withConforme = hasConformeInvoice(docs);
 // Un pago con una factura conforme no se borra (se borraría con él)
 const canDelete = !locked && !withConforme && (can(me, 'delete') || p.created_by === me.id);
@@ -47,7 +51,6 @@ const canDelete = !locked && !withConforme && (can(me, 'delete') || p.created_by
 const receiptLocked = p.status === 'pagado' && needsReceipt(p.method);
 const back = `/expedientes/${id}/pagos`;
 const self = `/expedientes/${id}/pagos/${pid}`;
-const rates = await loadRates(db);
 const docWarning = Astro.url.searchParams.get('aviso_doc');
 let error = docWarning ? `El pago se ha guardado, pero no el documento: ${docWarning.slice(0, 300)}` : null;
 let errors = {};
@@ -69,9 +72,7 @@ if (Astro.request.method === 'POST') {
       error = LOCKED_MSG;
     } else if (input.intent === 'pay') {
       // Se puede subir el justificante y marcarlo pagado de una vez
-      const receipt = getFile(form, 'receipt');
-      if (receipt) await saveReceipt({ db, bucket: env.DOCS, who, payment: p, file: receipt });
-      const r = await markPaid(db, who, input, id);
+      const r = await markPaid(db, who, input, id, { bucket: env.DOCS, file: getFile(form, 'receipt') });
       if (r.ok) return Astro.redirect(`${self}?ok=pagado`, 303);
       error = r.message;
     } else if (input.intent === 'receipt') {
@@ -188,9 +189,8 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ suppliers }, all] = await Promise.all([suggestions(db), expedienteDocuments(db, id)]);
-// Pagos que cubre cada documento compartido con otros pagos
-const shared = new Map(await Promise.all(docs.filter((d) => d.payment_count > 1).map(async (d) => [d.id, await documentPayments(db, d.id)])));
+// Pagos que cubre cada documento (para los compartidos con otros pagos)
+const [{ suppliers }, all, shared] = await Promise.all([suggestions(db), expedienteDocuments(db, id), documentsCoverage(db, pid)]);
 const state = paymentState(p, now);
 const invState = supplierInvoiceState(p);
 const saved = linesOf(p);
@@ -202,8 +202,7 @@ const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURICompon
 const showUpload = openUpload || !docs.length;
 ---
 <App title={`${p.supplier} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
-  <ExpHeader exp={exp} tab="pagos" />
-  <a class="back" href={back}><Icon name="arrow-left" size={18} /> Pagos del expediente</a>
+  <ExpHeader exp={exp} tab="pagos" current={p.concept ? `${p.supplier} · ${p.concept}` : p.supplier} />
 
   <section class="card">
     <div class="sec-head">
@@ -303,7 +302,7 @@ const showUpload = openUpload || !docs.length;
       <ul class="doc-list">
         {docs.map((d) => {
           const href = fileUrl({ file_id: d.file_id, file_name: d.file_name });
-          const covered = shared.get(d.id) ?? [];
+          const covered = d.payment_count > 1 ? shared.get(d.id) ?? [] : [];
           const coveredTotal = covered.length ? covered.reduce((a, x) => a + x.total_cents, 0) : p.total_cents;
           return (
             <li class="doc">

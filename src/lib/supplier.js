@@ -35,13 +35,17 @@ export async function paymentDocuments(db, paymentId) {
   return results;
 }
 
-/** Pagos que cubre un documento */
-export async function documentPayments(db, documentId) {
+/** Pagos que cubre cada documento de un pago (en una sola consulta): Map document_id → pagos */
+export async function documentsCoverage(db, paymentId) {
   const { results } = await db.prepare(
-    `SELECT p.id, p.supplier, p.concept, p.total_cents, p.status FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id
-      WHERE pd.document_id = ? ORDER BY p.id`,
-  ).bind(documentId).all();
-  return results;
+    `SELECT pd.document_id, p.id, p.supplier, p.concept, p.total_cents, p.status
+       FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id
+      WHERE pd.document_id IN (SELECT document_id FROM payment_documents WHERE payment_id = ?)
+      ORDER BY p.id`,
+  ).bind(paymentId).all();
+  const map = new Map();
+  for (const r of results) map.set(r.document_id, [...(map.get(r.document_id) ?? []), r]);
+  return map;
 }
 
 /** Documentos ya subidos en el expediente (para «es un documento que ya está subido») */

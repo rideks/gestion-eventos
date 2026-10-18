@@ -4,6 +4,8 @@ import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
 import { getSession, SESSION_COOKIE, sessionCookieOptions } from './lib/auth.js';
 import { applySecurityHeaders, isTrustedMutation, rateLimit } from './lib/security.js';
+import { navCounts } from './lib/data.js';
+import { today } from './lib/dates.js';
 
 const PUBLIC = new Set(['/login', '/registro']);
 const ASSETS = new Set(['/favicon.png', '/apple-touch-icon.png', '/robots.txt']);
@@ -55,6 +57,11 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     return withHeaders(new Response('Demasiadas acciones seguidas. Espera un minuto y vuelve a intentarlo.', {
       status: 429, headers: { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '60' },
     }), url);
+  }
+
+  // 4. Los contadores del menú se piden ya, a la vez que los datos de la página (la plantilla los espera)
+  if (locals.user && request.method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
+    locals.counts = navCounts(env.DB, today()).catch(() => null);
   }
 
   return withHeaders(await next(), url);

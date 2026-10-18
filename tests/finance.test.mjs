@@ -82,6 +82,16 @@ test('nextSteps y closingChecks', () => {
   assert.ok(steps.some((x) => /por emitir/.test(x.text)));
   assert.ok(steps.some((x) => /PO sin facturar/.test(x.text)));
   assert.ok(steps.some((x) => /1 factura de proveedor por revisar/.test(x.text)));
+  // Si el paso es de una sola cosa, lleva directamente a su ficha
+  const path = (re) => steps.find((x) => re.test(x.text)).path;
+  assert.equal(path(/pago vencido/), 'pagos/3');
+  assert.equal(path(/cobro vencido/), 'facturas/21');
+  assert.equal(path(/vence en los próximos/), 'pagos/4');
+  assert.equal(path(/por emitir/), 'facturas/22');
+  assert.equal(path(/PO sin facturar/), 'po/11');
+  assert.equal(path(/Faltan PO/), 'cobros?nuevo=po');
+  assert.equal(path(/por revisar/), 'pagos/3#factura');
+  assert.equal(path(/sin la factura/), 'pagos/5#factura');
   assert.deepEqual(nextSteps({ status: 'cerrado' }, s, NOW), []);
   assert.ok(closingChecks(s).every((c) => !c.ok));
 

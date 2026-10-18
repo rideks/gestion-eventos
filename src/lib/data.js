@@ -4,8 +4,9 @@ import { addDays } from './dates.js';
 
 // Documentos del proveedor de un pago (facturas y proformas; uno puede cubrir varios pagos)
 const DOCS_OF = (where) => `FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id WHERE pd.payment_id = p.id AND ${where}`;
-const LAST_DOC = `FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id JOIN files f ON f.id = d.file_id
-  WHERE pd.payment_id = p.id ORDER BY d.kind = 'factura' DESC, d.id DESC LIMIT 1`;
+// Archivo del último documento del pago (factura si hay; si no, proforma), para el enlace de las listas
+const LAST_DOC_FILE = `(SELECT d.file_id FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id
+  WHERE pd.payment_id = p.id AND d.file_id IS NOT NULL ORDER BY d.kind = 'factura' DESC, d.id DESC LIMIT 1)`;
 
 /**
  * Columnas de un pago con el resumen de sus documentos y su justificante:
@@ -19,10 +20,9 @@ export const PAYMENT_SELECT = `
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura'")}) AS invoice_count,
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura' AND d.review = 'pendiente'")}) AS invoice_pending,
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'proforma'")}) AS proforma_count,
-  (SELECT group_concat(number, ', ') FROM (SELECT d.number ${DOCS_OF("d.kind = 'factura' AND d.number IS NOT NULL")} ORDER BY d.id)) AS invoice_number,
-  (SELECT d.file_id ${LAST_DOC}) AS file_id,
-  (SELECT f.name ${LAST_DOC}) AS file_name`;
-export const PAYMENT_JOINS = 'LEFT JOIN files rf ON rf.id = p.receipt_file_id';
+  (SELECT group_concat(number, ', ') FROM (SELECT d.number ${DOCS_OF("d.kind = 'factura' AND d.number IS NOT NULL")} ORDER BY pd.document_id)) AS invoice_number,
+  df.id AS file_id, df.name AS file_name`;
+export const PAYMENT_JOINS = `LEFT JOIN files rf ON rf.id = p.receipt_file_id LEFT JOIN files df ON df.id = ${LAST_DOC_FILE}`;
 
 /** Texto de búsqueda para LIKE (sin comodines del usuario); '%%' = sin búsqueda */
 const likeTerm = (q) => `%${String(q ?? '').trim().slice(0, 80).replace(/[%_]/g, '')}%`;
@@ -79,14 +79,21 @@ export async function loadFinance(db, id, now) {
 }
 
 /** Nombres ya usados (para autocompletar empresas, clientes y proveedores) */
+// Cambian poco y salen en todos los formularios: se guardan unos minutos en la memoria del servidor
+// para no recorrer todo el histórico en cada página (un nombre nuevo aparece como mucho a los 5 minutos).
+const SUGGESTIONS_TTL = 5 * 60 * 1000;
+let suggestionsCache = null;
 export async function suggestions(db) {
+  if (suggestionsCache && suggestionsCache.until > Date.now()) return suggestionsCache.value;
   const [companies, suppliers] = await db.batch([
     db.prepare(`SELECT name FROM (
                   SELECT company AS name FROM expedientes UNION SELECT billed_to FROM invoices UNION SELECT billed_to FROM purchase_orders
                 ) WHERE name IS NOT NULL ORDER BY name COLLATE NOCASE LIMIT 300`),
     db.prepare('SELECT DISTINCT supplier AS name FROM payments ORDER BY supplier COLLATE NOCASE LIMIT 300'),
   ]);
-  return { companies: companies.results.map((r) => r.name), suppliers: suppliers.results.map((r) => r.name) };
+  const value = { companies: companies.results.map((r) => r.name), suppliers: suppliers.results.map((r) => r.name) };
+  suggestionsCache = { value, until: Date.now() + SUGGESTIONS_TTL };
+  return value;
 }
 
 /** Personas que pueden llevar un evento (para el «responsable») */
@@ -120,19 +127,21 @@ export const LIST_COLUMNS = `
   (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status IN ('emitida', 'cobrada')) AS invoiced_total`;
 
 /** Pagos pendientes de todos los expedientes, por fecha límite; con búsqueda opcional */
-export function pendingPayments(db, q = '') {
+export function pendingPayments(db, q = '', { until = null } = {}) {
+  // until: sólo los que vencen hasta esa fecha (inicio: lo urgente)
   return db.prepare(
     `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
        FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
       WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND ${PAYMENT_SEARCH}
+        AND (?2 IS NULL OR p.due_date <= ?2)
       ORDER BY p.due_date IS NULL, p.due_date, e.number, p.id`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
+  ).bind(likeTerm(q), until).all().then((r) => r.results);
 }
 
 /** Pagos ya hechos para los que falta la factura del proveedor; con búsqueda opcional */
 export function paidWithoutInvoice(db, q = '') {
   return db.prepare(
-    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
+    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, e.manager_id AS exp_manager_id
        FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
       WHERE p.status = 'pagado' AND p.total_cents != 0 AND e.status != 'cancelado' AND ${PAYMENT_SEARCH}
         AND NOT EXISTS (SELECT 1 ${DOCS_OF("d.kind = 'factura'")})
@@ -175,15 +184,18 @@ export function openInvoices(db, q = '') {
   ).bind(likeTerm(q)).all().then((r) => r.results);
 }
 
-/** PO con importe aún sin llevar a ninguna factura; con búsqueda opcional */
+/**
+ * PO con importe aún sin llevar a ninguna factura, de los expedientes que siguen en marcha
+ * (en uno cerrado ya no se factura más); con búsqueda opcional.
+ */
 export function posWithBalance(db, q = '') {
   return db.prepare(
     `SELECT * FROM (
-       SELECT po.*, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, f.name AS file_name,
+       SELECT po.*, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, e.manager_id AS exp_manager_id, f.name AS file_name,
               po.amount_cents - COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
                                            WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) AS left_cents
-         FROM purchase_orders po JOIN expedientes e ON e.id = po.expediente_id LEFT JOIN files f ON f.id = po.file_id
-        WHERE e.status != 'cancelado' AND po.closed_at IS NULL
+         FROM expedientes e JOIN purchase_orders po ON po.expediente_id = e.id LEFT JOIN files f ON f.id = po.file_id
+        WHERE e.status IN ('abierto', 'solicitado') AND po.closed_at IS NULL
      ) WHERE left_cents > 0
          AND (?1 = '%%' OR number LIKE ?1 OR billed_to LIKE ?1 OR exp_name LIKE ?1 OR CAST(exp_number AS TEXT) LIKE ?1)
      ORDER BY exp_number, id`,
@@ -235,4 +247,42 @@ export function byMonth(rows, field) {
     else groups.push({ key, rows: [r] });
   }
   return groups;
+}
+
+/**
+ * Búsqueda en todo (cabecera): expedientes, pagos a proveedores (también por el nº de sus facturas
+ * y proformas), facturas al cliente y PO. Hasta 20 de cada cosa, lo más reciente primero.
+ */
+export async function searchAll(db, q) {
+  const term = likeTerm(q);
+  const [expedientes, payments, invoices, pos] = await db.batch([
+    db.prepare(
+      `SELECT e.id, e.number, e.name, e.company, e.destination, e.status, e.start_date, e.end_date FROM expedientes e
+        WHERE e.name LIKE ?1 OR e.company LIKE ?1 OR e.destination LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1
+        ORDER BY e.start_date DESC, e.id DESC LIMIT 20`,
+    ).bind(term),
+    db.prepare(
+      `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
+         FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
+        WHERE p.supplier LIKE ?1 OR p.concept LIKE ?1 OR EXISTS (SELECT 1 ${DOCS_OF('d.number LIKE ?1')})
+        ORDER BY p.id DESC LIMIT 20`,
+    ).bind(term),
+    db.prepare(
+      `SELECT * FROM (
+         SELECT i.*, e.number AS exp_number, e.name AS exp_name, f.name AS file_name,
+                (SELECT group_concat(po.number, ', ') FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = i.id) AS po_numbers
+           FROM invoices i JOIN expedientes e ON e.id = i.expediente_id LEFT JOIN files f ON f.id = i.file_id
+       ) WHERE number LIKE ?1 OR billed_to LIKE ?1 OR concept LIKE ?1 OR po_numbers LIKE ?1
+       ORDER BY id DESC LIMIT 20`,
+    ).bind(term),
+    db.prepare(
+      `SELECT po.*, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, f.name AS file_name,
+              po.amount_cents - COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
+                                           WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) AS left_cents
+         FROM purchase_orders po JOIN expedientes e ON e.id = po.expediente_id LEFT JOIN files f ON f.id = po.file_id
+        WHERE po.number LIKE ?1 OR po.billed_to LIKE ?1
+        ORDER BY po.id DESC LIMIT 20`,
+    ).bind(term),
+  ]).then((rs) => rs.map((r) => r.results));
+  return { expedientes, payments, invoices, pos };
 }
