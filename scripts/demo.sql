@@ -38,6 +38,8 @@ INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines,
   (2, 1, 1894000, 2151240, '[{"rate":1000,"label":"IVA 10 %","base":1277273,"total":1405000},{"rate":2100,"label":"IVA 21 %","base":616727,"total":746240}]', 'Presupuesto aprobado por el cliente', 2, '2026-03-02T08:30:00Z'),
   (3, 1, 9640000, 11086000, '[{"rate":1000,"label":"IVA 10 %","base":5258182,"total":5784000},{"rate":2100,"label":"IVA 21 %","base":4381818,"total":5302000}]', 'Presupuesto aprobado por el cliente', 2, '2026-09-20T10:00:00Z'),
   (4, 1, 13000000, 15020000, '[{"rate":1000,"label":"IVA 10 %","base":6454546,"total":7100001},{"rate":2100,"label":"IVA 21 %","base":6545454,"total":7919999}]', 'Presupuesto aprobado por el cliente', 2, '2026-10-16T15:42:00Z');
+-- Beneficio previsto de cada presupuesto (%, en puntos básicos); la solicitud de GLENMARK aún no lo tiene
+UPDATE budgets SET margin_bp = CASE expediente_id WHEN 1 THEN 1500 WHEN 2 THEN 1800 WHEN 3 THEN 1200 END WHERE expediente_id IN (1, 2, 3);
 
 -- ── EXP 1287 · lado izquierdo del Excel de cierre ─────────────────────────
 INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, due_date, status, paid_on, method, planned, created_by) VALUES

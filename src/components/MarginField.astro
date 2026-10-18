@@ -1,0 +1,10 @@
+---
+// «Beneficio previsto» de un presupuesto (en %): lo que se espera ganar con él después de pagar a los
+// proveedores. Sale en «Venta (presupuesto)» y se compara con el beneficio real (venta − costes).
+const { id = 'budget-margin', value = '', error = null } = Astro.props;
+---
+<div class:list={['field', { 'has-error': error }]}>
+  <label for={id}>Beneficio previsto <span class="opt">(opcional · %)</span></label>
+  <input id={id} name="margin" type="text" inputmode="decimal" maxlength="7" value={value} placeholder="15" class="input-narrow" autocomplete="off" />
+  <p class="hint">Lo que se espera ganar con este presupuesto, después de pagar a los proveedores. Se compara con el beneficio real.</p>
+</div>

@@ -286,12 +286,31 @@ test('orden del pago: la factura se conforma cuando están hechos todos los pago
   assert.match(step.text, /1 pago hecho con la factura por conformar/);
 });
 
-test('por facturar: presupuesto menos lo facturado o pedido (o lo que quede en sus PO, si es más)', async () => {
-  const { leftToInvoice } = await import('../src/lib/finance.js');
+test('por facturar con el presupuesto vigente: las PO y las facturas se mantienen y se recalcula lo que falta', async () => {
+  const { leftToInvoice, billingStatus } = await import('../src/lib/finance.js');
   assert.equal(leftToInvoice({ budget_base: 1975330, invoiced_base: 0 }), 1975330, 'expediente recién creado: todo el presupuesto');
   assert.equal(leftToInvoice({ budget_base: 9640000, invoiced_base: 4820000 }), 4820000);
   assert.equal(leftToInvoice({ budget_base: 9640000, invoiced_base: 9640000 }), 0, 'todo facturado');
-  assert.equal(leftToInvoice({ budget_base: 5000000, invoiced_base: 6000000 }), 0, 'facturado de más: nada por facturar');
-  assert.equal(leftToInvoice({ budget_base: 1000000, invoiced_base: 1000000 }, 250000), 250000, 'la PO trae más que el presupuesto');
+  assert.equal(leftToInvoice({}, 250000), 250000, 'sin presupuesto: lo que quede en sus PO');
   assert.equal(leftToInvoice({}), 0, 'sin presupuesto ni PO');
+  // v1 19.753,30 € con una PO por todo, facturada; sube a la v2 de 20.412,12 €
+  const up = billingStatus({ budget_base: 2041212, invoiced_base: 1975330, po_total: 1975330 }, 0);
+  assert.deepEqual(up, { left: 65882, overInvoiced: 0, poMissing: 65882, poExcess: 0 }, 'sube: falta por facturar y falta PO por la diferencia');
+  // Baja a 18.000 € con la PO de 19.753,30 € aún sin facturar: falta 18.000 (no lo de la PO) y la PO sobra
+  const down = billingStatus({ budget_base: 1800000, invoiced_base: 0, po_total: 1975330 }, 1975330);
+  assert.deepEqual(down, { left: 1800000, overInvoiced: 0, poMissing: 0, poExcess: 175330 }, 'baja: lo que falta sigue al presupuesto y avisa de la PO');
+  // Baja por debajo de lo ya facturado
+  assert.equal(billingStatus({ budget_base: 1800000, invoiced_base: 1975330, po_total: 1975330 }).overInvoiced, 175330, 'facturado de más');
+  assert.equal(billingStatus({ budget_base: 1800000, invoiced_base: 0, po_total: 0 }).poMissing, 0, 'cliente sin PO: no se piden');
+});
+
+test('lo que falta por facturar, repartido con los tipos de IVA del presupuesto', async () => {
+  const { splitLikeLines } = await import('../src/lib/vat.js');
+  const budget = [{ rate: 1000, base: 1482500, total: 1630750 }, { rate: 2100, base: 492830, total: 596324 }];
+  const lines = splitLikeLines(budget, 65882);
+  assert.equal(lines.reduce((a, l) => a + l.base, 0), 65882, 'cuadra al céntimo');
+  assert.deepEqual(lines.map((l) => l.rate), [1000, 2100]);
+  assert.equal(lines[0].total, Math.round(lines[0].base * 1.1));
+  assert.deepEqual(splitLikeLines(budget, 0), []);
+  assert.deepEqual(splitLikeLines([], 100), []);
 });

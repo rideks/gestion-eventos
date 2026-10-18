@@ -9,8 +9,9 @@ import ExpedienteFields from '../../components/ExpedienteFields.astro';
 import VatLines from '../../components/VatLines.astro';
 import FileField from '../../components/FileField.astro';
 import ForecastRows from '../../components/ForecastRows.astro';
+import MarginField from '../../components/MarginField.astro';
 import { readForm, actor, can, activityStmt } from '../../lib/app.js';
-import { ExpedienteSchema, forecastRowSchema, NumberSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
+import { ExpedienteSchema, forecastRowSchema, NumberSchema, MarginSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../lib/vat.js';
 import { suggestions, activeUsers, suggestNumber, numberTaken } from '../../lib/data.js';
 import { storeFile, getFile, UploadError } from '../../lib/files.js';
@@ -34,6 +35,7 @@ if (Astro.request.method === 'POST') {
   v = { ...input };
   const e = validate(ExpedienteSchema, input);
   const b = parseVatLines(form, rates);
+  const mg = validate(MarginSchema, input);
   const fc = form ? parseRows(form, 'fc', ['supplier', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate'] }) : { ok: true, rows: [] };
   if (form) {
     // Para volver a pintar el formulario tal cual si hay un error
@@ -51,6 +53,9 @@ if (Astro.request.method === 'POST') {
   } else if (!b.ok) {
     error = `Presupuesto · ${b.message}`;
     errors = { amount: b.message };
+  } else if (!mg.ok) {
+    error = `Presupuesto · ${mg.message}`;
+    errors = mg.errors;
   } else if (!fc.ok) {
     error = `Previsión de pagos · ${fc.message}`;
   } else if (!n.ok) {
@@ -74,8 +79,8 @@ if (Astro.request.method === 'POST') {
       const file = getFile(form, 'file');
       const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: exp.id, userId: me.id }) : null;
       await db.batch([
-        db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, file_id, created_by) VALUES (?, 1, ?, ?, ?, ?, ?, ?)')
-          .bind(exp.id, b.base, b.total, JSON.stringify(b.lines), 'Presupuesto aprobado por el cliente', fileId, me.id),
+        db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, margin_bp, note, file_id, created_by) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(exp.id, b.base, b.total, JSON.stringify(b.lines), mg.data.margin, 'Presupuesto aprobado por el cliente', fileId, me.id),
         ...fc.rows.map((r) => db.prepare(
           `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
@@ -114,6 +119,7 @@ const [{ companies, suppliers }, users, suggested] = await Promise.all([suggesti
       <FileField label="Presupuesto aprobado" hint="Cada presupuesto es distinto: se guarda el archivo tal cual." />
       <VatLines id="budget" lines={budgetLines} rates={rates} error={errors.amount} labelBase="Total sin IVA" labelTotal="Total con IVA"
         hint="Una línea por tipo de IVA, como en el presupuesto: p. ej. alojamiento al 10 % y servicios al 21 %. En cada línea basta con escribir un importe." />
+      <MarginField value={v.margin ?? ''} error={errors.margin} />
     </section>
 
     <section class="form-section">

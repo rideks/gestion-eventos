@@ -206,7 +206,14 @@ export function toInvoiceByExpediente(db, q = '') {
     `SELECT * FROM (
        SELECT e.id, e.number, e.name, e.company, e.status, e.start_date, e.end_date, e.manager_id,
               COALESCE((SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1), 0) AS budget_base,
-              (SELECT COALESCE(SUM(i.base_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status != 'anulada') AS invoiced_base
+              (SELECT b.version FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1) AS budget_version,
+              (SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1 OFFSET 1) AS prev_budget_base,
+              (SELECT COALESCE(SUM(i.base_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status != 'anulada') AS invoiced_base,
+              -- PO: su importe; las cerradas, sólo lo que se llegó a facturar de ellas
+              (SELECT COALESCE(SUM(CASE WHEN po.closed_at IS NULL THEN po.amount_cents
+                        ELSE COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
+                                        WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) END), 0)
+                 FROM purchase_orders po WHERE po.expediente_id = e.id) AS po_total
          FROM expedientes e
         WHERE e.status IN ('solicitado', 'abierto')
      ) WHERE (?1 = '%%' OR name LIKE ?1 OR company LIKE ?1 OR CAST(number AS TEXT) LIKE ?1)

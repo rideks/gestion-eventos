@@ -16,6 +16,8 @@ import { PoSchema, validate, formToObject } from '../../../lib/validate.js';
 import { storeFile, getFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { today } from '../../../lib/dates.js';
+import { billingStatus } from '../../../lib/finance.js';
+import { amountInput } from '../../../lib/money.js';
 import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
 
 // Sólo Administración ve los cobros
@@ -34,7 +36,9 @@ const locked = isLocked(exp);
 const managePo = can(me, 'po.manage') && !locked;
 let error = null;
 let errors = {};
-let poValues = { billed_to: exp.company };
+// «Subir PO por la diferencia»: la PO nueva sale con ese importe
+const poAmount = Number(Astro.url.searchParams.get('importe'));
+let poValues = { billed_to: exp.company, ...(Number.isInteger(poAmount) && poAmount > 0 ? { amount: amountInput(poAmount) } : {}) };
 let open = Astro.url.searchParams.get('nuevo');
 
 if (Astro.request.method === 'POST') {
@@ -83,6 +87,11 @@ const s = fin.summary;
 const poByInvoice = new Map();
 for (const a of fin.allocations) poByInvoice.set(a.invoice_id, [...(poByInvoice.get(a.invoice_id) ?? []), a.po_number]);
 const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.base) * 100) : 0;
+// Con el presupuesto VIGENTE (si sube una versión nueva, se recalcula; las PO y las facturas se mantienen)
+const poEffective = s.poRows.reduce((a, po) => a + (po.closed ? Math.max(0, po.used_cents) : po.amount_cents), 0);
+const billing = billingStatus({ budget_base: s.sale.base, invoiced_base: s.sales.base, po_total: poEffective }, s.poLeft);
+const prevBudget = fin.budgets[1] ?? null;
+const budgetChange = prevBudget ? s.sale.base - prevBudget.base_cents : 0;
 ---
 <App title={`Cobros · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="cobros" fin={fin} />
@@ -100,6 +109,26 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
       <small>{s.toCollect ? `Pendiente ${eur(s.toCollect)}` : 'Nada pendiente'}</small>
     </div>
   </div>
+
+  {fin.budget && !locked && (prevBudget || billing.overInvoiced > 0 || billing.poExcess > 0) && (
+    <section class:list={['card budget-impact', { 'is-alert': billing.overInvoiced > 0 || billing.poExcess > 0 }]}>
+      <h2><Icon name="file-spreadsheet" /> Con el presupuesto vigente (v{fin.budget.version})</h2>
+      <p>
+        {eur(s.sale.base)} sin IVA{prevBudget && <> · {budgetChange >= 0 ? '+' : ''}{eur(budgetChange)} respecto a la v{prevBudget.version} ({eur(prevBudget.base_cents)})</>}.
+        Las PO y las facturas se mantienen; lo que falta se recalcula con este presupuesto.
+      </p>
+      <ul class="checks mt">
+        <li><Icon name={billing.left > 0 ? 'clock' : 'circle-check'} size={18} /> {billing.left > 0 ? `Falta por facturar ${eur(billing.left)}` : 'Todo el presupuesto está facturado o pedido'} <span class="muted">(facturado o pedido {eur(s.sales.base)})</span></li>
+        {billing.overInvoiced > 0 && <li class="is-bad"><Icon name="triangle-alert" size={18} /> Facturado de más: {eur(billing.overInvoiced)}. Si el cliente no paga la diferencia, haz una factura rectificativa.</li>}
+        {billing.poMissing > 0 && <li><Icon name="info" size={18} /> Las PO cubren {eur(poEffective)}: faltan PO por {eur(billing.poMissing)}</li>}
+        {billing.poExcess > 0 && <li class="is-bad"><Icon name="triangle-alert" size={18} /> Las PO superan el presupuesto en {eur(billing.poExcess)}: pide al cliente que la ajuste, o ciérrala por lo que no se vaya a facturar.</li>}
+      </ul>
+      <div class="actions-inline mt">
+        {billing.left > 0 && <a class="btn btn-primary btn-sm" href={`/expedientes/${id}/facturas/nueva?resto`}><Icon name="send" size={16} /> Crear factura por lo que falta</a>}
+        {billing.poMissing > 0 && managePo && <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/cobros?nuevo=po&importe=${billing.poMissing}`}><Icon name="file-text" size={16} /> Subir PO por la diferencia</a>}
+      </div>
+    </section>
+  )}
 
   <div class="sec-head">
     <h2><Icon name="file-text" /> Órdenes de compra (PO)</h2>

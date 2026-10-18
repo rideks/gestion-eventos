@@ -12,7 +12,7 @@ import InvoiceForm from '../../../../components/InvoiceForm.astro';
 import { parseId, readForm, actor, can, activityStmt, deny } from '../../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions, knownClients } from '../../../../lib/data.js';
 import { formToObject } from '../../../../lib/validate.js';
-import { loadRates, defaultRate, totalFromBaseBp, rawVatLines } from '../../../../lib/vat.js';
+import { loadRates, defaultRate, totalFromBaseBp, rawVatLines, linesOf, splitLikeLines } from '../../../../lib/vat.js';
 import {
   readInvoiceForm, invoiceValues, INVOICE_FIELDS, issueInvoice, markSent, peekInvoiceNumber, DUE_DAYS,
 } from '../../../../lib/invoicing.js';
@@ -40,6 +40,8 @@ const clientOf = (name) => clients.find((c) => c.billed_to.toLowerCase() === Str
 // Valores de partida: la PO (si se viene de ella), los datos del cliente si ya se le ha facturado,
 // y un concepto con el nombre y las fechas del evento
 const fromPo = fin.summary.poRows.find((p) => p.id === parseId(Astro.url.searchParams.get('po')) && p.billable_cents > 0) ?? null;
+// «Crear factura» desde Cobros: por lo que falta del presupuesto vigente, con sus mismos tipos de IVA
+const rest = !fromPo && Astro.url.searchParams.has('resto') && fin.budget ? Math.max(0, fin.summary.sale.base - fin.summary.sales.base) : 0;
 const billedTo = fromPo?.billed_to ?? exp.company;
 const known = clientOf(billedTo);
 let v = {
@@ -52,7 +54,8 @@ let v = {
   due_date: addDays(now, DUE_DAYS),
 };
 let checked = fromPo ? [fromPo.id] : [];
-let lines = fromPo ? [{ rate: defaultRate(rates), base: fromPo.billable_cents, total: totalFromBaseBp(fromPo.billable_cents, defaultRate(rates)) }] : [];
+let lines = fromPo ? [{ rate: defaultRate(rates), base: fromPo.billable_cents, total: totalFromBaseBp(fromPo.billable_cents, defaultRate(rates)) }]
+  : rest > 0 ? splitLikeLines(linesOf(fin.budget), rest) : [];
 let error = null;
 let errors = {};
 
@@ -113,7 +116,8 @@ const [{ companies }, next] = await Promise.all([suggestions(db), admin ? peekIn
       <p>{admin
         ? `Se crea aquí mismo (aún sin plantilla de contabilidad). El número se asigna solo al emitirla: será el ${next?.number}. Luego se envía al cliente (de momento, envío simulado).`
         : 'Rellena lo que sepas: Administración la revisa, la emite (con su número) y la envía al cliente.'}
-        {fromPo && <> Viene de la PO <strong>{fromPo.number}</strong>: {eur(fromPo.billable_cents)} sin facturar.</>}</p>
+        {fromPo && <> Viene de la PO <strong>{fromPo.number}</strong>: {eur(fromPo.billable_cents)} sin facturar.</>}
+        {rest > 0 && <> Por lo que falta del presupuesto v{fin.budget.version}: <strong>{eur(rest)}</strong> sin IVA, con sus mismos tipos de IVA (cámbialo si es una parte).</>}</p>
     </div>
     <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} checked={checked} rates={rates} lines={lines} clients={clients} id="inv" />
     <div class="actions-inline">

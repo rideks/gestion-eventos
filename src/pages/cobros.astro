@@ -15,7 +15,7 @@ import { markCollected, isLocked } from '../lib/actions.js';
 import { formToObject } from '../lib/validate.js';
 import { eur } from '../lib/money.js';
 import { today, formatMonth } from '../lib/dates.js';
-import { plural, leftToInvoice } from '../lib/finance.js';
+import { plural, billingStatus } from '../lib/finance.js';
 
 // Sólo Administración ve los cobros
 const denied = deny(Astro, 'cobros');
@@ -46,16 +46,17 @@ const [invoices, pos, expedientes, collected] = await Promise.all([
   view === 'pendientes' ? toInvoiceByExpediente(db, pendingQ) : [],
   view === 'cobradas' ? collectedInvoices(db, q) : [],
 ]);
-// 1. Por facturar: cada expediente con lo que le falta (y sus PO con saldo, para facturarlas directamente)
+// 1. Por facturar: cada expediente con lo que le falta según su presupuesto VIGENTE (y sus PO con saldo, para
+//    facturarlas directamente). También los que piden revisar algo: facturado de más o PO por encima del presupuesto.
 const posOf = new Map();
 for (const po of pos) posOf.set(po.expediente_id, [...(posOf.get(po.expediente_id) ?? []), po]);
 const toBill = expedientes
   .map((e) => {
     const its = posOf.get(e.id) ?? [];
     const poLeft = its.reduce((a, po) => a + po.left_cents, 0);
-    return { ...e, pos: its, poLeft, left: leftToInvoice(e, poLeft) };
+    return { ...e, pos: its, poLeft, ...billingStatus(e, poLeft) };
   })
-  .filter((e) => e.left > 0);
+  .filter((e) => e.left > 0 || e.overInvoiced > 0 || e.poExcess > 0);
 const months = byMonth(collected, 'collected_on');
 const toIssue = invoices.filter((i) => i.status === 'por_emitir');
 const toCollect = invoices.filter((i) => i.status === 'emitida');
@@ -85,7 +86,7 @@ const managePoOf = (e) => managePo && !isLocked(e);
         <div class="sec-head">
           <h2><Icon name="folder" /> 1. Por facturar ({toBill.length})</h2>
           {toBill.length > 0 && <span class="money"><strong>{eur(total(toBill, 'left'))}</strong> <span class="muted small">sin IVA</span></span>}
-          <p>Cada expediente sale aquí desde que se crea: su presupuesto menos lo ya facturado o pedido.{managePo ? ' Si tiene PO con saldo, se factura desde ella.' : ''}</p>
+          <p>Cada expediente sale aquí desde que se crea: su presupuesto vigente menos lo ya facturado o pedido. Si sube una versión nueva del presupuesto, se recalcula (las PO y las facturas se mantienen).</p>
         </div>
         {toBill.length
           ? <ul class="list">{toBill.map((e) => <BillingItem e={e} pos={e.pos} canIssue={admin} canInvoicePo={managePoOf(e)} />)}</ul>

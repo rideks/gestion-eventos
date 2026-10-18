@@ -9,6 +9,7 @@ import { getExpediente, loadFinance, suggestNumber, numberTaken } from '../../..
 import { NumberSchema, NoteSchema, validate, formToObject } from '../../../lib/validate.js';
 import { nextSteps, plural } from '../../../lib/finance.js';
 import { eur, pct } from '../../../lib/money.js';
+import { pctText } from '../../../lib/vat.js';
 import { today, formatRange, formatStamp, nowIso } from '../../../lib/dates.js';
 import { isLocked } from '../../../lib/actions.js';
 
@@ -90,6 +91,10 @@ const mailto = `mailto:${admins.map((a) => a.email).join(',')}?subject=${encodeU
   + `Importe: ${eur(s.sale.base)} sin IVA.\n\nLo tienes todo aquí para abrir el expediente:\n${link}\n`,
 )}`;
 const margin = s.sale.base ? s.expectedMargin : s.margin;
+// Beneficio previsto en el presupuesto vigente (%), para compararlo con el real
+const target = fin.budget?.margin_bp ?? null;
+const sold = s.sale.base || s.sales.base;
+const belowTarget = target !== null && sold > 0 && fin.payments.length > 0 && margin * 10000 < target * sold;
 ---
 <App title={exp.number ? `EXP ${exp.number}` : exp.name} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="resumen" fin={fin} />
@@ -130,11 +135,12 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
     </nav>
   )}
 
-  <div class="kpis">
+  <div class:list={['kpis', { 'is-3': !cobros }]}>
     <a class="kpi" href={`/expedientes/${id}/presupuesto`}>
       <span>Venta (presupuesto)</span>
       <b class="money">{eur(s.sale.base)}</b>
       <small class="money">{eur(s.sale.total)} con IVA{fin.budget && ` · v${fin.budget.version}`}</small>
+      <small>{target !== null ? `Beneficio previsto ${pctText(target)} %` : fin.budget ? 'Sin beneficio previsto' : ''}</small>
     </a>
     <a class="kpi" href={`/expedientes/${id}/pagos`}>
       <span>Coste</span>
@@ -142,22 +148,17 @@ const margin = s.sale.base ? s.expectedMargin : s.margin;
       <small class="money">{eur(s.cost.total)} con IVA · {plural(fin.payments.length, 'línea', 'líneas')}</small>
     </a>
     <a class:list={['kpi is-gold', { 'is-danger': margin < 0 }]} href={`/expedientes/${id}/cierre`}>
-      <span>Beneficio {s.sale.base ? 'previsto' : ''}</span>
+      <span>Beneficio</span>
       <b class="money">{eur(margin)}</b>
-      <small>{pct(margin, s.sale.base || s.sales.base)} sobre la venta</small>
+      <small>{pct(margin, s.sale.base || s.sales.base)} sobre la venta{target !== null && ` · previsto ${pctText(target)} %`}</small>
+      {belowTarget && <small class="warn-text">Por debajo de lo previsto</small>}
     </a>
-    {cobros ? (
+    {cobros && (
       <a class:list={['kpi', { 'is-ok': s.collected > 0 && s.collected >= s.sale.total }]} href={`/expedientes/${id}/cobros`}>
         <span>Cobrado</span>
         <b class="money">{eur(s.collected)}</b>
         <small class="money">de {eur(s.sale.total)} con IVA</small>
         <progress class="bar is-ok" max="100" value={s.sale.total ? Math.round(Math.min(1, s.collected / s.sale.total) * 100) : 0}></progress>
-      </a>
-    ) : (
-      <a class:list={['kpi', { 'is-danger': s.overdue.length > 0 }]} href={`/expedientes/${id}/pagos`}>
-        <span>Por pagar</span>
-        <b class="money">{eur(s.toPay)}</b>
-        <small>{s.overdue.length ? plural(s.overdue.length, 'pago vencido', 'pagos vencidos') : plural(s.pending.length, 'pago pendiente', 'pagos pendientes')}</small>
       </a>
     )}
   </div>

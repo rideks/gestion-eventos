@@ -137,3 +137,20 @@ export function invoiceAmounts(form, rates, allocations = []) {
   const sum = allocations.reduce((a, r) => a + r.amount, 0);
   return allocations.length ? defaultLine(sum, rates) : { ok: false, message: 'Importe: escribe el importe sin IVA o con IVA (o marca las PO que cubre)' };
 }
+
+/**
+ * Reparte un importe sin IVA entre los tipos de IVA de un desglose, en la misma proporción (p. ej. lo que
+ * falta por facturar, con los tipos del presupuesto). Cuadra al céntimo: la última línea se lleva el resto.
+ */
+export function splitLikeLines(lines, base) {
+  const whole = lines.reduce((a, l) => a + l.base, 0);
+  if (!whole || base <= 0) return [];
+  let done = 0;
+  return lines
+    .map((l, i) => {
+      const b = i === lines.length - 1 ? base - done : Math.round((base * l.base) / whole);
+      done += b;
+      return { rate: l.rate, base: b, total: l.rate != null ? totalFromBaseBp(b, l.rate) : Math.round((l.total * b) / (l.base || 1)) };
+    })
+    .filter((l) => l.base !== 0);
+}

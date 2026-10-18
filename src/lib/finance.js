@@ -97,10 +97,25 @@ export function documentState(d, paid = true) {
 }
 
 /**
- * Lo que falta por facturar de un expediente (sin IVA): su presupuesto menos lo ya facturado o pedido;
- * si en sus PO queda más sin facturar (el presupuesto se quedó corto), eso.
+ * Cómo está la facturación de un expediente con su presupuesto VIGENTE (la última versión, sin IVA).
+ * Las PO y las facturas no cambian al subir una versión nueva: sólo se recalcula lo que falta.
+ *  · left: lo que falta por facturar (presupuesto − facturado o pedido); sin presupuesto, lo que quede en sus PO.
+ *  · overInvoiced: facturado de más (el presupuesto bajó por debajo de lo ya facturado).
+ *  · poMissing: presupuesto que aún no cubre ninguna PO (si el cliente trabaja con PO).
+ *  · poExcess: las PO suman más que el presupuesto (el presupuesto bajó: ajustar o cerrar la PO).
  */
-export const leftToInvoice = ({ budget_base = 0, invoiced_base = 0 }, poLeft = 0) => Math.max(budget_base - invoiced_base, poLeft, 0);
+export function billingStatus({ budget_base = 0, invoiced_base = 0, po_total = 0 }, poLeft = 0) {
+  const hasBudget = budget_base > 0;
+  return {
+    left: hasBudget ? Math.max(0, budget_base - invoiced_base) : Math.max(0, poLeft),
+    overInvoiced: hasBudget ? Math.max(0, invoiced_base - budget_base) : 0,
+    poMissing: hasBudget && po_total > 0 ? Math.max(0, budget_base - po_total) : 0,
+    poExcess: hasBudget ? Math.max(0, po_total - budget_base) : 0,
+  };
+}
+
+/** Lo que falta por facturar de un expediente (sin IVA) con su presupuesto vigente */
+export const leftToInvoice = (e, poLeft = 0) => billingStatus(e, poLeft).left;
 
 /** Envío al cliente de una factura emitida (y aún sin cobrar): enviada o sin enviar */
 export function sentState(i) {

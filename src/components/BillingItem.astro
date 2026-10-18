@@ -5,10 +5,11 @@ import Icon from './Icon.astro';
 import { eur } from '../lib/money.js';
 import { formatRange } from '../lib/dates.js';
 
-// e: fila de toInvoiceByExpediente + left (por facturar) y poLeft; pos: sus PO con saldo
+// e: fila de toInvoiceByExpediente + billingStatus (left, overInvoiced, poMissing, poExcess) y poLeft; pos: sus PO con saldo
 const { e, pos = [], canIssue = false, canInvoicePo = false, canEdit = true } = Astro.props;
 const href = `/expedientes/${e.id}/cobros`;
 const nueva = `/expedientes/${e.id}/facturas/nueva`;
+const change = e.prev_budget_base != null ? e.budget_base - e.prev_budget_base : 0;
 ---
 <li class="item is-row">
   <div class="item-body">
@@ -16,11 +17,16 @@ const nueva = `/expedientes/${e.id}/facturas/nueva`;
     <a class="item-title" href={href}>{e.company}</a>
     <span class="item-meta">
       {(e.start_date || e.end_date) && <span>{formatRange(e.start_date, e.end_date)}</span>}
-      <span>{e.budget_base ? `Presupuesto ${eur(e.budget_base)}` : 'Sin presupuesto'}</span>
+      <span>{e.budget_base ? `Presupuesto${e.budget_version > 1 ? ` v${e.budget_version}` : ''} ${eur(e.budget_base)}` : 'Sin presupuesto'}{change !== 0 && ` (${change > 0 ? '+' : ''}${eur(change)} respecto a la v${e.budget_version - 1})`}</span>
       {e.invoiced_base > 0 && <span>Facturado o pedido {eur(e.invoiced_base)}</span>}
       {e.poLeft > 0 && <span>PO sin facturar {eur(e.poLeft)}</span>}
     </span>
-    {e.status === 'solicitado' && <span class="item-flags"><span class="pill pill-warn">Solicitud por abrir</span></span>}
+    <span class="item-flags">
+      {e.status === 'solicitado' && <span class="pill pill-warn">Solicitud por abrir</span>}
+      {e.overInvoiced > 0 && <span class="pill pill-danger" title="El presupuesto vigente es menor que lo ya facturado: si el cliente no paga la diferencia, haz una factura rectificativa">Facturado de más {eur(e.overInvoiced)}</span>}
+      {e.poExcess > 0 && <span class="pill pill-warn" title="El presupuesto vigente es menor que sus PO: pide al cliente que ajuste la PO o ciérrala por lo que no se facture">PO por encima del presupuesto {eur(e.poExcess)}</span>}
+      {e.poMissing > 0 && <span class="pill pill-info">Faltan PO por {eur(e.poMissing)}</span>}
+    </span>
   </div>
   <div class="item-amount">
     <span class="big-money money">{eur(e.left)}</span>
@@ -31,7 +37,9 @@ const nueva = `/expedientes/${e.id}/facturas/nueva`;
       {canInvoicePo && pos.map((po) => (
         <a class="btn btn-ghost btn-sm" href={`${nueva}?po=${po.id}`}><Icon name="file-text" size={16} /> Facturar PO {po.number} · {eur(po.left_cents)}</a>
       ))}
-      <a class="btn btn-primary btn-sm" href={nueva}><Icon name="send" size={16} /> {canIssue ? 'Crear factura' : 'Pedir factura'}</a>
+      {e.left > 0
+        ? <a class="btn btn-primary btn-sm" href={`${nueva}?resto`}><Icon name="send" size={16} /> {canIssue ? 'Crear factura' : 'Pedir factura'}</a>
+        : <a class="btn btn-ghost btn-sm" href={href}><Icon name="eye" size={16} /> Revisar</a>}
     </div>
   )}
 </li>
