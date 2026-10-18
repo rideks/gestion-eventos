@@ -44,12 +44,10 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
 
 ## Pantallas
 
-- **Inicio**: sólo lo pendiente, en una lista corta y sin repetir las listas de Expedientes, Pagos y Cobros. Cada
-  línea dice cuántos hay, de qué y cuánto suman, y lleva a donde se resuelve (si es una sola cosa, a su ficha):
-  pagos vencidos o que vencen, cobros vencidos, solicitudes por abrir, facturas de proveedor por conformar, facturas
-  al cliente por emitir o sin enviar, PO sin facturar y expedientes por cerrar. A Eventos le sale **«Te toca»** con lo
-  de sus expedientes (facturas que reclamar a proveedores, pagos que vencen) y lo que espera a Administración
-  (solicitudes por abrir, facturas pedidas). Al lado, la actividad reciente.
+- **Inicio**: lo que hay que mover hoy (solicitudes por abrir, pagos urgentes, facturas por emitir,
+  cobros vencidos, expedientes en marcha, celebrados por cerrar y actividad reciente), con los totales arriba
+  (expedientes en curso, pagos en 7 días, pendiente de cobro y por facturar). A Eventos le sale arriba **«Te toca»**:
+  las facturas que reclamar a proveedores (pagos ya hechos sin factura) de sus expedientes.
 - **Buscar** (cabecera): expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO. Un número de
   expediente exacto (`1287`) abre directamente el expediente.
 - **Expedientes**: pestañas En curso · Por cerrar · Por abrir · Míos · Cerrados, y buscador.

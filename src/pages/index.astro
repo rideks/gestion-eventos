@@ -1,166 +1,220 @@
 ---
-// Inicio: sólo lo que hay que hacer, en una lista corta. Cada línea dice cuántos hay y lleva a donde se
-// resuelve (si es una sola cosa, directamente a su ficha). Las listas completas están en Expedientes,
-// Pagos y Cobros: aquí no se repiten. Debajo, lo último que ha pasado.
-//  · Administración: todo (solicitudes, pagos, facturas por conformar, emitir, enviar, cobrar, PO, cierres).
-//  · Eventos: lo de sus expedientes (facturas que reclamar, pagos que vencen) y lo que espera a Administración.
+// Inicio: lo que hay que hacer hoy. Cada persona ve primero lo suyo
+// (Administración: solicitudes por abrir y facturas por emitir; Eventos: sus expedientes).
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
-import { can } from '../lib/app.js';
-import { pendingPayments, paidWithoutInvoice, openInvoices, posWithBalance, invoicesToReview } from '../lib/data.js';
-import { plural, SOON_DAYS } from '../lib/finance.js';
+import Pill from '../components/Pill.astro';
+import PaymentItem from '../components/PaymentItem.astro';
+import InvoiceItem from '../components/InvoiceItem.astro';
+import ReviewItem from '../components/ReviewItem.astro';
+import { actor, readForm, can } from '../lib/app.js';
+import { pendingPayments, paidWithoutInvoice, openInvoices, posWithBalance, invoicesToReview, toInvoiceByExpediente, LIST_COLUMNS } from '../lib/data.js';
+import { conformInvoice } from '../lib/supplier.js';
+import { markPaid, markCollected } from '../lib/actions.js';
+import { getFile } from '../lib/files.js';
+import { ConformSchema, validate, formToObject } from '../lib/validate.js';
+import { expedienteState, expLabel, plural, leftToInvoice, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
-import { today, addDays, formatStamp, formatDateLong } from '../lib/dates.js';
+import { today, addDays, formatRange, formatStamp, formatDateLong } from '../lib/dates.js';
 
 const db = env.DB;
 const me = Astro.locals.user;
 const admin = can(me, 'expediente.open');
 const now = today();
-const soon = addDays(now, SOON_DAYS);
-const all = (rows) => rows;
-const mine = admin ? all : (rows) => rows.filter((r) => r.exp_manager_id === me.id);
+let error = null;
 
-const [review, urgent, invoices, pos, requests, toClose, noInvoice, activity] = await Promise.all([
-  can(me, 'supplier.review') ? invoicesToReview(db) : [],
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const conform = () => {
+    const parsed = validate(ConformSchema, input);
+    return parsed.ok ? conformInvoice({ db, who: actor(Astro), invoiceId: Number(input.supplier_invoice_id), data: parsed.data }) : parsed;
+  };
+  const r = input.intent === 'pay' ? await markPaid(db, actor(Astro), input, null, { bucket: env.DOCS, file: getFile(form, 'receipt') })
+    : input.intent === 'collect' ? await markCollected(db, actor(Astro), input)
+      : input.intent === 'conform' ? await conform()
+        : { ok: false, message: 'Acción no válida.' };
+  const OK = { pay: 'pagado', collect: 'cobrada', conform: 'revisada' };
+  if (r.ok) return Astro.redirect(`/?ok=${OK[input.intent]}`, 303);
+  error = r.message;
+  Astro.response.status = 400;
+}
+
+const soon = addDays(now, SOON_DAYS);
+const reviewer = can(me, 'supplier.review');
+const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice, billing] = await Promise.all([
+  reviewer ? invoicesToReview(db) : [],
   pendingPayments(db, '', { until: soon }),
   openInvoices(db),
-  can(me, 'po.manage') ? posWithBalance(db) : [],
-  db.prepare(`SELECT id, name, company FROM expedientes WHERE status = 'solicitado' ${admin ? '' : 'AND manager_id = ?'} ORDER BY requested_at`)
-    .bind(...(admin ? [] : [me.id])).all().then((r) => r.results),
-  admin
-    ? db.prepare(`SELECT id, number, name FROM expedientes WHERE status = 'abierto' AND COALESCE(end_date, start_date) < ? ORDER BY end_date`)
-      .bind(now).all().then((r) => r.results)
-    : [],
-  admin ? [] : paidWithoutInvoice(db),
+  posWithBalance(db),
+  // Administración ve las solicitudes en su propio bloque («Solicitudes por abrir»): aquí sólo las abiertas.
+  // Eventos ve aquí todo lo suyo, también lo que ha pedido y aún no está abierto.
+  db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id
+               WHERE ${admin ? "e.status = 'abierto'" : "e.status IN ('abierto', 'solicitado') AND e.manager_id = ?"}
+               ORDER BY e.start_date LIMIT 8`).bind(...(admin ? [] : [me.id])).all().then((r) => r.results),
+  db.prepare(`SELECT e.*, u.name AS requested_by_name,
+                     (SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1) AS budget_base
+                FROM expedientes e LEFT JOIN users u ON u.id = e.requested_by
+               WHERE e.status = 'solicitado' ORDER BY e.requested_at`).all().then((r) => r.results),
+  db.prepare(`SELECT id, number, name, company, start_date, end_date FROM expedientes
+               WHERE status = 'abierto' AND COALESCE(end_date, start_date) < ? ORDER BY end_date LIMIT 8`).bind(now).all().then((r) => r.results),
   db.prepare(`SELECT a.user_name, a.text, a.action, a.at, a.expediente_id, e.number, e.name
                 FROM activity a JOIN expedientes e ON e.id = a.expediente_id
-               ${admin ? '' : 'WHERE e.manager_id = ?'}
-               ORDER BY a.at DESC, a.id DESC LIMIT 10`).bind(...(admin ? [] : [me.id])).all().then((r) => r.results),
+               ORDER BY a.at DESC, a.id DESC LIMIT 12`).all().then((r) => r.results),
+  db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
+  admin ? [] : paidWithoutInvoice(db),
+  toInvoiceByExpediente(db),
 ]);
-
-const sum = (rows, f = 'total_cents') => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
-const payments = mine(urgent);
-const overdue = payments.filter((p) => p.due_date < now);
-const dueSoon = payments.filter((p) => p.due_date >= now);
-const myInvoices = mine(invoices);
-const toIssue = myInvoices.filter((i) => i.status === 'por_emitir');
-const issued = myInvoices.filter((i) => i.status === 'emitida');
-const unsent = issued.filter((i) => !i.sent_at);
-const overdueInvoices = issued.filter((i) => i.due_date && i.due_date < now);
-const ready = review.filter((si) => !si.unpaid_count); // facturas de proveedor con el pago ya hecho
+// «Te toca» (Eventos): lo que depende de quien lleva el expediente
+const mine = (rows) => rows.filter((r) => r.exp_manager_id === me.id);
 const chase = mine(noInvoice);
-
-// Cada línea: cuántos, de qué (con los primeros nombres) y a dónde lleva
-const todo = [];
-const names = (rows, name) => `${rows.slice(0, 3).map(name).join(', ')}${rows.length > 3 ? '…' : ''}`;
-const add = ({ tone, rows, text, name, href, one, amount = 'total_cents' }) => {
-  if (!rows.length) return;
-  todo.push({
-    tone, text: text(rows.length), detail: name ? names(rows, name) : '',
-    amount: amount ? sum(rows, amount) : null,
-    href: rows.length === 1 && one ? one(rows[0]) : href,
-  });
-};
-const payHref = (p) => `/expedientes/${p.expediente_id}/pagos/${p.id}`;
-const invHref = (i) => `/expedientes/${i.expediente_id}/facturas/${i.id}`;
-const expName = (r) => r.exp_number ? `EXP ${r.exp_number}` : r.exp_name;
-
-add({ tone: 'danger', rows: overdue, text: (n) => `${plural(n, 'pago vencido', 'pagos vencidos')} a proveedores`, name: (p) => p.supplier, href: '/pagos', one: payHref });
-if (admin) {
-  add({ tone: 'danger', rows: overdueInvoices, text: (n) => `${plural(n, 'cobro vencido', 'cobros vencidos')}`, name: (i) => i.billed_to, href: '/cobros#cobrar', one: invHref });
-  add({ tone: 'warn', rows: requests, text: (n) => `${plural(n, 'solicitud', 'solicitudes')} por abrir`, name: (e) => `${e.name} (${e.company})`,
-    href: '/expedientes?ver=solicitudes', one: (e) => `/expedientes/${e.id}`, amount: null });
-  add({ tone: 'warn', rows: ready, text: (n) => `${plural(n, 'factura de proveedor', 'facturas de proveedor')} por conformar`, name: (si) => si.supplier,
-    href: '/pagos?ver=revisar', amount: 'payments_total' });
-}
-if (!admin) {
-  add({ tone: 'warn', rows: chase, text: (n) => `Reclamar la factura al proveedor (${plural(n, 'pago hecho', 'pagos hechos')} sin factura)`, name: (p) => p.supplier,
-    href: '/pagos#sin-factura', one: (p) => `${payHref(p)}#factura` });
-}
-add({ tone: 'warn', rows: dueSoon, text: (n) => `${plural(n, 'pago vence', 'pagos vencen')} en los próximos ${SOON_DAYS} días`, name: (p) => p.supplier, href: '/pagos', one: payHref });
-if (admin) {
-  add({ tone: 'warn', rows: toIssue, text: (n) => `${plural(n, 'factura', 'facturas')} al cliente por emitir`, name: (i) => i.billed_to, href: '/cobros#emitir', one: invHref });
-  add({ tone: 'warn', rows: unsent, text: (n) => `${plural(n, 'factura emitida', 'facturas emitidas')} sin enviar al cliente`, name: (i) => i.number,
-    href: '/cobros#cobrar', one: (i) => `${invHref(i)}#envio` });
-  add({ tone: 'info', rows: pos, text: (n) => `${plural(n, 'PO', 'PO')} con importe sin facturar`, name: (po) => `${po.number} · ${expName(po)}`,
-    href: '/cobros#facturar', one: (po) => `/expedientes/${po.expediente_id}/facturas/nueva?po=${po.id}`, amount: 'left_cents' });
-  add({ tone: 'info', rows: toClose, text: (n) => `${plural(n, 'expediente celebrado', 'expedientes celebrados')} por cerrar`, name: (e) => (e.number ? `EXP ${e.number}` : e.name),
-    href: '/expedientes?ver=cerrar', one: (e) => `/expedientes/${e.id}/cierre`, amount: null });
-}
-// Eventos: lo suyo que está en manos de Administración (para saber que no se ha quedado parado)
-const waiting = [];
-if (!admin) {
-  if (requests.length) waiting.push({ text: `${plural(requests.length, 'solicitud', 'solicitudes')} esperando a que Administración la${requests.length > 1 ? 's' : ''} abra`,
-    detail: names(requests, (e) => e.name), href: requests.length === 1 ? `/expedientes/${requests[0].id}` : '/expedientes?ver=mios' });
-  if (toIssue.length) waiting.push({ text: `${plural(toIssue.length, 'factura pedida', 'facturas pedidas')} pendiente${toIssue.length > 1 ? 's' : ''} de emitir`,
-    detail: names(toIssue, (i) => i.billed_to), href: toIssue.length === 1 ? invHref(toIssue[0]) : '/cobros#emitir' });
-}
+const overdueCount = urgent.filter((p) => p.due_date < now).length;
+// Facturas que ya se pueden conformar (su pago está hecho)
+const ready = review.filter((si) => !si.unpaid_count);
+const toIssue = invoices.filter((i) => i.status === 'por_emitir');
+const toCollect = invoices.filter((i) => i.status === 'emitida');
+const overdueInvoices = toCollect.filter((i) => i.due_date && i.due_date < now);
+const sum = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
+// Por facturar (lo mismo que «1. Por facturar» en Cobros): presupuesto de cada expediente menos lo facturado o pedido
+const poLeftOf = new Map();
+for (const po of pos) poLeftOf.set(po.expediente_id, (poLeftOf.get(po.expediente_id) ?? 0) + po.left_cents);
+const toBill = billing.map((e) => leftToInvoice(e, poLeftOf.get(e.id) ?? 0)).filter((n) => n > 0);
 const firstName = me.name.split(' ')[0];
-const icon = { danger: 'triangle-alert', warn: 'clock', info: 'info' };
 ---
-<App title="Inicio" section="inicio" origin="Inicio">
+<App title="Inicio" section="inicio" error={error} origin="Inicio">
   <div class="page-top">
     <div>
       <h1>Hola, {firstName}</h1>
-      <p>{formatDateLong(now)} · {todo.length ? 'esto es lo que tienes pendiente' : 'todo al día'}</p>
+      <p>{formatDateLong(now)} · esto es lo que hay que mover hoy</p>
     </div>
+  </div>
+
+  <div class="kpis">
+    <a class="kpi" href="/expedientes"><span>Expedientes en curso</span><b>{openCount}</b><small>{requests.length ? `${plural(requests.length, 'solicitud', 'solicitudes')} por abrir` : 'ninguna solicitud pendiente'}</small></a>
+    <a class:list={['kpi', { 'is-danger': overdueCount > 0 }]} href="/pagos"><span>Pagos en {SOON_DAYS} días</span><b class="money">{eur(sum(urgent))}</b><small>{overdueCount ? plural(overdueCount, 'vencido', 'vencidos') : plural(urgent.length, 'pago', 'pagos')}</small></a>
+    <a class:list={['kpi', { 'is-danger': overdueInvoices.length > 0 }]} href="/cobros#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(sum(toCollect))}</b><small>{overdueInvoices.length ? plural(overdueInvoices.length, 'vencida', 'vencidas') : plural(toCollect.length, 'factura', 'facturas')}</small></a>
+    <a class="kpi is-gold" href="/cobros#facturar"><span>Por facturar</span><b class="money">{eur(toBill.reduce((a, n) => a + n, 0))}</b><small>{plural(toBill.length, 'expediente', 'expedientes')} · sin IVA</small></a>
   </div>
 
   <div class="two-col">
     <div class="stack">
-      <section class="card" id="pendiente">
+      {chase.length > 0 && (
+        <section class="card card-alert">
+          <div class="sec-head">
+            <h2><Icon name="list-checks" /> Te toca</h2>
+            <p>Lo que depende de ti en tus expedientes.</p>
+          </div>
+          <h3 class="form-sub"><Icon name="paperclip" size={18} /> Reclamar la factura al proveedor ({chase.length})</h3>
+          <p class="muted small">Pagos ya hechos de los que falta la factura: pídela y súbela en el pago.</p>
+          <ul class="list">{chase.slice(0, 5).map((p) => <PaymentItem p={p} now={now} showExp />)}</ul>
+          {chase.length > 5 && <p class="muted small mt"><a href="/pagos#sin-factura">Ver los {chase.length}</a></p>}
+        </section>
+      )}
+      {reviewer && ready.length > 0 && (
+        <section class="card card-alert">
+          <div class="sec-head">
+            <h2><Icon name="bell" /> Facturas por conformar ({ready.length})</h2>
+            <a class="btn btn-ghost btn-sm" href="/pagos?ver=revisar">Ver todas</a>
+          </div>
+          <p class="muted small">De pagos ya hechos: comprueba la factura y dale a «Conforme».</p>
+          <ul class="list">{ready.slice(0, 4).map((si) => <ReviewItem si={si} canReview />)}</ul>
+        </section>
+      )}
+      {admin && requests.length > 0 && (
+        <section class="card">
+          <div class="sec-head">
+            <h2><Icon name="inbox" /> Solicitudes por abrir ({requests.length})</h2>
+            <p>Entra en cada una, revísala y dale número con «Abrir expediente»: entonces pasa a «Expedientes en marcha».</p>
+          </div>
+          <ul class="list">
+            {requests.map((e) => (
+              <li><a class="item" href={`/expedientes/${e.id}`}>
+                <div class="item-body">
+                  <span class="item-title">{e.name} <span class="muted">· {e.company}</span></span>
+                  <span class="item-meta"><span>{formatRange(e.start_date, e.end_date)}</span><span>{e.requested_by_name} · {formatStamp(e.requested_at)}</span></span>
+                </div>
+                <div class="item-amount"><span class="money"><strong>{eur(e.budget_base ?? 0)}</strong></span><small>sin IVA</small></div>
+                <Icon name="chevron-right" class="chev" />
+              </a></li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section class="card">
         <div class="sec-head">
-          <h2><Icon name="list-checks" /> {admin ? 'Pendiente' : 'Te toca'}</h2>
-          <p>{admin ? 'Lo que hay que mover, de lo más urgente a lo menos.' : 'Lo que depende de ti en tus expedientes.'}</p>
+          <h2><Icon name="arrow-up-right" /> Pagos urgentes</h2>
+          <a class="btn btn-ghost btn-sm" href="/pagos">Ver todos</a>
         </div>
-        {todo.length ? (
-          <ul class="steps todo">
-            {todo.map((t) => (
-              <li class={`tone-${t.tone}`}>
-                <a href={t.href}>
-                  <Icon name={icon[t.tone]} />
-                  <span class="todo-text">{t.text}{t.detail && <small>{t.detail}</small>}</span>
-                  {t.amount !== null && <span class="todo-amount money">{eur(t.amount)}</span>}
-                  <Icon name="chevron-right" size={18} class="chev" />
-                </a>
-              </li>
+        {urgent.length
+          ? <ul class="list">{urgent.slice(0, 6).map((p) => <PaymentItem p={p} now={now} showExp />)}</ul>
+          : <p class="muted">Nada vence en los próximos {SOON_DAYS} días.</p>}
+        {urgent.length > 6 && <p class="muted small mt">Y {urgent.length - 6} más en la bandeja de pagos.</p>}
+      </section>
+
+      {(toIssue.length > 0 || overdueInvoices.length > 0) && (
+        <section class="card">
+          <div class="sec-head">
+            <h2><Icon name="arrow-down-left" /> {admin ? 'Facturas por emitir y cobros vencidos' : 'Facturas pedidas y cobros vencidos'}</h2>
+            <a class="btn btn-ghost btn-sm" href="/cobros">Ver todos</a>
+          </div>
+          <ul class="list">{[...toIssue, ...overdueInvoices].slice(0, 6).map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul>
+        </section>
+      )}
+    </div>
+
+    <div class="stack">
+      <section class="card">
+        <div class="sec-head">
+          <h2><Icon name="folder" /> {admin ? 'Expedientes en marcha' : 'Mis expedientes'}</h2>
+          <a class="btn btn-ghost btn-sm" href={admin ? '/expedientes' : '/expedientes?ver=mios'}>Ver todos</a>
+        </div>
+        {open.length ? (
+          <ul class="list">
+            {open.map((e) => (
+              <li><a class="item" href={`/expedientes/${e.id}`}>
+                <div class="item-body">
+                  <span class="item-title"><span class:list={['exp-num', { 'is-draft': !e.number }]}>{expLabel(e)}</span> {e.name}</span>
+                  <span class="item-meta"><span>{e.company}</span><span>{formatRange(e.start_date, e.end_date)}</span></span>
+                  <span class="item-flags"><Pill state={expedienteState(e, now)} /></span>
+                </div>
+                <Icon name="chevron-right" class="chev" />
+              </a></li>
             ))}
           </ul>
         ) : (
-          <ul class="steps"><li class="tone-ok"><span><Icon name="circle-check" /> Nada pendiente. ¡Todo al día!</span></li></ul>
-        )}
-        {waiting.length > 0 && (
-          <>
-            <h3 class="form-sub mt">Esperando a Administración</h3>
-            <ul class="steps todo">
-              {waiting.map((w) => (
-                <li class="tone-info">
-                  <a href={w.href}>
-                    <Icon name="info" />
-                    <span class="todo-text">{w.text}{w.detail && <small>{w.detail}</small>}</span>
-                    <Icon name="chevron-right" size={18} class="chev" />
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </>
+          <div class="empty">
+            <p>{admin && requests.length ? 'Ningún expediente abierto todavía: abre primero las solicitudes pendientes.' : 'No hay expedientes en marcha.'}</p>
+            <p class="mt"><a class="btn btn-primary btn-sm" href="/expedientes/nuevo"><Icon name="folder-plus" size={16} /> Nueva solicitud</a></p>
+          </div>
         )}
       </section>
-    </div>
 
-    <section class="card">
-      <h2>Actividad reciente{!admin && <span class="muted small"> · tus expedientes</span>}</h2>
-      {activity.length ? (
-        <ul class="activity">
-          {activity.map((a) => (
-            <li>
-              <time datetime={a.at}>{formatStamp(a.at)}</time>
-              <span><strong>{a.user_name ?? 'Alguien'}</strong> {a.action === 'note' ? 'escribió una nota en' : a.text} · <a href={`/expedientes/${a.expediente_id}`}>{a.number ? `EXP ${a.number}` : a.name}</a></span>
-            </li>
-          ))}
-        </ul>
-      ) : <p class="muted">Aún no hay actividad.</p>}
-    </section>
+      {toClose.length > 0 && (
+        <section class="card">
+          <h2><Icon name="lock" size={18} /> Celebrados, por cerrar</h2>
+          <ul class="steps">
+            {toClose.map((e) => (
+              <li class="tone-info"><a href={`/expedientes/${e.id}/cierre`}><Icon name="info" /> {expLabel(e)} · {e.name}<Icon name="chevron-right" size={18} class="chev" /></a></li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section class="card">
+        <h2>Actividad reciente</h2>
+        {activity.length ? (
+          <ul class="activity">
+            {activity.map((a) => (
+              <li>
+                <time datetime={a.at}>{formatStamp(a.at)}</time>
+                <span><strong>{a.user_name ?? 'Alguien'}</strong> {a.action === 'note' ? 'escribió una nota en' : a.text} · <a href={`/expedientes/${a.expediente_id}`}>{a.number ? `EXP ${a.number}` : a.name}</a></span>
+              </li>
+            ))}
+          </ul>
+        ) : <p class="muted">Aún no hay actividad.</p>}
+      </section>
+    </div>
   </div>
 </App>
