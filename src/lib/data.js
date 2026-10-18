@@ -197,6 +197,24 @@ export function openInvoices(db, q = '') {
 }
 
 /**
+ * Lo que falta por facturar de cada expediente en marcha (solicitudes y abiertos): su presupuesto (la
+ * última versión, sin IVA) menos lo ya facturado o pedido (facturas no anuladas). Sale en cuanto se
+ * crea el expediente con su presupuesto. Con búsqueda opcional.
+ */
+export function toInvoiceByExpediente(db, q = '') {
+  return db.prepare(
+    `SELECT * FROM (
+       SELECT e.id, e.number, e.name, e.company, e.status, e.start_date, e.end_date, e.manager_id,
+              COALESCE((SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1), 0) AS budget_base,
+              (SELECT COALESCE(SUM(i.base_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status != 'anulada') AS invoiced_base
+         FROM expedientes e
+        WHERE e.status IN ('solicitado', 'abierto')
+     ) WHERE (?1 = '%%' OR name LIKE ?1 OR company LIKE ?1 OR CAST(number AS TEXT) LIKE ?1)
+     ORDER BY start_date, id`,
+  ).bind(likeTerm(q)).all().then((r) => r.results);
+}
+
+/**
  * PO con importe aún sin llevar a ninguna factura, de los expedientes que siguen en marcha
  * (en uno cerrado ya no se factura más); con búsqueda opcional.
  */

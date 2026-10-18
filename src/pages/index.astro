@@ -84,7 +84,7 @@ if (admin) {
   add({ tone: 'warn', rows: unsent, text: (n) => `${plural(n, 'factura emitida', 'facturas emitidas')} sin enviar al cliente`, name: (i) => i.number,
     href: '/cobros#cobrar', one: (i) => `${invHref(i)}#envio` });
   add({ tone: 'info', rows: pos, text: (n) => `${plural(n, 'PO', 'PO')} con importe sin facturar`, name: (po) => `${po.number} · ${expName(po)}`,
-    href: '/cobros#po', one: (po) => `/expedientes/${po.expediente_id}/facturas/nueva?po=${po.id}`, amount: 'left_cents' });
+    href: '/cobros#facturar', one: (po) => `/expedientes/${po.expediente_id}/facturas/nueva?po=${po.id}`, amount: 'left_cents' });
   add({ tone: 'info', rows: toClose, text: (n) => `${plural(n, 'expediente celebrado', 'expedientes celebrados')} por cerrar`, name: (e) => (e.number ? `EXP ${e.number}` : e.name),
     href: '/expedientes?ver=cerrar', one: (e) => `/expedientes/${e.id}/cierre`, amount: null });
 }

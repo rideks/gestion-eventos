@@ -285,3 +285,13 @@ test('orden del pago: la factura se conforma cuando están hechos todos los pago
   assert.equal(step.path, 'pagos/7#factura');
   assert.match(step.text, /1 pago hecho con la factura por conformar/);
 });
+
+test('por facturar: presupuesto menos lo facturado o pedido (o lo que quede en sus PO, si es más)', async () => {
+  const { leftToInvoice } = await import('../src/lib/finance.js');
+  assert.equal(leftToInvoice({ budget_base: 1975330, invoiced_base: 0 }), 1975330, 'expediente recién creado: todo el presupuesto');
+  assert.equal(leftToInvoice({ budget_base: 9640000, invoiced_base: 4820000 }), 4820000);
+  assert.equal(leftToInvoice({ budget_base: 9640000, invoiced_base: 9640000 }), 0, 'todo facturado');
+  assert.equal(leftToInvoice({ budget_base: 5000000, invoiced_base: 6000000 }), 0, 'facturado de más: nada por facturar');
+  assert.equal(leftToInvoice({ budget_base: 1000000, invoiced_base: 1000000 }, 250000), 250000, 'la PO trae más que el presupuesto');
+  assert.equal(leftToInvoice({}), 0, 'sin presupuesto ni PO');
+});

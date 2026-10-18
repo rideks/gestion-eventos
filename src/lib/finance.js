@@ -96,6 +96,12 @@ export function documentState(d, paid = true) {
     : { key: 'recibida', label: 'Factura recibida · espera al pago', tone: 'info' };
 }
 
+/**
+ * Lo que falta por facturar de un expediente (sin IVA): su presupuesto menos lo ya facturado o pedido;
+ * si en sus PO queda más sin facturar (el presupuesto se quedó corto), eso.
+ */
+export const leftToInvoice = ({ budget_base = 0, invoiced_base = 0 }, poLeft = 0) => Math.max(budget_base - invoiced_base, poLeft, 0);
+
 /** Envío al cliente de una factura emitida (y aún sin cobrar): enviada o sin enviar */
 export function sentState(i) {
   if (i.status !== 'emitida') return null;

@@ -1,20 +1,21 @@
 ---
-// Bandeja de facturación a clientes de TODOS los expedientes:
-//  · Pendientes: facturas pedidas por emitir, pendientes de cobro (vencidas primero) y PO aún sin facturar.
+// Bandeja de facturación a clientes de TODOS los expedientes, como un embudo:
+//  · Pendientes: 1. por facturar (presupuesto de cada expediente menos lo ya facturado, con sus PO) →
+//    2. facturas por emitir → 3. facturas por cobrar (vencidas primero).
 //  · Cobradas: el historial por meses, con buscador.
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
-import PoItem from '../components/PoItem.astro';
+import BillingItem from '../components/BillingItem.astro';
 import SearchBox from '../components/SearchBox.astro';
 import { actor, readForm, can } from '../lib/app.js';
-import { openInvoices, posWithBalance, collectedInvoices, byMonth } from '../lib/data.js';
+import { openInvoices, posWithBalance, collectedInvoices, byMonth, toInvoiceByExpediente } from '../lib/data.js';
 import { markCollected, isLocked } from '../lib/actions.js';
 import { formToObject } from '../lib/validate.js';
 import { eur } from '../lib/money.js';
 import { today, formatMonth } from '../lib/dates.js';
-import { plural } from '../lib/finance.js';
+import { plural, leftToInvoice } from '../lib/finance.js';
 
 const db = env.DB;
 const now = today();
@@ -36,61 +37,74 @@ if (Astro.request.method === 'POST') {
 }
 
 const pendingQ = view === 'pendientes' ? q : '';
-const [invoices, pos, collected] = await Promise.all([
-  openInvoices(db, pendingQ), posWithBalance(db, pendingQ), view === 'cobradas' ? collectedInvoices(db, q) : [],
+const [invoices, pos, expedientes, collected] = await Promise.all([
+  view === 'pendientes' ? openInvoices(db, pendingQ) : [],
+  view === 'pendientes' ? posWithBalance(db) : [],
+  view === 'pendientes' ? toInvoiceByExpediente(db, pendingQ) : [],
+  view === 'cobradas' ? collectedInvoices(db, q) : [],
 ]);
+// 1. Por facturar: cada expediente con lo que le falta (y sus PO con saldo, para facturarlas directamente)
+const posOf = new Map();
+for (const po of pos) posOf.set(po.expediente_id, [...(posOf.get(po.expediente_id) ?? []), po]);
+const toBill = expedientes
+  .map((e) => {
+    const its = posOf.get(e.id) ?? [];
+    const poLeft = its.reduce((a, po) => a + po.left_cents, 0);
+    return { ...e, pos: its, poLeft, left: leftToInvoice(e, poLeft) };
+  })
+  .filter((e) => e.left > 0);
 const months = byMonth(collected, 'collected_on');
 const toIssue = invoices.filter((i) => i.status === 'por_emitir');
 const toCollect = invoices.filter((i) => i.status === 'emitida');
 const overdue = toCollect.filter((i) => i.due_date && i.due_date < now);
 const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
+const managePoOf = (e) => managePo && !isLocked(e);
 ---
 <App title="Cobros" section="cobros" error={error} origin={view === 'cobradas' ? 'Cobradas' : 'Cobros pendientes'}>
   <div class="page-top">
     <div>
       <h1>Cobros a clientes</h1>
-      <p>Facturas por emitir, pendientes de cobro y PO que aún no se han facturado</p>
+      <p>Lo que falta por facturar de cada expediente, las facturas por emitir y las que falta cobrar</p>
     </div>
   </div>
 
   <nav class="x-tabs" aria-label="Cobros">
-    <a href="/cobros" aria-current={view === 'pendientes' ? 'page' : undefined}>Pendientes {toIssue.length + toCollect.length > 0 && <small class:list={{ 'is-alert': overdue.length > 0 }}>{toIssue.length + toCollect.length}</small>}</a>
+    <a href="/cobros" aria-current={view === 'pendientes' ? 'page' : undefined}>Pendientes</a>
     <a href="/cobros?ver=cobradas" aria-current={view === 'cobradas' ? 'page' : undefined}>Cobradas</a>
   </nav>
 
-  <SearchBox action="/cobros" view={view === 'cobradas' ? 'cobradas' : null} q={q} placeholder="Cliente, nº de factura, PO o expediente" />
-  {view === 'pendientes' && q && <p class="muted mt">{plural(toIssue.length + toCollect.length, 'factura', 'facturas')} y {plural(pos.length, 'PO', 'PO')} para «{q}»</p>}
+  <SearchBox action="/cobros" view={view === 'cobradas' ? 'cobradas' : null} q={q} placeholder="Cliente, expediente o nº de factura" />
+  {view === 'pendientes' && q && <p class="muted mt">{plural(toBill.length, 'expediente', 'expedientes')} por facturar y {plural(toIssue.length + toCollect.length, 'factura', 'facturas')} para «{q}»</p>}
 
   {view === 'pendientes' ? (
     <>
-      <div class="kpis mt">
-        <a class="kpi" href="#emitir"><span>Por emitir</span><b class="money">{eur(total(toIssue))}</b><small>{plural(toIssue.length, 'factura pedida', 'facturas pedidas')}</small></a>
-        <a class="kpi" href="#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(total(toCollect))}</b><small>{plural(toCollect.length, 'factura', 'facturas')}</small></a>
-        <a class:list={['kpi', { 'is-danger': overdue.length > 0 }]} href="#cobrar"><span>Cobro vencido</span><b class="money">{eur(total(overdue))}</b><small>{plural(overdue.length, 'factura', 'facturas')}</small></a>
-        <a class="kpi is-gold" href="#po"><span>PO sin facturar</span><b class="money">{eur(total(pos, 'left_cents'))}</b><small>{pos.length} PO · sin IVA</small></a>
-      </div>
-
-      <section id="emitir">
+      <section id="facturar" class="funnel-step">
         <div class="sec-head">
-          <h2><Icon name="send" /> Por emitir ({toIssue.length})</h2>
+          <h2><Icon name="folder" /> 1. Por facturar ({toBill.length})</h2>
+          {toBill.length > 0 && <span class="money"><strong>{eur(total(toBill, 'left'))}</strong> <span class="muted small">sin IVA</span></span>}
+          <p>Cada expediente sale aquí desde que se crea: su presupuesto menos lo ya facturado o pedido.{managePo ? ' Si tiene PO con saldo, se factura desde ella.' : ''}</p>
+        </div>
+        {toBill.length
+          ? <ul class="list">{toBill.map((e) => <BillingItem e={e} pos={e.pos} canIssue={admin} canInvoicePo={managePoOf(e)} />)}</ul>
+          : <p class="muted">{q ? 'Ningún expediente por facturar coincide.' : 'Todo lo presupuestado está facturado o pedido.'}</p>}
+      </section>
+
+      <section id="emitir" class="funnel-step">
+        <div class="sec-head">
+          <h2><Icon name="send" /> 2. Por emitir ({toIssue.length})</h2>
+          {toIssue.length > 0 && <span class="money"><strong>{eur(total(toIssue))}</strong></span>}
           <p>{admin ? 'Facturas pedidas o en borrador: revísalas, emítelas (el número se asigna solo) y envíalas al cliente.' : 'Facturas pedidas que Administración aún no ha emitido.'}</p>
         </div>
-        {toIssue.length ? <ul class="list">{toIssue.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay facturas pendientes de emitir.</p>}
+        {toIssue.length ? <ul class="list">{toIssue.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="muted">No hay facturas por emitir.</p>}
       </section>
 
-      <section id="cobrar">
+      <section id="cobrar" class="funnel-step">
         <div class="sec-head">
-          <h2><Icon name="banknote" /> Pendientes de cobro ({toCollect.length})</h2>
+          <h2><Icon name="banknote" /> 3. Por cobrar ({toCollect.length})</h2>
+          {toCollect.length > 0 && <span class="money"><strong>{eur(total(toCollect))}</strong>{overdue.length > 0 && <> <span class="pill pill-danger">{eur(total(overdue))} vencido</span></>}</span>}
+          <p>Facturas emitidas que el cliente aún no ha pagado; las vencidas, primero. Lo cobrado está en «Cobradas».</p>
         </div>
-        {toCollect.length ? <ul class="list">{toCollect.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay cobros pendientes.</p>}
-      </section>
-
-      <section id="po">
-        <div class="sec-head">
-          <h2><Icon name="file-text" /> PO sin facturar ({pos.length})</h2>
-          <p>Órdenes de compra recibidas con importe que aún no está en ninguna factura.</p>
-        </div>
-        {pos.length ? <ul class="list">{pos.map((po) => <PoItem po={po} showExp canInvoice={managePo && !isLocked({ status: po.exp_status })} />)}</ul> : <p class="empty">Todas las PO están facturadas.</p>}
+        {toCollect.length ? <ul class="list">{toCollect.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="muted">No hay facturas por cobrar.</p>}
       </section>
     </>
   ) : (

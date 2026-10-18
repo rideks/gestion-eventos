@@ -64,6 +64,10 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
   pendientes, **facturas de proveedor por revisar** y el **historial** de lo pagado y lo cobrado por meses.
   Para pagar por transferencia se adjunta el **justificante en la misma fila** (o desde el aviso, si falta) y queda
   pagado de una vez, sin entrar en la ficha.
+- **Cobros** es un embudo: **1. Por facturar** (cada expediente desde que se crea: su presupuesto menos lo ya
+  facturado o pedido, con «Crear factura» / «Pedir factura» y, para Administración, «Facturar PO» si tiene PO con
+  saldo) → **2. Por emitir** (facturas pedidas o en borrador) → **3. Por cobrar** (emitidas; las vencidas, primero).
+  Lo cobrado, en «Cobradas».
 - Cada pago, PO y factura tiene su **ficha** (botón «Ver»): de qué era, su documento, el desglose de IVA y
   cuándo se pagó o cobró. En la ficha de una PO: las facturas que la cubren, «Facturar», «Cerrar PO» y «Reabrir». En la ficha de un pago:
   arriba, sus datos con **«Modificar pago»** (se edita ahí mismo), «Otro pago a este proveedor» y «Borrar pago»; los **pasos

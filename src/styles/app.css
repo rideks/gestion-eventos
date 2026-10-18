@@ -682,3 +682,6 @@ fieldset.form-block > legend { margin-bottom: 4px; }
 /* Ficha del pago: «Modificar pago» se abre dentro de la tarjeta, debajo de sus botones */
 .actions-inline > details.edit-inline[open] { order: 99; }
 .edit-form { padding-top: 14px; border-top: 1px dashed var(--line-2); }
+/* Cobros: el embudo 1. por facturar → 2. por emitir → 3. por cobrar */
+section.funnel-step { margin-top: 28px; }
+section.funnel-step > .sec-head h2 + .money { margin-left: auto; }

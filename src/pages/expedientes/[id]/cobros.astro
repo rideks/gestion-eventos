@@ -91,7 +91,7 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
       <small>{s.poMissing > 0 ? `Faltan ${eur(s.poMissing)}` : 'Presupuesto cubierto'}</small>
       <progress class="bar is-gold" max="100" value={coverage}></progress>
     </div>
-    <div class="kpi"><span>Facturado</span><b class="money">{eur(s.invoiced.total)}</b><small>{s.toIssue.length ? `${s.toIssue.length} por emitir` : `${eur(s.invoiced.base)} sin IVA`}</small></div>
+    <div class="kpi"><span>Facturado</span><b class="money">{eur(s.invoiced.total)}</b><small>{s.sale.base > s.sales.base ? `Faltan ${eur(s.sale.base - s.sales.base)} por facturar` : s.toIssue.length ? `${s.toIssue.length} por emitir` : `${eur(s.invoiced.base)} sin IVA`}</small></div>
     <div class:list={['kpi', { 'is-ok': s.collected > 0, 'is-danger': s.overdueInvoices.length > 0 }]}>
       <span>Cobrado</span><b class="money">{eur(s.collected)}</b>
       <small>{s.toCollect ? `Pendiente ${eur(s.toCollect)}` : 'Nada pendiente'}</small>

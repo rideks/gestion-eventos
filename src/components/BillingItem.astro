@@ -1,0 +1,37 @@
+---
+// Un expediente con importe por facturar (bandeja de cobros): su presupuesto menos lo ya facturado o
+// pedido, y sus PO con saldo. Desde aquí se crea (o se pide) la factura, o se factura una PO.
+import Icon from './Icon.astro';
+import { eur } from '../lib/money.js';
+import { formatRange } from '../lib/dates.js';
+
+// e: fila de toInvoiceByExpediente + left (por facturar) y poLeft; pos: sus PO con saldo
+const { e, pos = [], canIssue = false, canInvoicePo = false, canEdit = true } = Astro.props;
+const href = `/expedientes/${e.id}/cobros`;
+const nueva = `/expedientes/${e.id}/facturas/nueva`;
+---
+<li class="item is-row">
+  <div class="item-body">
+    <a class="item-meta" href={href}><strong>{e.number ? `EXP ${e.number}` : 'Solicitud'}</strong> · {e.name}</a>
+    <a class="item-title" href={href}>{e.company}</a>
+    <span class="item-meta">
+      {(e.start_date || e.end_date) && <span>{formatRange(e.start_date, e.end_date)}</span>}
+      <span>{e.budget_base ? `Presupuesto ${eur(e.budget_base)}` : 'Sin presupuesto'}</span>
+      {e.invoiced_base > 0 && <span>Facturado o pedido {eur(e.invoiced_base)}</span>}
+      {e.poLeft > 0 && <span>PO sin facturar {eur(e.poLeft)}</span>}
+    </span>
+    {e.status === 'solicitado' && <span class="item-flags"><span class="pill pill-warn">Solicitud por abrir</span></span>}
+  </div>
+  <div class="item-amount">
+    <span class="big-money money">{eur(e.left)}</span>
+    <small>por facturar · sin IVA</small>
+  </div>
+  {canEdit && (
+    <div class="item-foot">
+      {canInvoicePo && pos.map((po) => (
+        <a class="btn btn-ghost btn-sm" href={`${nueva}?po=${po.id}`}><Icon name="file-text" size={16} /> Facturar PO {po.number} · {eur(po.left_cents)}</a>
+      ))}
+      <a class="btn btn-primary btn-sm" href={nueva}><Icon name="send" size={16} /> {canIssue ? 'Crear factura' : 'Pedir factura'}</a>
+    </div>
+  )}
+</li>
