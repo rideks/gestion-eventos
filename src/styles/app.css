@@ -679,10 +679,12 @@ fieldset.form-block > legend { margin-bottom: 4px; }
 /* Cobros: el embudo 1. por facturar → 2. por emitir → 3. por cobrar */
 section.funnel-step { margin-top: 28px; }
 section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
-@media (min-width: 760px) { .kpis.is-3 { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 760px) {
+  .kpis.is-3 { grid-template-columns: repeat(3, 1fr); }
+  .kpis.is-2 { grid-template-columns: repeat(2, 1fr); }
+}
 /* Cobros del expediente: cómo queda con el presupuesto vigente */
 .budget-impact { margin-bottom: 20px; box-shadow: inset 4px 0 0 var(--c2); }
 .budget-impact.is-alert { box-shadow: inset 4px 0 0 var(--danger); }
 .budget-impact p { color: var(--muted); margin-top: 4px; }
 .checks li.is-bad { color: var(--danger); }
-.input-narrow { max-width: 180px; }

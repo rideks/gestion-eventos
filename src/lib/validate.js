@@ -92,23 +92,8 @@ export const NumberSchema = z.object({
 // Los importes (con su desglose por tipos de IVA) se leen aparte: parseVatLines en src/lib/vat.js
 
 /** Presupuesto aprobado (cada versión) */
-/** Porcentaje opcional («15», «12,5», «15 %») → puntos básicos (1500), o null si se deja vacío */
-const optPercent = (label) => z.preprocess((v) => {
-  const t = String(v ?? '').trim().replace(/\s*%$/, '').replace(',', '.');
-  if (!t) return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN;
-}, z.number({ error: `${label}: escribe un porcentaje, por ejemplo 15 o 12,5` }).int()
-  .min(0, `${label}: mínimo 0 %`).max(10000, `${label}: máximo 100 %`).nullable());
-
 export const BudgetSchema = z.object({
   note: optText('Nota', 300),
-  margin: optPercent('Beneficio previsto'),
-});
-
-/** El beneficio previsto de la versión vigente del presupuesto (se puede añadir o cambiar después) */
-export const MarginSchema = z.object({
-  margin: optPercent('Beneficio previsto'),
 });
 
 /**

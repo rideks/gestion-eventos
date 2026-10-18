@@ -9,7 +9,6 @@ import { getExpediente, loadFinance, suggestNumber, numberTaken } from '../../..
 import { NumberSchema, NoteSchema, validate, formToObject } from '../../../lib/validate.js';
 import { nextSteps, plural } from '../../../lib/finance.js';
 import { eur, pct } from '../../../lib/money.js';
-import { pctText } from '../../../lib/vat.js';
 import { today, formatRange, formatStamp, nowIso } from '../../../lib/dates.js';
 import { isLocked } from '../../../lib/actions.js';
 
@@ -90,11 +89,10 @@ const mailto = `mailto:${admins.map((a) => a.email).join(',')}?subject=${encodeU
   `Hola:\n\nEl cliente ha aprobado el presupuesto de «${exp.name}» (${exp.company}, ${formatRange(exp.start_date, exp.end_date)}).\n`
   + `Importe: ${eur(s.sale.base)} sin IVA.\n\nLo tienes todo aquí para abrir el expediente:\n${link}\n`,
 )}`;
-const margin = s.sale.base ? s.expectedMargin : s.margin;
-// Beneficio previsto en el presupuesto vigente (%), para compararlo con el real
-const target = fin.budget?.margin_bp ?? null;
-const sold = s.sale.base || s.sales.base;
-const belowTarget = target !== null && sold > 0 && fin.payments.length > 0 && margin * 10000 < target * sold;
+// El beneficio sólo se calcula al cerrar el expediente (lo facturado − los costes, como en el cierre)
+const closed = exp.status === 'cerrado';
+const profit = s.closingSales.base - s.cost.base;
+const kpiCount = 2 + (closed ? 1 : 0) + (cobros ? 1 : 0);
 ---
 <App title={exp.number ? `EXP ${exp.number}` : exp.name} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="resumen" fin={fin} />
@@ -135,24 +133,24 @@ const belowTarget = target !== null && sold > 0 && fin.payments.length > 0 && ma
     </nav>
   )}
 
-  <div class:list={['kpis', { 'is-3': !cobros }]}>
+  <div class:list={['kpis', { 'is-3': kpiCount === 3, 'is-2': kpiCount === 2 }]}>
     <a class="kpi" href={`/expedientes/${id}/presupuesto`}>
       <span>Venta (presupuesto)</span>
       <b class="money">{eur(s.sale.base)}</b>
       <small class="money">{eur(s.sale.total)} con IVA{fin.budget && ` · v${fin.budget.version}`}</small>
-      <small>{target !== null ? `Beneficio previsto ${pctText(target)} %` : fin.budget ? 'Sin beneficio previsto' : ''}</small>
     </a>
     <a class="kpi" href={`/expedientes/${id}/pagos`}>
       <span>Coste</span>
       <b class="money">{eur(s.cost.base)}</b>
       <small class="money">{eur(s.cost.total)} con IVA · {plural(fin.payments.length, 'línea', 'líneas')}</small>
     </a>
-    <a class:list={['kpi is-gold', { 'is-danger': margin < 0 }]} href={`/expedientes/${id}/cierre`}>
-      <span>Beneficio</span>
-      <b class="money">{eur(margin)}</b>
-      <small>{pct(margin, s.sale.base || s.sales.base)} sobre la venta{target !== null && ` · previsto ${pctText(target)} %`}</small>
-      {belowTarget && <small class="warn-text">Por debajo de lo previsto</small>}
-    </a>
+    {closed && (
+      <a class:list={['kpi is-gold', { 'is-danger': profit < 0 }]} href={`/expedientes/${id}/cierre`}>
+        <span>Beneficio</span>
+        <b class="money">{eur(profit)}</b>
+        <small>{pct(profit, s.closingSales.base)} sobre la venta · al cierre</small>
+      </a>
+    )}
     {cobros && (
       <a class:list={['kpi', { 'is-ok': s.collected > 0 && s.collected >= s.sale.total }]} href={`/expedientes/${id}/cobros`}>
         <span>Cobrado</span>

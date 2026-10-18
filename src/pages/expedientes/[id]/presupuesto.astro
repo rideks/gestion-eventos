@@ -2,7 +2,6 @@
 // Presupuesto aprobado y sus versiones: "puede cambiar hasta el último momento".
 // Cada cambio se sube como versión nueva (archivo + total) y se ve qué ha cambiado.
 // Si a una versión le falta su documento, se le puede subir después desde su fila del historial.
-// Cada versión lleva su beneficio previsto (%), que se puede añadir o cambiar en la vigente.
 // Al guardar una versión nueva se ve cómo quedan los cobros: las PO y las facturas se mantienen y lo que
 // falta por facturar se recalcula con el presupuesto nuevo.
 import { env } from 'cloudflare:workers';
@@ -11,14 +10,13 @@ import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import VatLines from '../../../components/VatLines.astro';
 import FileField from '../../../components/FileField.astro';
-import MarginField from '../../../components/MarginField.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance } from '../../../lib/data.js';
-import { BudgetSchema, MarginSchema, validate, formToObject } from '../../../lib/validate.js';
-import { loadRates, parseVatLines, rawVatLines, linesOf, pctText } from '../../../lib/vat.js';
+import { BudgetSchema, validate, formToObject } from '../../../lib/validate.js';
+import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../lib/vat.js';
 import { billingStatus } from '../../../lib/finance.js';
 import { storeFile, getFile, fileUrl, ACCEPT, UploadError } from '../../../lib/files.js';
-import { eur, pct } from '../../../lib/money.js';
+import { eur } from '../../../lib/money.js';
 import { today, formatStamp } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG } from '../../../lib/actions.js';
 
@@ -35,38 +33,13 @@ let errors = {};
 let v = {};
 let lines = [];
 let attachFor = null; // versión a la que se intentaba subir el documento (para enseñar ahí el error)
-let marginError = false; // el error es del beneficio previsto de la vigente
-let marginInput = ''; // lo escrito, para volver a enseñarlo tras el error
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
 
-  if (input.intent === 'margin') {
-    // El beneficio previsto de la versión vigente
-    const parsed = validate(MarginSchema, input);
-    const b = await db.prepare('SELECT id, version, margin_bp FROM budgets WHERE expediente_id = ? ORDER BY version DESC LIMIT 1').bind(id).first();
-    if (locked) {
-      error = LOCKED_MSG;
-    } else if (!b) {
-      error = 'Este expediente aún no tiene presupuesto.';
-    } else if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-      marginError = true;
-      marginInput = String(input.margin ?? '');
-    } else {
-      const m = parsed.data.margin;
-      await db.batch([
-        db.prepare('UPDATE budgets SET margin_bp = ? WHERE id = ?').bind(m, b.id),
-        activityStmt(db, who, id, 'budget.margin', m === null
-          ? `quitó el beneficio previsto de la versión ${b.version} del presupuesto`
-          : `puso un beneficio previsto del ${pctText(m)} % a la versión ${b.version} del presupuesto`),
-      ]);
-      return Astro.redirect(`/expedientes/${id}/presupuesto?ok=guardado#v${b.version}`, 303);
-    }
-  } else if (input.intent === 'attach') {
+  if (input.intent === 'attach') {
     // El documento que faltaba en una versión ya guardada
     attachFor = Number(input.budget_id);
     const b = await db.prepare('SELECT id, version, file_id FROM budgets WHERE id = ? AND expediente_id = ?').bind(Number(input.budget_id), id).first();
@@ -115,8 +88,8 @@ if (Astro.request.method === 'POST') {
         const version = (last?.version ?? 0) + 1;
         const diff = last ? d.base - last.base_cents : 0;
         await db.batch([
-          db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, margin_bp, note, file_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(id, version, d.base, d.total, JSON.stringify(amounts.lines), d.margin, d.note, fileId, me.id),
+          db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, file_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(id, version, d.base, d.total, JSON.stringify(amounts.lines), d.note, fileId, me.id),
           activityStmt(db, who, id, 'budget.add', `subió la versión ${version} del presupuesto: ${eur(d.base)} sin IVA`
             + (last ? ` (${diff >= 0 ? '+' : ''}${eur(diff)})` : '') + (d.note ? `. ${d.note}` : '')),
         ]);
@@ -133,24 +106,20 @@ if (Astro.request.method === 'POST') {
 const fin = await loadFinance(db, id, now);
 const versions = fin.budgets;
 const s = fin.summary;
-const target = fin.budget?.margin_bp ?? null;
 // Recién guardada una versión: cómo quedan los cobros (las PO y las facturas se mantienen)
 const justSaved = versions.length && Number(Astro.url.searchParams.get('nueva')) === fin.budget.version ? fin.budget : null;
 const savedPrev = justSaved ? versions[1] ?? null : null;
 const billing = billingStatus({ budget_base: s.sale.base, invoiced_base: s.sales.base }, s.poLeft);
 const cobros = can(me, 'cobros');
 ---
-<App title={`Presupuesto · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={attachFor || marginError ? null : error} fieldErrors={marginError ? {} : errors}>
+<App title={`Presupuesto · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={attachFor ? null : error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="presupuesto" fin={fin} />
 
   {fin.budget ? (
-    <div class="kpis">
+    <div class="kpis is-3">
       <div class="kpi is-gold"><span>Vigente · v{fin.budget.version}</span><b class="money">{eur(fin.budget.base_cents)}</b>
-        <small class="money">{eur(fin.budget.total_cents)} con IVA</small>
-        <small>{target !== null ? `Beneficio previsto ${pctText(target)} %` : 'Sin beneficio previsto'}</small></div>
-      <div class="kpi"><span>Coste</span><b class="money">{eur(s.cost.base)}</b><small>sin IVA</small></div>
-      <div class:list={['kpi', { 'is-danger': s.expectedMargin < 0 }]}><span>Beneficio</span><b class="money">{eur(s.expectedMargin)}</b>
-        <small>{pct(s.expectedMargin, s.sale.base)} sobre la venta{target !== null && ` · previsto ${pctText(target)} %`}</small></div>
+        <small class="money">{eur(fin.budget.total_cents)} con IVA</small></div>
+      <div class="kpi"><span>Coste</span><b class="money">{eur(s.cost.base)}</b><small>sin IVA · el beneficio se calcula al cerrar</small></div>
       <div class="kpi"><span>Versiones</span><b>{versions.length}</b><small>{versions.length > 1 ? `la 1ª era de ${eur(versions[versions.length - 1].base_cents)}` : 'sin cambios'}</small></div>
     </div>
   ) : <p class="flash flash-warn"><Icon name="info" /> Este expediente aún no tiene presupuesto.</p>}
@@ -172,14 +141,13 @@ const cobros = can(me, 'cobros');
   )}
 
   {!locked && (
-    <details class="add" open={(!!error && !attachFor && !marginError) || Astro.url.searchParams.has('nuevo')}>
+    <details class="add" open={(!!error && !attachFor) || Astro.url.searchParams.has('nuevo')}>
       <summary class="btn btn-primary"><Icon name="upload" size={18} /> <span class="when-closed">Subir nueva versión</span><span class="when-open">Cerrar formulario</span></summary>
       <form method="post" enctype="multipart/form-data" class="form-section">
         <h2><Icon name="file-spreadsheet" /> Nueva versión del presupuesto</h2>
         <p class="muted">Cuando el cliente cambia algo (más habitaciones, otro menú…), sube el presupuesto actualizado: pasa a ser el vigente y se guarda el historial.</p>
         <FileField label="Presupuesto actualizado" />
         <VatLines id="budget" lines={lines} rates={rates} error={errors.amount} labelBase="Total sin IVA" labelTotal="Total con IVA" />
-        <MarginField value={v.margin ?? (target !== null ? pctText(target) : '')} error={marginError ? null : errors.margin} />
         <div class="field">
           <label for="note">¿Qué ha cambiado? <span class="opt">(opcional)</span></label>
           <input id="note" name="note" type="text" maxlength="300" value={v.note ?? ''} placeholder="+10 habitaciones el 05/05 y cena de gala" />
@@ -199,7 +167,7 @@ const cobros = can(me, 'cobros');
           <li class="item is-row" id={`v${b.version}`}>
             <div class="item-body">
               <span class="item-title">Versión {b.version}{i === 0 && <span class="pill pill-gold">Vigente</span>}</span>
-              <span class="item-meta"><span>{b.created_by_name ?? '—'} · {formatStamp(b.created_at)}</span>{b.note && <span>{b.note}</span>}{b.margin_bp != null && <span>Beneficio previsto {pctText(b.margin_bp)} %</span>}</span>
+              <span class="item-meta"><span>{b.created_by_name ?? '—'} · {formatStamp(b.created_at)}</span>{b.note && <span>{b.note}</span>}</span>
               {linesOf(b).length > 1 && (
                 <span class="item-meta">{linesOf(b).map((l) => <span>{l.label}: {eur(l.base)} → {eur(l.total)}</span>)}</span>
               )}
@@ -214,19 +182,6 @@ const cobros = can(me, 'cobros');
               <span class="big-money money">{eur(b.base_cents)}</span>
               <small class="money">{eur(b.total_cents)} con IVA</small>
             </div>
-            {i === 0 && !locked && (
-              <div class="item-foot">
-                <form method="post" class="quick-form">
-                  <input type="hidden" name="intent" value="margin" />
-                  <label for="vigente-margin">Beneficio previsto</label>
-                  <input id="vigente-margin" name="margin" type="text" inputmode="decimal" maxlength="7" class="input-narrow" placeholder="15"
-                    value={marginError ? marginInput : (b.margin_bp != null ? pctText(b.margin_bp) : '')} autocomplete="off" />
-                  <span class="muted">%</span>
-                  <button class="btn btn-ghost btn-sm" type="submit" data-busy="Guardando…">Guardar</button>
-                </form>
-                {marginError && <p class="field-error small">{error}</p>}
-              </div>
-            )}
             {!b.file_id && !locked && (
               <div class="item-foot">
                 <form method="post" enctype="multipart/form-data" class="quick-form">

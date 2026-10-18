@@ -4,6 +4,7 @@ import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
 import { LIST_COLUMNS } from '../../lib/data.js';
+import { can } from '../../lib/app.js';
 import { expedienteState, expLabel } from '../../lib/finance.js';
 import { eur, pct } from '../../lib/money.js';
 import { today, formatRange } from '../../lib/dates.js';
@@ -11,6 +12,7 @@ import { today, formatRange } from '../../lib/dates.js';
 const db = env.DB;
 const now = today();
 const me = Astro.locals.user;
+const cobros = can(me, 'cobros');
 const FILTERS = {
   curso: { label: 'En curso', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) >= ?", args: [now] },
   cerrar: { label: 'Por cerrar', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) < ?", args: [now] },
@@ -70,7 +72,9 @@ const counts = await db.prepare(
   {results.length ? (
     <ul class="list mt">
       {results.map((e) => {
-        const sale = e.sales_base || e.budget_base || 0;
+        // Venta: lo facturado (o el presupuesto); el beneficio sólo se calcula al cerrar, como en el cierre
+        const closed = e.status === 'cerrado';
+        const sale = ((cobros || closed) && e.sales_base) || e.budget_base || 0;
         const margin = sale - e.cost_base;
         return (
           <li>
@@ -86,12 +90,14 @@ const counts = await db.prepare(
                 <span class="item-flags">
                   <Pill state={expedienteState(e, now)} />
                   {e.to_pay > 0 && <span class="pill pill-muted">Por pagar {eur(e.to_pay)}</span>}
-                  {e.to_collect > 0 && <span class="pill pill-info">Por cobrar {eur(e.to_collect)}</span>}
+                  {cobros && e.to_collect > 0 && <span class="pill pill-info">Por cobrar {eur(e.to_collect)}</span>}
                 </span>
               </div>
               <div class="item-amount">
                 <span class="big-money money">{eur(sale)}</span>
-                <small class:list={['money', { neg: margin < 0 }]}>Beneficio {eur(margin)} · {pct(margin, sale)}</small>
+                {closed
+                  ? <small class:list={['money', { neg: margin < 0 }]}>Beneficio {eur(margin)} · {pct(margin, sale)}</small>
+                  : <small>sin IVA</small>}
               </div>
             </a>
           </li>
