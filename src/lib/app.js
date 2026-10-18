@@ -9,6 +9,7 @@ const ONLY = {
   'expediente.close': ['admin'],     // cerrar, reabrir y cancelar
   'invoice.issue': ['admin'],        // poner nº a una factura, marcarla cobrada o anularla
   'supplier.review': ['admin'],      // revisar y dar por buena una factura de proveedor
+  'payment.unpay': ['admin'],        // «Deshacer pagado» (un pago hecho no se puede modificar)
   'delete': ['admin'],               // borrar filas de otras personas
   'users': ['admin'],
   'settings': ['admin'],             // tipos de IVA y numeración
@@ -75,11 +76,12 @@ export const FLASH = {
   emitida: 'Factura emitida',
   cobrada: 'Cobro registrado',
   pedida: 'Factura pedida a Administración',
-  subida: 'Factura subida. Administración la revisará.',
+  subida: 'Factura subida. Administración la dará por conforme cuando el pago esté hecho.',
   revisada: 'Factura revisada: conforme',
   quitada: 'Documento quitado del pago',
   proforma: 'Proforma subida',
   justificante: 'Justificante subido',
+  deshecho: 'El pago vuelve a estar por pagar: corrígelo y márcalo pagado de nuevo',
   po_cerrada: 'PO cerrada: lo que quedaba sin facturar ya no cuenta como pendiente',
   po_reabierta: 'PO reabierta',
   nota: 'Nota añadida',

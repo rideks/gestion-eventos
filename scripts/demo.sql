@@ -136,6 +136,10 @@ UPDATE supplier_invoices SET total_cents = 347820 WHERE number = 'F000102/596';
 -- Recién subida por Marta: le sale a Tania en la campana para revisarla
 UPDATE supplier_invoices SET review = 'pendiente', reviewed_by = NULL, reviewed_at = NULL, uploaded_by = 2, uploaded_at = '2026-10-16T10:00:00Z'
  WHERE number = '0234 / 2026';
+-- Pago ya hecho (con tarjeta) cuya factura acaba de llegar: lista para conformar (sale en la campana).
+-- La de Gráficas Mercurio, en cambio, espera a que se haga su pago.
+UPDATE supplier_invoices SET review = 'pendiente', reviewed_by = NULL, reviewed_at = NULL, uploaded_by = 2, uploaded_at = '2026-10-17T09:30:00Z'
+ WHERE number = '33C5526E-962314';
 
 -- ── Actividad ─────────────────────────────────────────────────────────────
 INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUES
@@ -147,6 +151,7 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (1, 2, 'Marta López', 'invoice.request', 'pidió una factura a BMW Ibérica por 16.845,86 € con la PO 4500890045', '2026-10-15T09:00:00Z'),
   (1, 2, 'Marta López', 'note', 'BMW confirma que la PO de la cena ya está aprobada en su sistema: se puede facturar.', '2026-10-15T09:05:00Z'),
   (1, 2, 'Marta López', 'supplier_invoice.add', 'subió la factura 0234 / 2026 de Gráficas Mercurio (473,11 €) · pendiente de revisar', '2026-10-16T10:00:00Z'),
+  (1, 2, 'Marta López', 'supplier_invoice.add', 'subió la factura 33C5526E-962314 de Mentimeter (203,28 €) · pendiente de revisar', '2026-10-17T09:30:00Z'),
   (2, 1, 'Tania Ruiz', 'expediente.close', 'cerró el expediente: ventas 18.940,00 €, costes 15.655,95 €, beneficio 3.284,05 €', '2026-06-15T16:20:00Z'),
   (3, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 96.400,00 € sin IVA y 4 pagos previstos', '2026-09-20T10:00:00Z'),
   (3, 1, 'Tania Ruiz', 'expediente.open', 'abrió el expediente con el número 1289', '2026-09-21T08:15:00Z'),

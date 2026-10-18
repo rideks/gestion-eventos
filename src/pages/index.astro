@@ -69,6 +69,8 @@ const mine = (rows) => rows.filter((r) => r.exp_manager_id === me.id);
 const chase = mine(noInvoice);
 const toRequest = admin ? [] : mine(pos);
 const overdueCount = urgent.filter((p) => p.due_date < now).length;
+// Facturas que ya se pueden conformar (su pago está hecho)
+const ready = review.filter((si) => !si.unpaid_count);
 const toIssue = invoices.filter((i) => i.status === 'por_emitir');
 const toCollect = invoices.filter((i) => i.status === 'emitida');
 const overdueInvoices = toCollect.filter((i) => i.due_date && i.due_date < now);
@@ -115,13 +117,14 @@ const firstName = me.name.split(' ')[0];
           )}
         </section>
       )}
-      {reviewer && review.length > 0 && (
+      {reviewer && ready.length > 0 && (
         <section class="card card-alert">
           <div class="sec-head">
-            <h2><Icon name="bell" /> Facturas nuevas por revisar ({review.length})</h2>
+            <h2><Icon name="bell" /> Facturas por conformar ({ready.length})</h2>
             <a class="btn btn-ghost btn-sm" href="/pagos?ver=revisar">Ver todas</a>
           </div>
-          <ul class="list">{review.slice(0, 4).map((si) => <ReviewItem si={si} canReview />)}</ul>
+          <p class="muted small">De pagos ya hechos: comprueba la factura y dale a «Conforme».</p>
+          <ul class="list">{ready.slice(0, 4).map((si) => <ReviewItem si={si} canReview />)}</ul>
         </section>
       )}
       {admin && requests.length > 0 && (

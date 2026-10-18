@@ -26,6 +26,20 @@ export const RECEIPT_MISSING = 'Falta el justificante bancario de la transferenc
 /** Documentos del proveedor: facturas (Administración las revisa) y proformas (no avisan a nadie) */
 export const DOC_KINDS = { factura: 'Factura', proforma: 'Proforma' };
 
+// ── El orden de un pago: ① justificante → ② pagado → ③ factura conforme ──────
+export const WAITING_PAYMENT = 'Primero hay que hacer el pago (con su justificante): la factura se da por conforme después.';
+export const PAID_LOCKED = 'El pago ya está hecho y no se puede modificar. Si hay un error, Administración puede «Deshacer pagado».';
+
+/**
+ * ¿Se puede dar por conforme una factura? Sólo cuando están hechos todos los pagos que cubre.
+ * @param payments los pagos que cubre la factura ({ status })
+ * @returns {string | null} por qué no, o null si se puede
+ */
+export function conformBlocker(payments) {
+  if (!payments.length) return 'La factura no está en ningún pago.';
+  return payments.every((p) => p.status === 'pagado') ? null : WAITING_PAYMENT;
+}
+
 // ── Estados ────────────────────────────────────────────────────────────────
 // tone → clase .pill-<tone> (ok, warn, danger, info, accent, muted)
 
@@ -57,9 +71,11 @@ export function paymentState(p, now) {
  */
 export function supplierInvoiceState(p) {
   if (p.invoice_count > 0) {
-    return p.invoice_pending > 0
+    if (!p.invoice_pending) return { key: 'conforme', label: 'Con factura', tone: 'ok' };
+    // Se revisa cuando el pago está hecho: hasta entonces la factura sólo está recibida
+    return p.status === 'pagado'
       ? { key: 'revisar', label: 'Factura por revisar', tone: 'orange' }
-      : { key: 'conforme', label: 'Con factura', tone: 'ok' };
+      : { key: 'recibida', label: 'Factura recibida', tone: 'info' };
   }
   if (p.total_cents === 0 && !p.proforma_count) return null;
   if (p.status === 'pagado') return { key: 'falta', label: 'Falta factura', tone: 'danger' };
@@ -67,12 +83,17 @@ export function supplierInvoiceState(p) {
   return { key: 'sin', label: 'Sin factura', tone: 'muted' };
 }
 
-/** Estado de un documento del proveedor: proforma (sin revisión), factura por revisar o conforme */
-export function documentState(d) {
+/**
+ * Estado de un documento del proveedor: proforma (sin revisión), factura conforme, por revisar
+ * (el pago ya está hecho) o recibida (esperando al pago para revisarla).
+ * @param paid ¿están hechos los pagos que cubre?
+ */
+export function documentState(d, paid = true) {
   if (d.kind === 'proforma') return { key: 'proforma', label: 'Proforma', tone: 'info' };
-  return d.review === 'conforme'
-    ? { key: 'conforme', label: 'Factura conforme', tone: 'ok' }
-    : { key: 'revisar', label: 'Factura por revisar', tone: 'orange' };
+  if (d.review === 'conforme') return { key: 'conforme', label: 'Factura conforme', tone: 'ok' };
+  return paid
+    ? { key: 'revisar', label: 'Factura por revisar', tone: 'orange' }
+    : { key: 'recibida', label: 'Factura recibida · espera al pago', tone: 'info' };
 }
 
 export function invoiceState(i, now) {
@@ -177,9 +198,10 @@ export function nextSteps(e, s, now) {
     add('warn', 'cobros', `Hay ${eur(s.poLeft)} en PO sin facturar`, open, (p) => `po/${p.id}`);
   }
   if (s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto`, path: 'cobros?nuevo=po' });
-  if (s.toReview.length) {
-    const withPending = s.payments.filter((p) => p.invoice_pending > 0);
-    add('warn', 'pagos', `${plural(s.toReview.length, 'factura de proveedor', 'facturas de proveedor')} por revisar`, withPending, (p) => `pagos/${p.id}#factura`);
+  // Sólo las que ya se pueden conformar (el pago está hecho); las demás esperan a su pago
+  const toConform = s.payments.filter((p) => p.invoice_pending > 0 && p.status === 'pagado');
+  if (toConform.length) {
+    add('warn', 'pagos', `${plural(toConform.length, 'pago hecho', 'pagos hechos')} con la factura por conformar`, toConform, (p) => `pagos/${p.id}#factura`);
   }
   if (s.paidWithoutInvoice.length) add('info', 'pagos', `${plural(s.paidWithoutInvoice.length, 'pago hecho', 'pagos hechos')} sin la factura del proveedor`, s.paidWithoutInvoice, (p) => `pagos/${p.id}#factura`);
   if (!s.sale.base) steps.push({ tone: 'info', tab: 'presupuesto', text: 'Falta el presupuesto aprobado por el cliente', path: 'presupuesto' });

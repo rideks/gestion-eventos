@@ -2,7 +2,9 @@
 // Ficha de un pago a proveedor: de qué era, su desglose de IVA, el pago con su JUSTIFICANTE bancario
 // y sus DOCUMENTOS: facturas y proformas. Un pago puede tener varios (la proforma, la factura, otra
 // factura que sustituye a la anterior…) y un documento puede cubrir varios pagos (dos anticipos y una
-// única factura). Administración revisa las facturas; una factura conforme ya no se puede borrar.
+// única factura). Una factura conforme ya no se puede borrar.
+// El orden: ① justificante → ② pagado → ③ factura conforme. Un pago hecho ya no se modifica
+// (Administración puede «Deshacer pagado» para corregirlo) y la factura se conforma después del pago.
 import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
@@ -20,10 +22,10 @@ import {
   attachDocument, linkDocument, removeDocument, conformInvoice, dropIfOrphan, saveReceipt, removeReceipt,
 } from '../../../../lib/supplier.js';
 import { getFile, fileUrl, deleteFiles, UploadError } from '../../../../lib/files.js';
-import { paymentState, supplierInvoiceState, documentState, needsReceipt, PAYMENT_METHODS, DOC_KINDS } from '../../../../lib/finance.js';
+import { paymentState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, PAYMENT_METHODS, DOC_KINDS, PAID_LOCKED } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
 import { today, nowIso, formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
-import { isLocked, LOCKED_MSG, markPaid, paidProblem } from '../../../../lib/actions.js';
+import { isLocked, LOCKED_MSG, markPaid } from '../../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
@@ -45,10 +47,12 @@ const now = today();
 const locked = isLocked(exp);
 const admin = can(me, 'supplier.review');
 const withConforme = hasConformeInvoice(docs);
-// Un pago con una factura conforme no se borra (se borraría con él)
-const canDelete = !locked && !withConforme && (can(me, 'delete') || p.created_by === me.id);
-// El justificante de un pago ya hecho por transferencia sólo se cambia, no se quita
-const receiptLocked = p.status === 'pagado' && needsReceipt(p.method);
+const paid = p.status === 'pagado';
+// Un pago hecho no se modifica ni se borra; uno con una factura conforme tampoco se borra (se borraría con ella)
+const canDelete = !locked && !paid && !withConforme && (can(me, 'delete') || p.created_by === me.id);
+const canUnpay = !locked && paid && can(me, 'payment.unpay');
+// Al justificante de un pago hecho por transferencia no se le puede quitar
+const receiptLocked = paid && needsReceipt(p.method);
 const back = `/expedientes/${id}/pagos`;
 const self = `/expedientes/${id}/pagos/${pid}`;
 const docWarning = Astro.url.searchParams.get('aviso_doc');
@@ -77,7 +81,10 @@ if (Astro.request.method === 'POST') {
       error = r.message;
     } else if (input.intent === 'receipt') {
       const receipt = getFile(form, 'receipt');
-      if (!receipt) {
+      // En un pago hecho se puede añadir el justificante que falte, pero no cambiarlo
+      if (paid && p.receipt_file_id) {
+        error = PAID_LOCKED;
+      } else if (!receipt) {
         error = 'Elige el justificante (PDF o foto).';
         errors = { receipt: error };
       } else {
@@ -85,14 +92,27 @@ if (Astro.request.method === 'POST') {
         return Astro.redirect(`${self}?ok=justificante#justificante`, 303);
       }
     } else if (input.intent === 'receipt_remove' && p.receipt_file_id) {
-      if (receiptLocked) {
-        error = 'El pago ya está hecho por transferencia: el justificante se puede cambiar, pero no quitar.';
+      if (paid) {
+        error = PAID_LOCKED;
       } else {
         await removeReceipt({ db, bucket: env.DOCS, who, payment: p });
         return Astro.redirect(`${self}?ok=guardado#justificante`, 303);
       }
+    } else if (input.intent === 'unpay') {
+      if (!canUnpay) {
+        error = 'Sólo Administración puede deshacer un pago hecho.';
+      } else {
+        await db.batch([
+          db.prepare("UPDATE payments SET status = 'pendiente', paid_on = NULL, method = NULL, updated_at = ? WHERE id = ?").bind(nowIso(), pid),
+          activityStmt(db, who, id, 'payment.unpaid',
+            `deshizo el pago a ${p.supplier} (${eur(p.total_cents)}) del ${formatDate(p.paid_on)}: vuelve a estar por pagar`),
+        ]);
+        return Astro.redirect(`${self}?ok=deshecho#justificante`, 303);
+      }
     } else if (input.intent === 'delete') {
-      if (withConforme) {
+      if (paid) {
+        error = PAID_LOCKED;
+      } else if (withConforme) {
         error = 'Este pago tiene una factura conforme: no se puede borrar.';
       } else if (canDelete) {
         await db.batch([
@@ -145,37 +165,30 @@ if (Astro.request.method === 'POST') {
         error = r.message;
       }
     } else if (input.intent === 'save') {
+      // Sólo los datos del pago (proveedor, importe, fecha límite…); se paga en su paso, no aquí
       openEdit = true;
       v = { ...p, ...input };
       lines = rawVatLines(form);
-      const parsed = validate(PaymentSchema, input);
+      const parsed = validate(PaymentSchema, { ...input, status: 'pendiente' });
       const amounts = parseVatLines(form, rates);
-      const receipt = getFile(form, 'receipt');
-      const nowPaid = parsed.ok && parsed.data.status === 'pagado' && p.status !== 'pagado';
-      const paidIssue = nowPaid ? paidProblem({ method: parsed.data.method, hasReceipt: !!(p.receipt_file_id || receipt) }) : null;
-      if (!parsed.ok) {
+      if (paid) {
+        error = PAID_LOCKED;
+      } else if (!parsed.ok) {
         error = parsed.message;
         errors = parsed.errors;
       } else if (!amounts.ok) {
         error = amounts.message;
         errors = { amount: amounts.message };
-      } else if (paidIssue) {
-        error = paidIssue;
-        errors = parsed.data.method ? { receipt: paidIssue } : { method: paidIssue };
       } else {
         const d = parsed.data;
-        if (receipt && d.status === 'pagado') await saveReceipt({ db, bucket: env.DOCS, who, payment: p, file: receipt });
-        const what = [];
-        if (amounts.total !== p.total_cents) what.push(`importe ${eur(p.total_cents)} → ${eur(amounts.total)}`);
-        if (nowPaid) what.push('lo marcó como pagado');
-        if (d.status !== 'pagado' && p.status === 'pagado') what.push('lo volvió a dejar por pagar');
         await db.batch([
           db.prepare(
             `UPDATE payments SET supplier = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
-                    due_date = ?, status = ?, paid_on = ?, method = ?, notes = ?, updated_at = ? WHERE id = ?`,
+                    due_date = ?, notes = ?, updated_at = ? WHERE id = ?`,
           ).bind(d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
-            d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, d.notes, nowIso(), pid),
-          activityStmt(db, who, id, 'payment.update', `${what.length ? what.join(', ') : 'editó el pago'} · ${d.supplier}`),
+            d.due_date, d.notes, nowIso(), pid),
+          activityStmt(db, who, id, 'payment.update',
+            `${amounts.total !== p.total_cents ? `importe ${eur(p.total_cents)} → ${eur(amounts.total)}` : 'editó el pago'} · ${d.supplier}`),
         ]);
         return Astro.redirect(`${self}?ok=guardado`, 303);
       }
@@ -200,6 +213,31 @@ const linked = new Set(docs.map((d) => d.id));
 const choices = all.filter((d) => !linked.has(d.id)).sort((a, b) => (b.supplier === p.supplier) - (a.supplier === p.supplier));
 const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURIComponent(p.supplier)}`;
 const showUpload = openUpload || !docs.length;
+// ¿Están hechos todos los pagos que cubre el documento? (para conformar la factura)
+const docPaid = (d) => !conformBlocker(d.payment_count > 1 ? shared.get(d.id) ?? [] : [p]);
+const needed = needsReceipt(p.method);
+// ① justificante → ② pagado → ③ factura conforme
+const flow = [
+  {
+    n: 1, href: '#justificante', title: 'Justificante',
+    ...(p.receipt_file_id ? { state: 'is-done', text: 'Subido' }
+      : paid && needed ? { state: 'is-warn', text: 'Falta (pago por transferencia)' }
+      : paid ? { state: 'is-done', text: `No hace falta · ${PAYMENT_METHODS[p.method] ?? 'sin transferencia'}` }
+      : { state: 'is-current', text: 'Súbelo antes de pagar (si es por transferencia)' }),
+  },
+  {
+    n: 2, href: '#justificante', title: 'Pagado',
+    ...(paid ? { state: 'is-done', text: `El ${formatDate(p.paid_on)}${p.method ? ` · ${PAYMENT_METHODS[p.method]}` : ''}` }
+      : { state: p.receipt_file_id ? 'is-current' : 'is-waiting', text: p.due_date ? `Límite ${formatDate(p.due_date)}` : 'Sin fecha límite' }),
+  },
+  {
+    n: 3, href: '#factura', title: 'Factura conforme',
+    ...(p.invoice_count && !p.invoice_pending ? { state: 'is-done', text: 'Conforme' }
+      : p.invoice_pending ? (paid ? { state: 'is-current', text: 'Lista para conformar' } : { state: 'is-waiting', text: 'Recibida: se conforma después del pago' })
+      : paid ? { state: 'is-warn', text: 'Falta la factura del proveedor' }
+      : { state: 'is-waiting', text: p.proforma_count ? 'Hay proforma; falta la factura' : 'Cuando llegue la factura' }),
+  },
+];
 ---
 <App title={`${p.supplier} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="pagos" current={p.concept ? `${p.supplier} · ${p.concept}` : p.supplier} />
@@ -234,17 +272,29 @@ const showUpload = openUpload || !docs.length;
         )}
       </div>
     )}
-    {!locked && withConforme && <p class="muted small mt">Tiene una factura conforme: el pago no se puede borrar.</p>}
-    {!locked && !withConforme && !canDelete && <p class="muted small mt">Sólo Administración o quien añadió el pago puede borrarlo.</p>}
+    {!locked && paid && <p class="muted small mt"><Icon name="lock" size={14} /> El pago está hecho: no se puede modificar ni borrar.{!canUnpay && ' Si hay un error, avisa a Administración.'}</p>}
+    {!locked && !paid && withConforme && <p class="muted small mt">Tiene una factura conforme: el pago no se puede borrar.</p>}
+    {!locked && !paid && !withConforme && !canDelete && <p class="muted small mt">Sólo Administración o quien añadió el pago puede borrarlo.</p>}
   </section>
+
+  <ol class="flow-steps no-print" aria-label="Pasos del pago">
+    {flow.map((f) => (
+      <li class={f.state}>
+        <a href={f.href}>
+          <span class="flow-n" aria-hidden="true">{f.state === 'is-done' ? <Icon name="check" size={16} /> : f.n}</span>
+          <span class="flow-text"><strong>{f.n}. {f.title}</strong><small>{f.text}</small></span>
+        </a>
+      </li>
+    ))}
+  </ol>
 
   <section class="card mt" id="justificante">
     <div class="sec-head">
-      <h2><Icon name="banknote" /> Pago y justificante</h2>
+      <h2><Icon name="banknote" /> 1. Justificante · 2. Pago</h2>
       {receiptHref ? <span class="pill pill-ok">Con justificante</span>
         : receiptLocked ? <span class="pill pill-danger">Falta el justificante</span> : null}
     </div>
-    {p.status === 'pagado' && (
+    {paid && (
       <dl class="kv">
         <dt>Pagado</dt><dd>{formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</dd>
       </dl>
@@ -253,7 +303,7 @@ const showUpload = openUpload || !docs.length;
       <div class="doc-current mt">
         <Icon name="paperclip" size={16} />
         <a href={receiptHref} target="_blank" rel="noopener">{p.receipt_name}</a>
-        {!locked && !receiptLocked && (
+        {!locked && !paid && (
           <form method="post">
             <button class="btn btn-danger btn-sm" type="submit" name="intent" value="receipt_remove"
               data-confirm="¿Quitar el justificante? Se borra del expediente." data-confirm-ok="Quitar justificante"><Icon name="trash-2" size={14} /> Quitar</button>
@@ -261,13 +311,12 @@ const showUpload = openUpload || !docs.length;
         )}
       </div>
     )}
-    {!locked && (
+    {!locked && !paid && (
       <form method="post" enctype="multipart/form-data" class="form mt" data-has-receipt={p.receipt_file_id ? '1' : '0'}>
         <input type="hidden" name="payment_id" value={p.id} />
         <FileField id="pay-receipt" name="receipt" optional={false} label={p.receipt_file_id ? 'Cambiar el justificante' : 'Justificante bancario (PDF o foto)'}
-          hint={p.status === 'pagado' ? null : 'Obligatorio para marcar como pagado un pago por transferencia.'} />
-        {p.status !== 'pagado' ? (
-          <>
+          hint="Obligatorio para marcar como pagado un pago por transferencia." />
+        <>
             <div class="row row-2">
               <div class="field">
                 <label for="paid_on_quick">Fecha de pago</label>
@@ -284,18 +333,32 @@ const showUpload = openUpload || !docs.length;
               <button class="btn btn-primary" type="submit" name="intent" value="pay" data-receipt-check data-busy="Guardando…"><Icon name="check" size={18} /> Pagado</button>
               <button class="btn btn-ghost" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={18} /> Sólo subir el justificante</button>
             </div>
-          </>
-        ) : (
-          <div><button class="btn btn-ghost btn-sm" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={16} /> Subir justificante</button></div>
-        )}
+        </>
+      </form>
+    )}
+    {!locked && paid && !p.receipt_file_id && (
+      <details class="add mt" open={needed}>
+        <summary class="btn btn-ghost btn-sm"><Icon name="upload" size={16} /> {needed ? 'Añadir el justificante que falta' : 'Añadir justificante (opcional)'}</summary>
+        <form method="post" enctype="multipart/form-data" class="form-section">
+          <FileField id="pay-receipt" name="receipt" optional={false} label="Justificante (PDF o foto)" required />
+          <div><button class="btn btn-primary btn-sm" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={16} /> Subir justificante</button></div>
+        </form>
+      </details>
+    )}
+    {canUnpay && (
+      <form method="post" class="actions-inline mt">
+        <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="unpay"
+          data-confirm="¿Deshacer el pago? Vuelve a quedar por pagar para corregir lo que esté mal (importe, fecha, justificante) y se apunta en la actividad."
+          data-confirm-ok="Deshacer pagado"><Icon name="rotate-ccw" size={16} /> Deshacer pagado</button>
+        <span class="muted small">Sólo para corregir un error: el pago vuelve a «Por pagar».</span>
       </form>
     )}
   </section>
 
   <section class="card mt" id="factura">
     <div class="sec-head">
-      <h2><Icon name="paperclip" /> Facturas y proformas {invState && <Pill state={invState} />}</h2>
-      <p>Las facturas las revisa Administración; las proformas no avisan a nadie. Una factura conforme no se puede borrar.</p>
+      <h2><Icon name="paperclip" /> 3. Facturas y proformas {invState && <Pill state={invState} />}</h2>
+      <p>La factura se da por conforme cuando el pago está hecho. Las proformas no avisan a nadie. Una factura conforme no se puede borrar.</p>
     </div>
 
     {docs.length ? (
@@ -307,7 +370,7 @@ const showUpload = openUpload || !docs.length;
           return (
             <li class="doc">
               <div class="doc-head">
-                <Pill state={documentState(d)} />
+                <Pill state={documentState(d, docPaid(d))} />
                 <strong>{d.number ? `${DOC_KINDS[d.kind]} ${d.number}` : `${DOC_KINDS[d.kind]} sin número`}</strong>
                 {d.issued_on && <span class="muted">· {formatDate(d.issued_on)}</span>}
                 {d.total_cents != null && <span class="money">· {eur(d.total_cents)}</span>}
@@ -317,7 +380,8 @@ const showUpload = openUpload || !docs.length;
                 Subido por {d.uploaded_by_name ?? '—'} · {formatStamp(d.uploaded_at)}
                 {d.kind === 'factura' && (d.review === 'conforme'
                   ? <> · Conforme ({d.reviewed_by_name ?? '—'}{d.reviewed_at && `, ${formatStamp(d.reviewed_at)}`})</>
-                  : <> · <span class="warn-text">pendiente de que Administración la revise</span></>)}
+                  : docPaid(d) ? <> · <span class="warn-text">pendiente de que Administración la revise</span></>
+                  : <> · se revisa cuando el pago esté hecho</>)}
               </p>
               {d.notes && <p class="doc-note"><Icon name="message-square" size={15} /> {d.notes}</p>}
               {covered.length > 1 && (
@@ -331,7 +395,10 @@ const showUpload = openUpload || !docs.length;
 
               {!locked && (
                 <div class="actions-inline doc-actions no-print">
-                  {admin && d.kind === 'factura' && d.review !== 'conforme' && (
+                  {admin && d.kind === 'factura' && d.review !== 'conforme' && !docPaid(d) && (
+                    <span class="muted small"><Icon name="lock" size={14} /> Se conforma cuando {d.payment_count > 1 ? 'todos los pagos que cubre estén hechos' : 'el pago esté hecho'}</span>
+                  )}
+                  {admin && d.kind === 'factura' && d.review !== 'conforme' && docPaid(d) && (
                     <form method="post" class="quick-form">
                       <input type="hidden" name="intent" value="doc_conform" />
                       <input type="hidden" name="document_id" value={d.id} />
@@ -395,13 +462,13 @@ const showUpload = openUpload || !docs.length;
     )}
   </section>
 
-  {!locked && (
+  {!locked && !paid && (
     <details class="add mt" open={openEdit}>
       <summary class="btn btn-ghost"><Icon name="pencil" size={18} /> <span class="when-closed">Editar el pago</span><span class="when-open">Cerrar edición</span></summary>
-      <form method="post" enctype="multipart/form-data" class="form-section" data-has-receipt={p.receipt_file_id ? '1' : '0'} data-was-paid={p.status === 'pagado' ? '1' : '0'}>
-        <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} receipt={!p.receipt_file_id} id="edit" />
+      <form method="post" class="form-section">
+        <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} withStatus={false} id="edit" />
         <div class="actions-inline">
-          <button class="btn btn-primary" type="submit" name="intent" value="save" data-receipt-check="status" data-busy="Guardando…">Guardar cambios</button>
+          <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…">Guardar cambios</button>
         </div>
       </form>
     </details>

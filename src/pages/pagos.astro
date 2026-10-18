@@ -53,6 +53,9 @@ const [pending, noInvoice, review, paid] = await Promise.all([
   invoicesToReview(db, view === 'revisar' ? q : ''),
   view === 'pagados' ? paidPayments(db, q) : [],
 ]);
+// Se conforman las de pagos ya hechos; las demás esperan a su pago
+const ready = review.filter((si) => !si.unpaid_count);
+const waiting = review.filter((si) => si.unpaid_count > 0);
 const soonLimit = addDays(now, SOON_DAYS);
 const monthLimit = addDays(now, 30);
 const groups = [
@@ -75,7 +78,7 @@ const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura
 
   <nav class="x-tabs" aria-label="Pagos">
     <a href="/pagos" aria-current={view === 'pendientes' ? 'page' : undefined}>Pendientes</a>
-    <a href="/pagos?ver=revisar" aria-current={view === 'revisar' ? 'page' : undefined}>Facturas por revisar {review.length > 0 && <small class="is-alert">{review.length}</small>}</a>
+    <a href="/pagos?ver=revisar" aria-current={view === 'revisar' ? 'page' : undefined}>Facturas por revisar {ready.length > 0 && <small class="is-alert">{ready.length}</small>}</a>
     <a href="/pagos?ver=pagados" aria-current={view === 'pagados' ? 'page' : undefined}>Pagados</a>
   </nav>
 
@@ -121,11 +124,23 @@ const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura
   {view === 'revisar' && (
     <>
       <p class="muted mt">{reviewer
-        ? 'Facturas que ha subido el equipo. Abre el documento, comprueba que es correcta, anota su número y dale a «Conforme»: el pago pasa a «Con factura».'
-        : 'Facturas subidas que Administración aún no ha revisado.'}</p>
-      {review.length
-        ? <ul class="list mt">{review.map((si) => <ReviewItem si={si} canReview={reviewer} />)}</ul>
-        : <p class="empty mt">{q ? 'No hay facturas por revisar que coincidan.' : <><Icon name="circle-check" /> No hay facturas pendientes de revisar.</>}</p>}
+        ? 'El orden es: justificante → pagado → conforme. Las facturas de pagos ya hechos: abre el documento, comprueba que es correcta, anota su número y dale a «Conforme».'
+        : 'Facturas subidas que Administración aún no ha revisado. Se conforman cuando el pago está hecho.'}</p>
+      <section class="review-group">
+        <div class="sec-head"><h2><Icon name="circle-check" /> Listas para conformar ({ready.length})</h2></div>
+        {ready.length
+          ? <ul class="list">{ready.map((si) => <ReviewItem si={si} canReview={reviewer} />)}</ul>
+          : <p class="empty">{q ? 'Ninguna coincide.' : 'No hay facturas de pagos ya hechos pendientes de conformar.'}</p>}
+      </section>
+      {waiting.length > 0 && (
+        <section class="review-group">
+          <div class="sec-head">
+            <h2><Icon name="clock" /> Esperando el pago ({waiting.length})</h2>
+            <p>Facturas recibidas de pagos que aún no se han hecho: primero el justificante y «Pagado», luego se conforman.</p>
+          </div>
+          <ul class="list">{waiting.map((si) => <ReviewItem si={si} canReview={reviewer} />)}</ul>
+        </section>
+      )}
     </>
   )}
 

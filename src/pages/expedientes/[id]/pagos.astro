@@ -85,7 +85,7 @@ if (Astro.request.method === 'POST') {
         const payment = await db.prepare(
           `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines,
                                  due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, status`,
         ).bind(id, d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
           d.due_date, d.status, paid ? d.paid_on : null, paid ? d.method : null, receiptId, d.notes, me.id).first();
         await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${d.supplier} (${eur(amounts.total)})${paid ? ' ya pagado' : ''}`).run();

@@ -2,6 +2,7 @@
 // Una factura de proveedor pendiente de revisar (bandeja de Administración). Las proformas no salen aquí.
 // Acceso directo al documento y, para Administración, «Conforme» con su número en la misma fila.
 // Si el pago ya tenía otra factura conforme, se avisa y se ve el comentario de por qué se ha subido otra.
+// Si el pago que cubre aún no está hecho, la factura espera: se va al pago (justificante → pagado) y luego se conforma.
 import Icon from './Icon.astro';
 import { eur } from '../lib/money.js';
 import { formatStamp } from '../lib/dates.js';
@@ -11,6 +12,8 @@ const { si, canReview = false } = Astro.props;
 const doc = fileUrl({ file_id: si.file_id, file_name: si.file_name });
 const payment = `/expedientes/${si.expediente_id}/pagos/${si.first_payment_id}#factura`;
 const closed = si.exp_status === 'cerrado';
+const waiting = si.unpaid_count > 0;
+const toPay = `/expedientes/${si.expediente_id}/pagos/${si.first_payment_id}#justificante`;
 ---
 <li class="item is-row">
   <div class="item-body">
@@ -22,7 +25,9 @@ const closed = si.exp_status === 'cerrado';
     </span>
     {si.notes && <p class="doc-note"><Icon name="message-square" size={15} /> {si.notes}</p>}
     <span class="item-flags">
-      <span class="pill pill-orange">Por revisar</span>
+      {waiting
+        ? <span class="pill pill-info">Esperando el pago</span>
+        : <span class="pill pill-orange">Lista para conformar</span>}
       {si.replaces_conforme ? <span class="pill pill-warn">Otra factura: ya había una conforme</span> : null}
       {si.total_cents != null && (si.total_cents === si.payments_total
         ? <span class="pill pill-ok">La factura cuadra con los pagos</span>
@@ -35,7 +40,9 @@ const closed = si.exp_status === 'cerrado';
   </div>
   <div class="item-foot">
     {doc ? <a class="btn btn-ghost btn-sm" href={doc} target="_blank" rel="noopener"><Icon name="file-text" size={16} /> Ver documento</a> : <span class="muted small">Sin documento</span>}
-    {canReview && !closed ? (
+    {waiting ? (
+      <a class="btn btn-ghost btn-sm" href={toPay}><Icon name="banknote" size={16} /> Ir al pago</a>
+    ) : canReview && !closed ? (
       <form method="post" class="quick-form">
         <input type="hidden" name="intent" value="conform" />
         <input type="hidden" name="supplier_invoice_id" value={si.id} />

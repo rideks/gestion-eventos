@@ -8,7 +8,8 @@ import { PAYMENT_METHODS } from '../lib/finance.js';
 
 // lines: desglose por tipos de IVA (guardado o lo escrito antes de un error)
 // receipt: muestra el campo del justificante bancario (si se marca «Ya pagado» por transferencia)
-const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [], receipt = false } = Astro.props;
+// withStatus: «Por pagar / Ya pagado» (en el alta); en la ficha se paga en su paso, no al editar
+const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [], receipt = false, withStatus = true } = Astro.props;
 const status = v.status ?? 'pendiente';
 ---
 <div class="row row-2">
@@ -30,6 +31,7 @@ const status = v.status ?? 'pendiente';
     <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
     <p class="hint">Sale en la bandeja de pagos ordenado por esta fecha.</p>
   </div>
+  {withStatus && (
   <fieldset class="field">
     <legend class="label">Estado</legend>
     <div class="segmented">
@@ -37,7 +39,9 @@ const status = v.status ?? 'pendiente';
       <label><input type="radio" name="status" value="pagado" checked={status === 'pagado'} />Ya pagado</label>
     </div>
   </fieldset>
+  )}
 </div>
+{withStatus && (
 <div class="paid-only" data-paid-only>
   <div class="row row-2">
     <div class:list={['field', { 'has-error': errors.paid_on }]}>
@@ -54,6 +58,7 @@ const status = v.status ?? 'pendiente';
   </div>
   {receipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} />}
 </div>
+)}
 <div class:list={['field', { 'has-error': errors.notes }]}>
   <label for={`${id}-notes`}>Notas <span class="opt">(opcional)</span></label>
   <textarea id={`${id}-notes`} name="notes" class="short" maxlength="1000">{v.notes ?? ''}</textarea>

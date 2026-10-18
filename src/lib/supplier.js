@@ -14,7 +14,7 @@ import { activityStmt, can } from './app.js';
 import { storeFile, deleteFiles } from './files.js';
 import { eur } from './money.js';
 import { formatDate, nowIso } from './dates.js';
-import { DOC_KINDS } from './finance.js';
+import { DOC_KINDS, conformBlocker } from './finance.js';
 
 const DOC_COLUMNS = `si.*, f.name AS file_name, u.name AS uploaded_by_name, r.name AS reviewed_by_name,
   (SELECT COUNT(*) FROM payment_documents x WHERE x.document_id = si.id) AS payment_count`;
@@ -91,7 +91,8 @@ export async function dropIfOrphan(db, bucket, documentId) {
 export async function attachDocument({ db, bucket, who, payment, file, data }) {
   const fileId = file ? await storeFile({ db, bucket, file, expedienteId: payment.expediente_id, userId: who.user.id }) : null;
   const invoice = data.kind === 'factura';
-  const conforme = invoice && can(who.user, 'supplier.review') && !!data.number;
+  // Si la sube Administración con su número y el pago ya está hecho, queda conforme
+  const conforme = invoice && can(who.user, 'supplier.review') && !!data.number && payment.status === 'pagado';
   const at = nowIso();
   const d = await db.prepare(
     `INSERT INTO supplier_invoices (expediente_id, kind, supplier, number, issued_on, total_cents, file_id, review, reviewed_by, reviewed_at, uploaded_by, uploaded_at, notes)
@@ -145,6 +146,11 @@ export async function conformInvoice({ db, who, invoiceId, data }) {
   const si = await getDocument(db, invoiceId);
   if (!si) return { ok: false, message: 'Esa factura ya no existe.' };
   if (si.kind !== 'factura') return { ok: false, message: 'Las proformas no se revisan.' };
+  const { results: covered } = await db.prepare(
+    'SELECT p.status FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id WHERE pd.document_id = ?',
+  ).bind(si.id).all();
+  const blocked = conformBlocker(covered);
+  if (blocked) return { ok: false, message: blocked };
   const exp = await db.prepare('SELECT status FROM expedientes WHERE id = ?').bind(si.expediente_id).first();
   if (exp?.status === 'cerrado' || exp?.status === 'cancelado') return { ok: false, message: 'El expediente está cerrado: reábrelo para cambiar algo.' };
   const at = nowIso();

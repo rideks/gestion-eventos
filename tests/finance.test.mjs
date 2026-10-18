@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, documentState, needsReceipt, nextNumber } from '../src/lib/finance.js';
+import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, nextNumber } from '../src/lib/finance.js';
 import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, SupplierDocSchema, ConformSchema, PaySchema, parseAllocations, validate } from '../src/lib/validate.js';
 import { paidProblem } from '../src/lib/actions.js';
 import { formatRange, dueText, addDays, isDate } from '../src/lib/dates.js';
@@ -81,7 +81,8 @@ test('nextSteps y closingChecks', () => {
   assert.match(steps[0].text, /1 pago vencido/);
   assert.ok(steps.some((x) => /por emitir/.test(x.text)));
   assert.ok(steps.some((x) => /PO sin facturar/.test(x.text)));
-  assert.ok(steps.some((x) => /1 factura de proveedor por revisar/.test(x.text)));
+  // La factura pendiente es de un pago sin hacer (el 3): aún no se puede conformar, no es un paso
+  assert.ok(!steps.some((x) => /por conformar/.test(x.text)));
   // Si el paso es de una sola cosa, lleva directamente a su ficha
   const path = (re) => steps.find((x) => re.test(x.text)).path;
   assert.equal(path(/pago vencido/), 'pagos/3');
@@ -90,7 +91,6 @@ test('nextSteps y closingChecks', () => {
   assert.equal(path(/por emitir/), 'facturas/22');
   assert.equal(path(/PO sin facturar/), 'po/11');
   assert.equal(path(/Faltan PO/), 'cobros?nuevo=po');
-  assert.equal(path(/por revisar/), 'pagos/3#factura');
   assert.equal(path(/sin la factura/), 'pagos/5#factura');
   assert.deepEqual(nextSteps({ status: 'cerrado' }, s, NOW), []);
   assert.ok(closingChecks(s).every((c) => !c.ok));
@@ -176,17 +176,20 @@ test('fechas', () => {
 test('factura del proveedor: sin factura, proforma, por revisar (naranja) y con factura (verde)', () => {
   assert.equal(supplierInvoiceState({ status: 'pendiente', total_cents: 100 }).key, 'sin');
   assert.deepEqual(supplierInvoiceState({ status: 'pagado', total_cents: 100 }), { key: 'falta', label: 'Falta factura', tone: 'danger' });
-  assert.deepEqual(supplierInvoiceState({ invoice_count: 1, invoice_pending: 1, total_cents: 100 }), { key: 'revisar', label: 'Factura por revisar', tone: 'orange' });
+  // Factura sin revisar: «recibida» mientras el pago no está hecho; «por revisar» (naranja) cuando ya lo está
+  assert.deepEqual(supplierInvoiceState({ status: 'pendiente', invoice_count: 1, invoice_pending: 1, total_cents: 100 }), { key: 'recibida', label: 'Factura recibida', tone: 'info' });
+  assert.deepEqual(supplierInvoiceState({ status: 'pagado', invoice_count: 1, invoice_pending: 1, total_cents: 100 }), { key: 'revisar', label: 'Factura por revisar', tone: 'orange' });
   assert.deepEqual(supplierInvoiceState({ invoice_count: 1, invoice_pending: 0, total_cents: 100 }), { key: 'conforme', label: 'Con factura', tone: 'ok' });
   assert.equal(supplierInvoiceState({ status: 'pagado', total_cents: 0 }), null);
   // Proforma: no es una factura (si ya está pagado, sigue faltando la factura)
   assert.deepEqual(supplierInvoiceState({ status: 'pendiente', proforma_count: 1, total_cents: 100 }), { key: 'proforma', label: 'Con proforma', tone: 'info' });
   assert.equal(supplierInvoiceState({ status: 'pagado', proforma_count: 1, total_cents: 100 }).key, 'falta');
   // Otra factura subida después de una conforme: vuelve a estar por revisar (naranja)
-  assert.equal(supplierInvoiceState({ invoice_count: 2, invoice_pending: 1, total_cents: 100 }).key, 'revisar');
+  assert.equal(supplierInvoiceState({ status: 'pagado', invoice_count: 2, invoice_pending: 1, total_cents: 100 }).key, 'revisar');
   assert.equal(documentState({ kind: 'proforma', review: 'pendiente' }).label, 'Proforma');
   assert.equal(documentState({ kind: 'factura', review: 'pendiente' }).tone, 'orange');
   assert.equal(documentState({ kind: 'factura', review: 'conforme' }).tone, 'ok');
+  assert.equal(documentState({ kind: 'factura', review: 'pendiente' }, false).key, 'recibida');
 });
 
 test('por revisar: sólo las facturas pendientes (no las proformas), cada una una vez aunque cubra dos pagos', () => {
@@ -253,4 +256,25 @@ test('PO cerrada: su resto deja de contar como pendiente y no se puede facturar'
   // Una PO abierta se sigue facturando por su saldo
   const open = summarize({ budget, payments, pos, invoices, allocations }, NOW);
   assert.deepEqual(parseAllocations(form([['po_ids', '11']]), open.poRows), { ok: true, rows: [{ po_id: 11, amount: 3390220 - 1998000 }] });
+});
+
+test('orden del pago: la factura se conforma cuando están hechos todos los pagos que cubre', () => {
+  assert.equal(conformBlocker([{ status: 'pagado' }]), null);
+  assert.equal(conformBlocker([{ status: 'pagado' }, { status: 'pagado' }]), null);
+  assert.match(conformBlocker([{ status: 'pendiente' }]), /Primero hay que hacer el pago/);
+  // Una factura para dos pagos (transferencia + tarjeta): hasta que estén los dos, no
+  assert.match(conformBlocker([{ status: 'pagado' }, { status: 'pendiente' }]), /Primero/);
+  assert.ok(conformBlocker([]));
+  // Paso «por conformar» con enlace directo al pago hecho
+  const s = summarize({
+    payments: [
+      { id: 7, invoice_count: 1, invoice_pending: 1, base_cents: 100, total_cents: 121, status: 'pagado' },
+      { id: 8, invoice_count: 1, invoice_pending: 1, base_cents: 100, total_cents: 121, status: 'pendiente' },
+    ],
+    documents: [{ id: 1, kind: 'factura', review: 'pendiente' }, { id: 2, kind: 'factura', review: 'pendiente' }],
+    budget: { base_cents: 1000, total_cents: 1210 },
+  }, NOW);
+  const step = nextSteps({ status: 'abierto' }, s, NOW).find((x) => /por conformar/.test(x.text));
+  assert.equal(step.path, 'pagos/7#factura');
+  assert.match(step.text, /1 pago hecho con la factura por conformar/);
 });

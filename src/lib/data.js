@@ -102,12 +102,21 @@ export async function activeUsers(db) {
   return results;
 }
 
-/** Contadores de la navegación: solicitudes por abrir, pagos urgentes, facturas por emitir y por revisar */
+// Factura (alias si) lista para conformar: está en algún pago y todos los que cubre están hechos
+const READY_TO_CONFORM = `EXISTS (SELECT 1 FROM payment_documents pd WHERE pd.document_id = si.id)
+  AND NOT EXISTS (SELECT 1 FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id
+                   WHERE pd.document_id = si.id AND p.status != 'pagado')`;
+
+/**
+ * Contadores de la navegación: solicitudes por abrir, pagos urgentes, facturas por emitir y facturas
+ * de proveedor por conformar (sólo las que ya se pueden: con el pago hecho).
+ */
 export function navCounts(db, now) {
   return db.prepare(
     `SELECT (SELECT COUNT(*) FROM expedientes WHERE status = 'solicitado') AS requests,
             (SELECT COUNT(*) FROM supplier_invoices si JOIN expedientes e ON e.id = si.expediente_id
-              WHERE si.kind = 'factura' AND si.review = 'pendiente' AND e.status != 'cancelado') AS to_review,
+              WHERE si.kind = 'factura' AND si.review = 'pendiente' AND e.status != 'cancelado'
+                AND ${READY_TO_CONFORM}) AS to_review,
             (SELECT COUNT(*) FROM payments p JOIN expedientes e ON e.id = p.expediente_id
               WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND p.due_date <= ?) AS urgent,
             (SELECT COUNT(*) FROM invoices i JOIN expedientes e ON e.id = i.expediente_id
@@ -152,6 +161,7 @@ export function paidWithoutInvoice(db, q = '') {
 /**
  * Facturas de proveedor pendientes de revisar por Administración (las más antiguas primero),
  * con los pagos que cubren. Las proformas no se revisan.
+ * unpaid_count: pagos que cubre aún sin hacer (hasta que se hagan, la factura espera: no se puede conformar).
  * replaces_conforme: el pago ya tenía otra factura conforme (se ha subido otra; su motivo va en notes).
  */
 export function invoicesToReview(db, q = '') {
@@ -160,6 +170,8 @@ export function invoicesToReview(db, q = '') {
             (SELECT COUNT(*) FROM payment_documents pd WHERE pd.document_id = si.id) AS payment_count,
             (SELECT COALESCE(SUM(p.total_cents), 0) FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id WHERE pd.document_id = si.id) AS payments_total,
             (SELECT MIN(pd.payment_id) FROM payment_documents pd WHERE pd.document_id = si.id) AS first_payment_id,
+            (SELECT COUNT(*) FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id
+              WHERE pd.document_id = si.id AND p.status != 'pagado') AS unpaid_count,
             EXISTS (SELECT 1 FROM payment_documents pd JOIN payment_documents o ON o.payment_id = pd.payment_id AND o.document_id != si.id
                       JOIN supplier_invoices od ON od.id = o.document_id
                      WHERE pd.document_id = si.id AND od.kind = 'factura' AND od.review = 'conforme') AS replaces_conforme
