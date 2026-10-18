@@ -87,12 +87,12 @@ const mailto = `mailto:${admins.map((a) => a.email).join(',')}?subject=${encodeU
 )}`;
 const margin = s.sale.base ? s.expectedMargin : s.margin;
 ---
-<App title={exp.number ? `EXP ${exp.number}` : exp.name} section="expedientes" error={error}>
+<App title={exp.number ? `EXP ${exp.number}` : exp.name} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="resumen" fin={fin} />
 
   {exp.status === 'solicitado' && (
     admin ? (
-      <form method="post" class="form-section">
+      <form method="post" class="form-section solicitud-box">
         <h2><Icon name="inbox" /> Solicitud pendiente de abrir</h2>
         <p class="muted">La pidió {exp.requested_by_name ?? 'alguien del equipo'} el {formatStamp(exp.requested_at)}. Revisa los datos, el presupuesto y la previsión de pagos y dale número.</p>
         <div class="row row-2">

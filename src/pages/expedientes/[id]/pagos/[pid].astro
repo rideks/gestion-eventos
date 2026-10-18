@@ -201,7 +201,7 @@ const choices = all.filter((d) => !linked.has(d.id)).sort((a, b) => (b.supplier 
 const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURIComponent(p.supplier)}`;
 const showUpload = openUpload || !docs.length;
 ---
-<App title={`${p.supplier} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
+<App title={`${p.supplier} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="pagos" current={p.concept ? `${p.supplier} · ${p.concept}` : p.supplier} />
 
   <section class="card">

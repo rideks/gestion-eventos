@@ -57,7 +57,7 @@ if (Astro.request.method === 'POST') {
 const { n: sessions } = await db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND expires_at > ?')
   .bind(me.id, nowSeconds()).first();
 ---
-<App title="Mi cuenta" section="cuenta" error={error}>
+<App title="Mi cuenta" section="cuenta" error={error} fieldErrors={errors}>
   <div class="page-top">
     <div>
       <h1>Mi cuenta</h1>

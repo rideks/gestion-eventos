@@ -71,7 +71,7 @@ if (Astro.request.method === 'POST') {
 const fin = await loadFinance(db, id, now);
 const versions = fin.budgets;
 ---
-<App title={`Presupuesto · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
+<App title={`Presupuesto · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="presupuesto" fin={fin} />
 
   {fin.budget ? (

@@ -127,7 +127,7 @@ const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'dang
   : po.closed ? { label: 'Cerrada', tone: 'muted' }
   : { label: `Sin facturar ${eur(left)}`, tone: 'warn' };
 ---
-<App title={`PO ${po.number}`} section="expedientes" error={error}>
+<App title={`PO ${po.number}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="cobros" current={`PO ${po.number}`} />
 
   <section class="card">

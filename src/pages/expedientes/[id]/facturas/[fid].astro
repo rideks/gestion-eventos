@@ -148,7 +148,7 @@ const { companies } = await suggestions(db);
 const state = invoiceState(inv, now);
 const poList = fin.allocations.filter((a) => a.invoice_id === fid);
 ---
-<App title={inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} section="expedientes" error={error}>
+<App title={inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="cobros" current={inv.number ? `Factura ${inv.number}` : 'Factura por emitir'} />
 
   <section class="card">
@@ -199,7 +199,8 @@ const poList = fin.allocations.filter((a) => a.invoice_id === fid);
         allocated={allocated} checked={checked} id="edit" />
       <div class="actions-inline">
         {inv.status === 'por_emitir' && admin && (
-          <button class="btn btn-primary" type="submit" name="intent" value="issue" data-busy="Emitiendo…"><Icon name="send" size={18} /> Guardar como emitida</button>
+          <button class="btn btn-primary" type="submit" name="intent" value="issue" data-busy="Emitiendo…"
+            data-requires="#edit-number" data-requires-msg="Para emitirla: Nº de factura: es obligatorio"><Icon name="send" size={18} /> Guardar como emitida</button>
         )}
         <button class:list={['btn', inv.status === 'por_emitir' && admin ? 'btn-ghost' : 'btn-primary']} type="submit" name="intent" value="save" data-busy="Guardando…">Guardar</button>
         {canDelete && <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" formnovalidate data-confirm="¿Borrar esta factura? No se puede deshacer." data-confirm-ok="Borrar factura"><Icon name="trash-2" size={16} /> Borrar</button>}

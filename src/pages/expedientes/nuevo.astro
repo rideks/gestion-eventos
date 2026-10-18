@@ -97,7 +97,7 @@ if (Astro.request.method === 'POST') {
 
 const [{ companies, suppliers }, users, suggested] = await Promise.all([suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null]);
 ---
-<App title="Nueva solicitud" section="nuevo" error={error}>
+<App title="Nueva solicitud" section="nuevo" error={error} fieldErrors={errors}>
   <div class="page-top">
     <div>
       <h1>Nueva solicitud</h1>

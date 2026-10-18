@@ -132,7 +132,7 @@ const poByInvoice = new Map();
 for (const a of fin.allocations) poByInvoice.set(a.invoice_id, [...(poByInvoice.get(a.invoice_id) ?? []), a.po_number]);
 const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.base) * 100) : 0;
 ---
-<App title={`Cobros · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error}>
+<App title={`Cobros · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="cobros" fin={fin} />
 
   <div class="kpis">

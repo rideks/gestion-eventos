@@ -33,7 +33,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 84px; } /* los saltos a #… no quedan bajo la cabecera fija */
 body {
   margin: 0; min-height: 100dvh; background: var(--bg); color: var(--text);
   font-family: var(--font); font-size: 1.0625rem; line-height: 1.5;
@@ -240,6 +240,12 @@ a.item:hover { border-color: var(--line-2); }
 .field .hint { color: var(--muted); font-size: 0.87rem; }
 .field .error { color: var(--danger); font-size: 0.9rem; font-weight: 600; }
 .field.has-error input, .field.has-error select, .field.has-error textarea { border-color: var(--danger); }
+.has-error .segmented label, .has-error .dropzone { border-color: var(--danger); }
+/* Aviso junto al campo (del navegador o del servidor) */
+.field-error { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--danger-bg); color: var(--danger); font-weight: 600; font-size: 0.9rem; line-height: 1.35; }
+.field-error svg { flex: none; margin-top: 1px; }
+/* La solicitud por abrir, separada de los botones de añadir */
+.solicitud-box { margin-bottom: 20px; }
 .field input[type='color'] { width: 64px; height: 50px; padding: 4px; border: 1.5px solid var(--line-2); border-radius: 12px; background: #fff; cursor: pointer; }
 .color-row { display: flex; align-items: center; gap: 12px; }
 .color-row code { font-size: 0.95rem; color: var(--muted); }

@@ -53,7 +53,7 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
           {!p.receipt_file_id && (
             <label class="btn btn-ghost btn-sm file-btn" title="Justificante bancario (obligatorio si es por transferencia)">
               <Icon name="paperclip" size={16} /><span data-file-button>Justificante</span>
-              <input type="file" name="receipt" accept={ACCEPT} class="visually-hidden" />
+              <input type="file" name="receipt" accept={ACCEPT} class="visually-hidden" title="" />
             </label>
           )}
           <button class="btn btn-sm" type="submit" data-receipt-check data-busy="Guardando…"><Icon name="check" size={16} /> Pagado</button>

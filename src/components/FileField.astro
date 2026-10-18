@@ -5,10 +5,10 @@ import { ACCEPT, MAX_FILE_BYTES, fileUrl } from '../lib/files.js';
 
 // removable: botón «Quitar» junto al documento actual (envía intent=remove_file en el mismo formulario)
 // optional: «(opcional)» junto a la etiqueta si no es obligatorio (no se pone si depende de otra cosa)
-const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, optional = true } = Astro.props;
+const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, optional = true, error = null } = Astro.props;
 const href = fileUrl(current);
 ---
-<div class="field">
+<div class:list={['field', { 'has-error': error }]}>
   <span class="label">{label}{!required && optional && <span class="opt"> (opcional)</span>}</span>
   {href && (
     <p class="file-current">
@@ -26,7 +26,7 @@ const href = fileUrl(current);
     <Icon name="upload" size={22} />
     <strong data-file-label>Toca para elegir o arrastra aquí el archivo</strong>
     <span class="small">PDF, foto, Excel, Word o correo · máx. {MAX_FILE_BYTES / 1024 / 1024} MB</span>
-    <input id={id} name={name} type="file" accept={ACCEPT} required={required} />
+    <input id={id} name={name} type="file" accept={ACCEPT} required={required} title="" data-invalid="Elige el archivo (PDF o foto)." />
   </label>
   {hint && <p class="hint">{hint}</p>}
 </div>

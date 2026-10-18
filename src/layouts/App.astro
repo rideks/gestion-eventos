@@ -14,7 +14,9 @@ import { can, FLASH } from '../lib/app.js';
 
 // origin: las bandejas (Inicio, Pagos, Cobros, Expedientes, búsqueda) se recuerdan con este nombre para
 // que dentro de un expediente salga «Volver a …» con la bandeja de la que se vino (y sus filtros)
-const { title = 'Inicio', section = '', error = null, notice = null, wide = false, origin = null } = Astro.props;
+// fieldErrors: los errores de cada campo ({ number: 'Nº de factura: es obligatorio' }): salen debajo del campo
+const { title = 'Inicio', section = '', error = null, notice = null, wide = false, origin = null, fieldErrors = null } = Astro.props;
+const fieldErrorsJson = fieldErrors && Object.keys(fieldErrors).length ? JSON.stringify(fieldErrors) : undefined;
 const user = Astro.locals.user;
 const company = env.COMPANY_NAME || 'Seven Worlds';
 // Ya pedidos en el middleware (en paralelo con la página); si no, aquí
@@ -54,7 +56,7 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <slot name="head" />
   </head>
-  <body data-origin={origin ?? undefined}>
+  <body data-origin={origin ?? undefined} data-field-errors={fieldErrorsJson}>
     <header class="a-header">
       <a class="a-brand" href="/">
         <img src="/brand/logo.png" alt={`${company} · Events & Congresses`} width="105" height="50" />
@@ -131,6 +133,10 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         </div>
       </form>
     </dialog>
+
+    <template id="field-error-tpl">
+      <p class="field-error" role="alert"><Icon name="circle-alert" size={16} /><span data-field-error-text></span></p>
+    </template>
 
     <dialog id="alert-dialog" class="confirm-dialog" aria-labelledby="alert-text">
       <form method="dialog">
@@ -279,6 +285,96 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         try {
           sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ href: here(), label: document.body.dataset.origin }));
         } catch { /* sin almacenamiento */ }
+      }
+
+      // ── Errores de los formularios: debajo del campo, y la página va hasta él ──────────────
+      // Lo comprueba el navegador antes de enviar (campo vacío, opción sin elegir…) y el servidor
+      // después; en los dos casos el aviso sale junto al campo, no arriba del todo.
+      const errorTpl = document.getElementById('field-error-tpl');
+      const fieldOf = (el) => el.closest('fieldset.field, .field') ?? el.parentElement;
+      const showFieldError = (field, text) => {
+        if (!field || !(errorTpl instanceof HTMLTemplateElement)) return;
+        field.classList.add('has-error');
+        let box = field.querySelector(':scope > .field-error');
+        if (!box) {
+          box = errorTpl.content.firstElementChild.cloneNode(true);
+          field.append(box);
+        }
+        box.querySelector('[data-field-error-text]').textContent = text;
+      };
+      const goTo = (field, control) => {
+        field.closest('details:not([open])')?.setAttribute('open', '');
+        field.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (control instanceof HTMLElement) control.focus({ preventScroll: true });
+      };
+      // Al corregir el campo, el aviso se quita
+      const clearFieldError = (e) => {
+        const field = e.target instanceof Element ? e.target.closest('.has-error') : null;
+        if (!field) return;
+        field.classList.remove('has-error');
+        field.querySelector(':scope > .field-error')?.remove();
+      };
+      document.addEventListener('input', clearFieldError);
+      document.addEventListener('change', clearFieldError);
+
+      // 1. Del navegador: en vez de su globo (que queda debajo de la cabecera), el aviso propio
+      let jumped = false;
+      document.addEventListener('invalid', (e) => {
+        const control = e.target;
+        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) return;
+        e.preventDefault();
+        const field = fieldOf(control);
+        showFieldError(field, control.dataset.invalid || control.validationMessage);
+        if (!jumped) {
+          jumped = true;
+          goTo(field, control);
+          setTimeout(() => { jumped = false; }, 0);
+        }
+      }, true);
+
+      // Botones que necesitan un campo que en otros casos es opcional (p. ej. «Guardar como emitida» y el nº):
+      // <button data-requires="#id" data-requires-msg="…">. Se avisa sin enviar, así no se pierde el PDF elegido.
+      document.addEventListener('submit', (e) => {
+        const btn = e.submitter;
+        const selector = btn instanceof HTMLElement ? btn.dataset.requires : null;
+        if (!selector || !(e.target instanceof HTMLFormElement)) return;
+        const control = e.target.querySelector(selector);
+        if (!(control instanceof HTMLInputElement) || control.value.trim()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const field = fieldOf(control);
+        showFieldError(field, btn.dataset.requiresMsg || 'Este campo es obligatorio.');
+        goTo(field, control);
+      }, true);
+
+      // 2. Del servidor: los campos marcados reciben su mensaje y se va al primero
+      const serverErrors = (() => {
+        try {
+          return JSON.parse(document.body.dataset.fieldErrors ?? '{}');
+        } catch {
+          return {};
+        }
+      })();
+      const flash = document.querySelector('.flash-error');
+      const marked = [...document.querySelectorAll('.a-main .has-error')];
+      let firstMarked = null;
+      for (const field of marked) {
+        const inVat = field.closest('[data-vat-lines]');
+        const names = [...field.querySelectorAll('[name]')].map((i) => i.getAttribute('name'));
+        const key = inVat ? 'amount' : names.find((n) => serverErrors[n]);
+        if (!key || !serverErrors[key]) continue;
+        // El importe ya muestra su error en la línea de IVA
+        if (!inVat) {
+          const fieldText = serverErrors[key];
+          const general = flash?.textContent.trim() ?? '';
+          showFieldError(field, !firstMarked && general.includes(fieldText) ? general : fieldText);
+        }
+        firstMarked ??= field;
+      }
+      if (firstMarked) {
+        // El aviso de arriba sobra: el mismo mensaje está junto al campo
+        flash?.setAttribute('hidden', '');
+        goTo(firstMarked, firstMarked.querySelector('input:not([type="hidden"]), select, textarea'));
       }
 
       // Evita el doble envío (y da feedback mientras se suben documentos)

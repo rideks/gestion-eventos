@@ -13,8 +13,8 @@ const total = typeof v.invoice_total === 'string' ? v.invoice_total : amountInpu
 <fieldset class:list={['field', { 'has-error': errors.doc_kind }]}>
   <legend class="label">¿Qué documento es?</legend>
   <div class="segmented">
-    <label><input type="radio" name="doc_kind" value="factura" checked={v.doc_kind === 'factura'} required={fileRequired} /><Icon name="receipt" />Factura</label>
-    <label><input type="radio" name="doc_kind" value="proforma" checked={v.doc_kind === 'proforma'} /><Icon name="file-text" />Proforma</label>
+    <label><input type="radio" name="doc_kind" value="factura" checked={v.doc_kind === 'factura'} required={fileRequired} data-invalid="Elige si el documento es una factura o una proforma." /><Icon name="receipt" />Factura</label>
+    <label><input type="radio" name="doc_kind" value="proforma" checked={v.doc_kind === 'proforma'} required={fileRequired} data-invalid="Elige si el documento es una factura o una proforma." /><Icon name="file-text" />Proforma</label>
   </div>
   <p class="hint">La factura la revisa Administración (le llega el aviso). La proforma se guarda sin avisar a nadie.</p>
 </fieldset>

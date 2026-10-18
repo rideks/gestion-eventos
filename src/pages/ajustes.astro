@@ -80,7 +80,7 @@ const [rates, first, next] = await Promise.all([
   suggestNumber(db),
 ]);
 ---
-<App title="Ajustes" section="ajustes" error={error}>
+<App title="Ajustes" section="ajustes" error={error} fieldErrors={errors}>
   <div class="page-top">
     <div>
       <h1>Ajustes</h1>

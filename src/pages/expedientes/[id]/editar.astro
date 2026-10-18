@@ -62,7 +62,7 @@ if (Astro.request.method === 'POST') {
 
 const [{ companies }, users] = await Promise.all([suggestions(db), activeUsers(db)]);
 ---
-<App title="Editar datos" section="expedientes" error={error}>
+<App title="Editar datos" section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="resumen" current="Editar datos" />
   <div class="flash flash-warn">
     <Icon name="info" />
