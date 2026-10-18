@@ -63,8 +63,8 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
   pendientes, **facturas de proveedor por revisar** y el **historial** de lo pagado y lo cobrado por meses.
   Para pagar por transferencia se adjunta el **justificante en la misma fila** (o desde el aviso, si falta) y queda
   pagado de una vez, sin entrar en la ficha.
-- **Resumen del expediente**: «Venta (presupuesto)» y «Coste», iguales para los dos perfiles; Administración ve además
-  «Cobrado». El **beneficio** no se calcula mientras el expediente está en marcha (los costes y las ventas aún cambian):
+- **Resumen del expediente**: «Presupuesto» (el vigente; igual en la pestaña Presupuesto) y «Coste», iguales para los
+  dos perfiles; Administración ve además «Cobrado». El **beneficio** no se calcula mientras el expediente está en marcha (los costes y las ventas aún cambian):
   sale en **Cierre** y, una vez cerrado, también en el resumen y en la lista de expedientes. En la pestaña Cobros,
   «Con el presupuesto vigente» resume cómo queda tras un cambio de versión, con «Crear factura por lo que falta» (el
   importe ya repartido con los tipos de IVA del presupuesto) y «Subir PO por la diferencia».

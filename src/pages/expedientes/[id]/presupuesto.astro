@@ -117,8 +117,8 @@ const cobros = can(me, 'cobros');
 
   {fin.budget ? (
     <div class="kpis is-3">
-      <div class="kpi is-gold"><span>Vigente · v{fin.budget.version}</span><b class="money">{eur(fin.budget.base_cents)}</b>
-        <small class="money">{eur(fin.budget.total_cents)} con IVA</small></div>
+      <div class="kpi is-gold"><span>Presupuesto</span><b class="money">{eur(fin.budget.base_cents)}</b>
+        <small class="money">{eur(fin.budget.total_cents)} con IVA · v{fin.budget.version}</small></div>
       <div class="kpi"><span>Coste</span><b class="money">{eur(s.cost.base)}</b><small>sin IVA · el beneficio se calcula al cerrar</small></div>
       <div class="kpi"><span>Versiones</span><b>{versions.length}</b><small>{versions.length > 1 ? `la 1ª era de ${eur(versions[versions.length - 1].base_cents)}` : 'sin cambios'}</small></div>
     </div>

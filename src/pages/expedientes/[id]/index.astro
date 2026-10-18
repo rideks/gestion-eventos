@@ -135,7 +135,7 @@ const kpiCount = 2 + (closed ? 1 : 0) + (cobros ? 1 : 0);
 
   <div class:list={['kpis', { 'is-3': kpiCount === 3, 'is-2': kpiCount === 2 }]}>
     <a class="kpi" href={`/expedientes/${id}/presupuesto`}>
-      <span>Venta (presupuesto)</span>
+      <span>Presupuesto</span>
       <b class="money">{eur(s.sale.base)}</b>
       <small class="money">{eur(s.sale.total)} con IVA{fin.budget && ` · v${fin.budget.version}`}</small>
     </a>
