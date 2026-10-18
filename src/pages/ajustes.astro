@@ -1,11 +1,14 @@
 ---
-// Ajustes (sólo Administración): los tipos de IVA que salen en todos los desplegables
-// y el primer número de expediente.
+// Ajustes (sólo Administración): los tipos de IVA que salen en todos los desplegables,
+// el primer número de expediente y la facturación al cliente (formato y próximo nº de factura,
+// datos de la empresa que salen en las facturas).
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import { deny, readForm, actor, logActivity } from '../lib/app.js';
-import { VatRateSchema, FirstNumberSchema, validate, formToObject } from '../lib/validate.js';
+import { VatRateSchema, FirstNumberSchema, InvoiceSettingsSchema, validate, formToObject } from '../lib/validate.js';
+import { invoiceSettings, peekInvoiceNumber, patternProblem, counterKey, nextSeq, formatInvoiceNumber, yearly } from '../lib/invoicing.js';
+import { today } from '../lib/dates.js';
 import { loadRates, pctText } from '../lib/vat.js';
 import { suggestNumber } from '../lib/data.js';
 
@@ -13,6 +16,7 @@ const denied = deny(Astro, 'settings');
 if (denied) return denied;
 
 const db = env.DB;
+const year = Number(today().slice(0, 4));
 let error = null;
 let errors = {};
 let v = {};
@@ -59,6 +63,41 @@ if (Astro.request.method === 'POST') {
       await logActivity(db, who, null, 'settings.vat', `quitó el tipo de IVA ${rate.label}`);
       return Astro.redirect('/ajustes?ok=borrado', 303);
     }
+  } else if (input.intent === 'invoicing') {
+    v = input;
+    const parsed = validate(InvoiceSettingsSchema, input);
+    const bad = parsed.ok ? patternProblem(parsed.data.invoice_pattern) : null;
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (bad) {
+      error = bad;
+      errors = { invoice_pattern: bad };
+    } else {
+      const d = parsed.data;
+      // No se puede volver a un número ya usado: la numeración tiene que ser correlativa y sin repetir
+      const { results } = await db.prepare('SELECT number FROM invoices WHERE number IS NOT NULL').all();
+      const lowest = nextSeq({ pattern: d.invoice_pattern, year, numbers: results.map((r) => r.number) });
+      if (d.invoice_next < lowest) {
+        error = `Próximo número: ya hay facturas hasta la ${formatInvoiceNumber(d.invoice_pattern, lowest - 1, year)}; tiene que ser ${lowest} o más.`;
+        errors = { invoice_next: error };
+      } else {
+        const upsert = (key, value) => db.prepare(
+          "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+        ).bind(key, String(value ?? ''));
+        await db.batch([
+          upsert('invoice_pattern', d.invoice_pattern),
+          upsert(counterKey(d.invoice_pattern, year), d.invoice_next),
+          upsert('company_legal_name', d.company_legal_name),
+          upsert('company_tax_id', d.company_tax_id),
+          upsert('company_address', d.company_address),
+          upsert('company_iban', d.company_iban),
+          upsert('company_email', d.company_email),
+        ]);
+        await logActivity(db, who, null, 'settings.invoicing', `cambió la facturación: próxima factura ${formatInvoiceNumber(d.invoice_pattern, d.invoice_next, year)}`);
+        return Astro.redirect('/ajustes?ok=guardado#facturacion', 303);
+      }
+    }
   } else if (input.intent === 'first_number') {
     const parsed = validate(FirstNumberSchema, input);
     if (!parsed.ok) {
@@ -74,10 +113,12 @@ if (Astro.request.method === 'POST') {
   if (error) Astro.response.status = 400;
 }
 
-const [rates, first, next] = await Promise.all([
+const [rates, first, next, billing, nextInvoice] = await Promise.all([
   loadRates(db),
   db.prepare("SELECT value FROM settings WHERE key = 'first_number'").first().then((r) => r?.value ?? '1001'),
   suggestNumber(db),
+  invoiceSettings(db),
+  peekInvoiceNumber(db, year),
 ]);
 ---
 <App title="Ajustes" section="ajustes" error={error} fieldErrors={errors}>
@@ -133,6 +174,50 @@ const [rates, first, next] = await Promise.all([
       </div>
     </form>
   </section>
+
+  <form method="post" class="form-section mt" id="facturacion">
+    <h2><Icon name="receipt" /> Facturas al cliente</h2>
+    <p class="muted">El número se asigna solo al emitir cada factura, correlativo y sin repetir. La próxima será la <strong>{nextInvoice.number}</strong>.{yearly(billing.pattern) && ' Como el formato lleva el año, cada año vuelve a empezar en 1.'}</p>
+    <div class="row row-2">
+      <div class:list={['field', { 'has-error': errors.invoice_pattern }]}>
+        <label for="invoice_pattern">Formato del número</label>
+        <input id="invoice_pattern" name="invoice_pattern" type="text" required maxlength="40" value={v.invoice_pattern ?? billing.pattern} />
+        <p class="hint">{'{n}'} el número (6 cifras) · {'{yy}'} el año con 2 cifras · {'{yyyy}'} con 4. Ej.: G/{'{n}'}/{'{yy}'}/01 → G/000904/26/01.</p>
+      </div>
+      <div class:list={['field', { 'has-error': errors.invoice_next }]}>
+        <label for="invoice_next">Próximo número ({year})</label>
+        <input id="invoice_next" name="invoice_next" type="number" min="1" inputmode="numeric" required value={v.invoice_next ?? nextInvoice.seq} />
+        <p class="hint">Para seguir la numeración que ya lleváis. No puede ser uno ya usado.</p>
+      </div>
+    </div>
+    <h3 class="form-sub"><Icon name="building" size={18} /> Datos de la empresa en las facturas</h3>
+    <div class="row row-2">
+      <div class:list={['field', { 'has-error': errors.company_legal_name }]}>
+        <label for="company_legal_name">Razón social</label>
+        <input id="company_legal_name" name="company_legal_name" type="text" maxlength="120" value={v.company_legal_name ?? billing.company.name} placeholder="Seven Worlds Events & Congresses, S.L." />
+      </div>
+      <div class:list={['field', { 'has-error': errors.company_tax_id }]}>
+        <label for="company_tax_id">CIF</label>
+        <input id="company_tax_id" name="company_tax_id" type="text" maxlength="20" value={v.company_tax_id ?? billing.company.taxId} placeholder="B12345678" />
+      </div>
+    </div>
+    <div class:list={['field', { 'has-error': errors.company_address }]}>
+      <label for="company_address">Dirección fiscal</label>
+      <input id="company_address" name="company_address" type="text" maxlength="300" value={v.company_address ?? billing.company.address} placeholder="Calle…, 28001 Madrid" />
+    </div>
+    <div class="row row-2">
+      <div class:list={['field', { 'has-error': errors.company_iban }]}>
+        <label for="company_iban">IBAN para los cobros</label>
+        <input id="company_iban" name="company_iban" type="text" maxlength="40" value={v.company_iban ?? billing.company.iban} placeholder="ES00 0000 0000 0000 0000 0000" />
+      </div>
+      <div class:list={['field', { 'has-error': errors.company_email }]}>
+        <label for="company_email">Email de facturación</label>
+        <input id="company_email" name="company_email" type="email" maxlength="200" value={v.company_email ?? billing.company.email} placeholder="administracion@sevenworlds.es" />
+      </div>
+    </div>
+    <p class="hint muted small">Mientras falten, en la factura sale «pendiente».</p>
+    <div><button class="btn btn-primary" type="submit" name="intent" value="invoicing">Guardar</button></div>
+  </form>
 
   <form method="post" class="form-section mt">
     <h2><Icon name="folder" /> Numeración de expedientes</h2>

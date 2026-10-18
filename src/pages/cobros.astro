@@ -72,7 +72,7 @@ const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
       <section id="emitir">
         <div class="sec-head">
           <h2><Icon name="send" /> Por emitir ({toIssue.length})</h2>
-          <p>{admin ? 'Facturas que ha pedido Eventos: hazlas en contabilidad y anota el número y el PDF.' : 'Facturas pedidas que Administración aún no ha emitido.'}</p>
+          <p>{admin ? 'Facturas pedidas o en borrador: revísalas, emítelas (el número se asigna solo) y envíalas al cliente.' : 'Facturas pedidas que Administración aún no ha emitido.'}</p>
         </div>
         {toIssue.length ? <ul class="list">{toIssue.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="empty">No hay facturas pendientes de emitir.</p>}
       </section>

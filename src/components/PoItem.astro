@@ -9,8 +9,8 @@ const { po, showExp = false, canInvoice = false, invoiceLabel = 'Facturar' } = A
 const href = fileUrl(po);
 const used = po.amount_cents - po.left_cents;
 const closed = !!po.closed_at;
-// «Facturar» abre la factura nueva del expediente con esta PO ya marcada
-const invoiceHref = `/expedientes/${po.expediente_id}/cobros?nuevo=factura&po=${po.id}#nueva-factura`;
+// «Facturar» abre la factura nueva con esta PO ya marcada (y su saldo)
+const invoiceHref = `/expedientes/${po.expediente_id}/facturas/nueva?po=${po.id}`;
 ---
 <li class="item is-row">
   <div class="item-body">

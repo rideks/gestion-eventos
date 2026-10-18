@@ -89,7 +89,7 @@ test('nextSteps y closingChecks', () => {
   assert.equal(path(/cobro vencido/), 'facturas/21');
   assert.equal(path(/vence en los próximos/), 'pagos/4');
   assert.equal(path(/por emitir/), 'facturas/22');
-  assert.equal(path(/PO sin facturar/), 'po/11');
+  assert.equal(path(/PO sin facturar/), 'facturas/nueva?po=11');
   assert.equal(path(/Faltan PO/), 'cobros?nuevo=po');
   assert.equal(path(/sin la factura/), 'pagos/5#factura');
   assert.deepEqual(nextSteps({ status: 'cerrado' }, s, NOW), []);

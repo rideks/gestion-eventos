@@ -20,8 +20,8 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Cambios de última hora | Correos y versiones de Excel sueltas | **Versiones del presupuesto** (v1, v2…) con el archivo, el total y qué ha cambiado (+/− €). **Notas** y **actividad** en cada expediente. |
 | Facturas de proveedores | Se adjuntan por correo | Se suben al pago (PDF/foto desde el móvil) indicando si es **factura** o **proforma**. Un pago puede tener **varias facturas y proformas**, y una factura puede cubrir **varios pagos** (dos anticipos y una única factura; se comprueba que su total cuadra). El orden de cada pago es **① justificante → ② pagado → ③ factura conforme**: la factura se da por **conforme** (verde, «Con factura») cuando el pago está hecho; mientras tanto queda «recibida» y en la bandeja sale en «Esperando el pago». La **campana** sólo avisa de las facturas que ya se pueden conformar (de pagos hechos). Las proformas no avisan a nadie. Administración puede borrar la factura o proforma vieja y dejar la nueva, pero una factura **conforme no se puede borrar**: se sube otra con un **comentario** de por qué, y vuelve a avisar. Las **previsiones** («el hotel exige 21.400 € antes del 29/01») se completan cuando llegan los documentos. Se pueden ir **añadiendo pagos** en cualquier momento, de uno en uno o **varios de golpe**; el importe se escribe **con IVA** y el sin IVA se calcula. |
 | Pagos | Se controlan a mano | **Bandeja de pagos** de todos los expedientes por fecha límite (vencidos, próximos 7 días, este mes…) y botón **Pagado** con fecha y forma de pago (transferencia, tarjeta…). Para marcar pagado un pago **por transferencia** hay que subir antes el **justificante bancario**: si falta, sale un aviso. Un **pago hecho no se modifica** (ni importe, ni fecha, ni justificante, ni se borra); si hubo un error, Administración puede **«Deshacer pagado»**, que queda en la actividad. A un pago hecho se le pueden seguir subiendo facturas y proformas. Aviso de **pagos hechos sin factura**. |
-| PO del cliente | Se reenvían a Tania por correo | Se suben al expediente. Se ve si **faltan PO** para cubrir el presupuesto y cuánto de cada PO **queda sin facturar**. Una PO queda facturada cuando las facturas al cliente la cubren: el botón **Facturar** de la PO abre la factura con esa PO marcada y su saldo. Si el resto no se va a facturar (el evento costó menos, el cliente la recortó…), se **cierra la PO** con un motivo y deja de contar como pendiente (se puede reabrir). |
-| Facturas al cliente | Correo a Tania con las PO | **Pedir factura**: se marcan las PO que cubre (una factura puede llevar varias PO y una PO puede facturarse en varias veces) y el importe se rellena solo. Tania la ve en **Por emitir**, la hace en contabilidad y anota número, fecha y PDF. Después, **Cobrada**. |
+| PO del cliente | Se reenvían a Tania por correo | Se suben al expediente. Se ve si **faltan PO** para cubrir el presupuesto y cuánto de cada PO **queda sin facturar**. Al guardar la PO se elige **«Guardar PO y crear la factura»** (Eventos: «… y pedir la factura»), que lleva directamente a la factura con esa PO marcada y su saldo, o «Sólo guardar la PO». Una PO queda facturada cuando las facturas al cliente la cubren: el botón **Facturar** de la PO hace lo mismo más tarde. Si el resto no se va a facturar (el evento costó menos, el cliente la recortó…), se **cierra la PO** con un motivo y deja de contar como pendiente (se puede reabrir). |
+| Facturas al cliente | Correo a Tania con las PO | Un expediente puede tener **una o varias facturas**, con o sin PO (una factura puede llevar varias PO y una PO puede facturarse en varias veces). La factura se hace **en la aplicación**, en su propia página: cliente con sus **datos fiscales** (NIF/CIF, dirección fiscal y email de facturación, que se rellenan solos si ya se le ha facturado), PO que cubre, concepto e importe por tipo de IVA. Eventos la **pide** (queda «Por emitir»); Administración la **emite** y recibe sola el **número siguiente**, correlativo y **único** (`G/000904/26/01`; formato y próximo número en Ajustes). Una factura emitida **no se modifica**: si tiene un error, se anula y se hace otra. Después se **envía al cliente**: de momento el envío es **simulado** (se enseña el correo tal y como saldría y queda apuntado a quién, cuándo y quién lo envió, pero no sale ningún correo). «Ver la factura» la enseña lista para imprimir o guardar en PDF (hasta tener la plantilla de contabilidad). Después, **Cobrada**. |
 | Cierre | Excel de cierre hecho a mano | **Pestaña Cierre** con las dos tablas del Excel (proveedores \| cliente), total neto grupo, total grupo, beneficio y % sobre ventas, calculado solo. Comprobaciones antes de cerrar, **descarga para Excel** (mismo formato) e impresión/PDF. Al cerrar queda en sólo lectura. |
 
 ### Quién hace qué
@@ -34,7 +34,7 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Revisar y dar por buenas las facturas de proveedor (con el pago ya hecho) | | ✔ |
 | «Deshacer pagado» para corregir un pago hecho | | ✔ |
 | Borrar facturas o proformas de proveedor de otras personas (nunca una factura conforme) | | ✔ |
-| Emitir facturas al cliente, registrar cobros, anular | | ✔ |
+| Emitir facturas al cliente (número automático), enviarlas, registrar cobros, anular | | ✔ |
 | Usuarios y Ajustes (tipos de IVA, numeración) | | ✔ |
 
 Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es tocar una línea.
@@ -68,7 +68,10 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
   escrito otras veces: al entrar en un campo sólo se ve su ejemplo.
 - Todo lo que borra o quita algo pide **confirmación** en una ventana propia de la aplicación.
 - **Ajustes** (Administración): los **tipos de IVA** que salen en todos los desplegables (añadir, quitar,
-  marcar el de por defecto; admite decimales y otros impuestos como el IGIC) y el primer número de expediente.
+  marcar el de por defecto; admite decimales y otros impuestos como el IGIC), el primer número de expediente y
+  **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
+  si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
+  poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
 - **Usuarios** (invitación por enlace, sin registro abierto) y **Mi cuenta**.
 
 Importes: se pueden escribir como en el Excel (`21.400`, `1.983,47`, `-232,55`). Cada importe tiene **una línea
@@ -110,6 +113,15 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 El primer número de expediente sale de la tabla `settings` (`first_number`, 1001 por defecto);
 después siempre se propone el mayor + 1.
 
+Antes de emitir la primera factura real, en **Ajustes → Facturas al cliente**: el **próximo número** (el
+siguiente al último que hicisteis en contabilidad este año) y los **datos de la empresa** (razón social, CIF,
+dirección e IBAN). Mientras falten, en la factura sale «pendiente».
+
+Número de factura: se asigna **al emitir** (no al pedirla), así no quedan huecos por borradores que no se emiten.
+El contador se guarda por año en `settings` (`invoice_next:2026`) y además la base de datos tiene un **índice único**
+sobre el número: aunque dos personas emitan a la vez, nunca salen dos facturas con el mismo número (la segunda
+coge el siguiente).
+
 ## Base de datos y rendimiento
 
 - Cada pantalla pide a D1 lo que necesita **a la vez** (en paralelo o en un `batch`), no una consulta detrás de otra;
@@ -138,7 +150,7 @@ src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
   lib/              money (importes), vat (tipos de IVA y desglose), finance (estados, totales, cierre), data (consultas),
-                    validate (formularios), files (R2), actions (pagar/cobrar), auth, security…
+                    validate (formularios), files (R2), actions (pagar/cobrar), invoicing (nº de factura y envío), auth, security…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)
   components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios
   pages/            Inicio, expedientes, bandejas de pagos y cobros, usuarios, cuenta, acceso
@@ -149,6 +161,7 @@ tests/              npm test
 
 ## Ideas para las próximas versiones
 
+- **Envío real** de las facturas al cliente por email (ahora es simulado) y **plantilla** de la factura de contabilidad.
 - Avisos por **email** (solicitud nueva, factura pedida, pago que vence) además de la bandeja.
 - **Proveedores y clientes** como fichas (CIF, datos bancarios, condiciones de pago) en vez de texto libre.
 - Leer el **Excel del presupuesto** para proponer el total y las líneas automáticamente.

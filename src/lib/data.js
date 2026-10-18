@@ -298,3 +298,17 @@ export async function searchAll(db, q) {
   ]).then((rs) => rs.map((r) => r.results));
   return { expedientes, payments, invoices, pos };
 }
+
+/**
+ * Datos fiscales de los clientes ya facturados (aún no hay fichas de clientes): los de su última
+ * factura con NIF. Sirven para rellenar solos el NIF, la dirección y el email en una factura nueva.
+ */
+export async function knownClients(db) {
+  const { results } = await db.prepare(
+    `SELECT i.billed_to, i.billed_tax_id, i.billed_address, i.billed_email FROM invoices i
+      WHERE i.billed_tax_id IS NOT NULL
+        AND i.id = (SELECT MAX(j.id) FROM invoices j WHERE j.billed_to = i.billed_to COLLATE NOCASE AND j.billed_tax_id IS NOT NULL)
+      ORDER BY i.billed_to COLLATE NOCASE LIMIT 500`,
+  ).all();
+  return results;
+}

@@ -331,14 +331,16 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         }
       }, true);
 
-      // Botones que necesitan un campo que en otros casos es opcional (p. ej. «Guardar como emitida» y el nº):
-      // <button data-requires="#id" data-requires-msg="…">. Se avisa sin enviar, así no se pierde el PDF elegido.
+      // Botones que necesitan campos que en otros casos son opcionales (p. ej. «Emitir» y el NIF del cliente):
+      // <button data-requires="#a, #b" data-requires-msg="…">. Se avisa del primero vacío sin enviar el formulario.
       document.addEventListener('submit', (e) => {
         const btn = e.submitter;
         const selector = btn instanceof HTMLElement ? btn.dataset.requires : null;
         if (!selector || !(e.target instanceof HTMLFormElement)) return;
-        const control = e.target.querySelector(selector);
-        if (!(control instanceof HTMLInputElement) || control.value.trim()) return;
+        const form = e.target;
+        const control = selector.split(',').map((one) => form.querySelector(one.trim()))
+          .find((c) => (c instanceof HTMLInputElement || c instanceof HTMLTextAreaElement) && !c.value.trim());
+        if (!control) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         const field = fieldOf(control);

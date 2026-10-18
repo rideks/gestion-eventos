@@ -237,7 +237,7 @@ a.item:hover { border-color: var(--line-2); }
 .field textarea { min-height: 220px; line-height: 1.55; resize: vertical; }
 .field textarea.short { min-height: 110px; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--c1); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c1) 18%, transparent); }
-.field .hint { color: var(--muted); font-size: 0.87rem; }
+.field .hint, .form-block > .hint { color: var(--muted); font-size: 0.87rem; }
 .field .error { color: var(--danger); font-size: 0.9rem; font-weight: 600; }
 .field.has-error input, .field.has-error select, .field.has-error textarea { border-color: var(--danger); }
 .has-error .segmented label, .has-error .dropzone { border-color: var(--danger); }
@@ -449,7 +449,7 @@ progress.bar.is-gold::-moz-progress-bar { background: var(--c2); }
 /* ── Secciones con botón ────────────────────────────────────────────────── */
 .sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 26px 0 12px; }
 .sec-head:first-child { margin-top: 0; }
-.sec-head h2 { font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
+.sec-head h2 { font-size: 1.2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .sec-head h2 svg { color: var(--c1); }
 .sec-head p { color: var(--muted); font-size: 0.92rem; width: 100%; margin-top: -6px; }
 
@@ -659,3 +659,17 @@ form:has(input[name='status'][value='pendiente']:checked) [data-paid-only] { dis
 @media (max-width: 639px) { .flow-steps { grid-template-columns: 1fr; } }
 /* Bandeja «Facturas por revisar»: listas para conformar y esperando el pago */
 .review-group { margin-top: 26px; }
+
+/* Bloques con título dentro de un formulario (p. ej. «Cliente» en la factura) */
+fieldset.form-block { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+fieldset.form-block > legend { margin-bottom: 4px; }
+/* Envío de la factura al cliente: el correo tal y como saldría (envío simulado) */
+.mail-preview {
+  display: flex; flex-direction: column; gap: 6px; padding: 14px 16px;
+  border: 1px solid var(--line); border-left: 4px solid var(--c2); border-radius: 10px; background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.mail-preview.is-sent { border-left-color: var(--ok); }
+.mail-sent { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--ok); font-weight: 700; }
+.send-form input[type=email] { flex: 1 1 280px; min-width: 0; max-width: 420px; }
+.mail-body { margin: 6px 0; padding: 12px 14px; border-radius: 8px; background: var(--surface); white-space: pre-line; }

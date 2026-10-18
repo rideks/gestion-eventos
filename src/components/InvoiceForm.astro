@@ -1,16 +1,16 @@
 ---
-// Campos de una factura al cliente: a quién, qué PO cubre (y cuánto de cada una) e importes.
-// Administración ve además el nº de factura, las fechas y el PDF emitido.
+// Campos de una factura al cliente: a quién (con sus datos fiscales), qué PO cubre (y cuánto de cada una),
+// el concepto y los importes. El número NO se escribe: se asigna al emitirla (Ajustes → formato).
+// Si al cliente ya se le ha facturado antes, su NIF, dirección y email se rellenan solos.
 import VatLines from './VatLines.astro';
-import FileField from './FileField.astro';
 import { eur, amountInput } from '../lib/money.js';
 
 const {
-  v = {}, errors = {}, companies = [], poRows = [], current = null, id = 'inv', admin = false,
+  v = {}, errors = {}, companies = [], poRows = [], id = 'inv', admin = false,
   allocated = new Map(), // po_id → importe que esta factura ya tiene de esa PO (al editar)
   checked = null,        // po_id marcados tras un error
   rates = [], lines = [], // tipos de IVA y desglose (guardado o lo escrito antes de un error)
-  removable = false,      // botón «Quitar documento» junto al PDF actual
+  clients = [],          // datos fiscales de los clientes ya facturados (para rellenarlos solos)
 } = Astro.props;
 // PO que se pueden usar: las abiertas con saldo y las que ya usa esta factura
 const usable = poRows.filter((po) => po.billable_cents > 0 || allocated.has(po.id));
@@ -21,17 +21,32 @@ const amountFor = (po) => {
   return amountInput(allocated.get(po.id) ?? po.billable_cents);
 };
 ---
-<div class="row row-2">
-  <div class:list={['field', { 'has-error': errors.billed_to }]}>
-    <label for={`${id}-billed_to`}>Cliente al que se factura</label>
-    <input id={`${id}-billed_to`} name="billed_to" type="text" required maxlength="120" list={`${id}-companies`} value={v.billed_to ?? ''} autocomplete="off" />
-    <datalist id={`${id}-companies`}>{companies.map((c) => <option value={c} />)}</datalist>
+<fieldset class="form-block" data-clients={JSON.stringify(clients)}>
+  <legend class="label">Cliente</legend>
+  <div class="row row-2">
+    <div class:list={['field', { 'has-error': errors.billed_to }]}>
+      <label for={`${id}-billed_to`}>Razón social</label>
+      <input id={`${id}-billed_to`} name="billed_to" type="text" required maxlength="120" list={`${id}-companies`} value={v.billed_to ?? ''} placeholder="Nombre fiscal del cliente" data-client-name />
+      <datalist id={`${id}-companies`}>{companies.map((c) => <option value={c} />)}</datalist>
+    </div>
+    <div class:list={['field', { 'has-error': errors.billed_tax_id }]}>
+      <label for={`${id}-billed_tax_id`}>NIF / CIF</label>
+      <input id={`${id}-billed_tax_id`} name="billed_tax_id" type="text" maxlength="20" value={v.billed_tax_id ?? ''} placeholder="B12345678" data-client="billed_tax_id" />
+    </div>
   </div>
-  <div class:list={['field', { 'has-error': errors.concept }]}>
-    <label for={`${id}-concept`}>Concepto <span class="opt">(opcional)</span></label>
-    <input id={`${id}-concept`} name="concept" type="text" maxlength="200" value={v.concept ?? ''} placeholder="Workshop BMW · alojamiento y sala" />
+  <div class="row row-2">
+    <div class:list={['field', { 'has-error': errors.billed_address }]}>
+      <label for={`${id}-billed_address`}>Dirección fiscal</label>
+      <input id={`${id}-billed_address`} name="billed_address" type="text" maxlength="300" value={v.billed_address ?? ''} placeholder="Calle y número, código postal y ciudad" data-client="billed_address" />
+    </div>
+    <div class:list={['field', { 'has-error': errors.billed_email }]}>
+      <label for={`${id}-billed_email`}>Email de facturación</label>
+      <input id={`${id}-billed_email`} name="billed_email" type="email" maxlength="200" value={v.billed_email ?? ''} placeholder="facturas@cliente.com" data-client="billed_email" />
+      <p class="hint">A dónde se envía la factura.</p>
+    </div>
   </div>
-</div>
+  <p class="hint">Para emitirla hacen falta el NIF/CIF y la dirección fiscal. Si ya se le ha facturado antes, se rellenan solos.</p>
+</fieldset>
 
 <fieldset class="field" data-po-alloc>
   <legend class="label">PO que cubre esta factura</legend>
@@ -54,38 +69,54 @@ const amountFor = (po) => {
   ) : (
     <p class="muted small">No hay PO con saldo. Si el cliente trabaja con PO, súbelas primero en «Órdenes de compra»; si no, deja esto así.</p>
   )}
-  <p class="hint">Al marcar las PO, el importe sin IVA de la factura se rellena con la suma (si tiene una sola línea de IVA).</p>
+  {usable.length > 0 && <p class="hint">Al marcar las PO, el importe sin IVA de la factura se rellena con la suma (si tiene una sola línea de IVA).</p>}
 </fieldset>
+
+<div class:list={['field', { 'has-error': errors.concept }]}>
+  <label for={`${id}-concept`}>Concepto <span class="opt">(sale en la factura)</span></label>
+  <textarea id={`${id}-concept`} name="concept" class="short" maxlength="500" placeholder="Workshop BMW · alojamiento, sala y coffee break · 26–27 ago 2026">{v.concept ?? ''}</textarea>
+</div>
 
 <VatLines id={id} lines={lines} rates={rates} error={errors.amount}
   hint="Si se queda vacío, se usa la suma de las PO marcadas. Con varios tipos de IVA, añade una línea por tipo." />
 
 {admin && (
-  <>
-    <div class="row row-3">
-      <div class:list={['field', { 'has-error': errors.number }]}>
-        <label for={`${id}-number`}>Nº de factura <span class="opt">(al emitirla)</span></label>
-        <input id={`${id}-number`} name="number" type="text" maxlength="60" value={v.number ?? ''} placeholder="G/000808/26/01" autocomplete="off" />
-      </div>
-      <div class:list={['field', { 'has-error': errors.issued_on }]}>
-        <label for={`${id}-issued_on`}>Fecha de emisión</label>
-        <input id={`${id}-issued_on`} name="issued_on" type="date" value={v.issued_on ?? ''} />
-      </div>
-      <div class:list={['field', { 'has-error': errors.due_date }]}>
-        <label for={`${id}-due_date`}>Vencimiento</label>
-        <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
-      </div>
+  <div class="row row-2">
+    <div class:list={['field', { 'has-error': errors.issued_on }]}>
+      <label for={`${id}-issued_on`}>Fecha de emisión</label>
+      <input id={`${id}-issued_on`} name="issued_on" type="date" value={v.issued_on ?? ''} />
+      <p class="hint">Al emitirla. El número se asigna solo.</p>
     </div>
-    <FileField id={`${id}-file`} label="Factura emitida (PDF)" current={current} removable={removable} />
-  </>
+    <div class:list={['field', { 'has-error': errors.due_date }]}>
+      <label for={`${id}-due_date`}>Vencimiento</label>
+      <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
+    </div>
+  </div>
 )}
 <div class:list={['field', { 'has-error': errors.notes }]}>
-  <label for={`${id}-notes`}>Notas para Administración <span class="opt">(opcional)</span></label>
+  <label for={`${id}-notes`}>{admin ? 'Notas internas' : 'Notas para Administración'} <span class="opt">(opcional · no salen en la factura)</span></label>
   <input id={`${id}-notes`} name="notes" type="text" maxlength="1000" value={v.notes ?? ''} placeholder="Ej.: enviar a cuentas a pagar con copia a Ana" />
 </div>
 
 <script>
   import { parseAmount, amountInput } from '../lib/money.js';
+
+  // Datos fiscales del cliente: si ya se le ha facturado, se rellenan los que estén vacíos
+  document.querySelectorAll('[data-clients]').forEach((box) => {
+    let clients = [];
+    try {
+      clients = JSON.parse(box.getAttribute('data-clients') ?? '[]');
+    } catch { /* sin datos */ }
+    const name = box.querySelector('[data-client-name]');
+    if (!(name instanceof HTMLInputElement) || !clients.length) return;
+    name.addEventListener('change', () => {
+      const found = clients.find((c) => c.billed_to.toLowerCase() === name.value.trim().toLowerCase());
+      if (!found) return;
+      box.querySelectorAll('[data-client]').forEach((input) => {
+        if (input instanceof HTMLInputElement && !input.value.trim()) input.value = found[input.dataset.client] ?? '';
+      });
+    });
+  });
 
   document.querySelectorAll('[data-po-alloc]').forEach((box) => {
     const form = box.closest('form');

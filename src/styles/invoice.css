@@ -1,0 +1,71 @@
+/* La factura como documento: una hoja A4 en pantalla y al imprimir / guardar en PDF */
+:root { --ink: #111111; --muted: #6b6b73; --line: #e2e2e6; --brand: #ffcf00; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body.invoice-page {
+  background: #e9e9ec; color: var(--ink); font-family: 'Barlow', system-ui, sans-serif; font-size: 14px; line-height: 1.45;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.muted { color: var(--muted); }
+
+.inv-toolbar {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  padding: 10px 16px; background: #111; color: #fff;
+}
+.inv-toolbar a { color: #fff; font-weight: 600; text-decoration: none; }
+.inv-toolbar .inv-note { flex: 1; color: #b1b1b1; font-size: 0.85rem; }
+.inv-toolbar button {
+  border: 0; border-radius: 999px; padding: 8px 16px; background: var(--brand); color: #111; font: inherit; font-weight: 700; cursor: pointer;
+}
+
+.invoice {
+  position: relative; width: min(210mm, 100% - 24px); min-height: 297mm; margin: 20px auto; padding: 0 0 18mm;
+  background: #fff; box-shadow: 0 6px 30px rgb(0 0 0 / 0.12); overflow: hidden;
+}
+.inv-stamp {
+  position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%) rotate(-24deg); margin: 0;
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 120px; letter-spacing: 6px; text-transform: uppercase;
+  color: rgb(200 30 30 / 0.12); pointer-events: none;
+}
+.inv-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 14mm; background: #000; border-bottom: 4px solid var(--brand); }
+.inv-head img { height: 64px; width: auto; }
+.inv-title { text-align: right; color: #fff; }
+.inv-title h1 { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 34px; letter-spacing: 1px; text-transform: uppercase; color: var(--brand); }
+.inv-number { margin: 2px 0 0; font-size: 18px; font-weight: 700; }
+
+.inv-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 10mm 14mm 4mm; }
+.inv-parties h2, .inv-pay h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.inv-parties p { margin: 0; overflow-wrap: anywhere; }
+
+.inv-meta { display: flex; flex-wrap: wrap; gap: 0; margin: 4mm 14mm; border: 1px solid var(--line); border-radius: 8px; }
+.inv-meta div { flex: 1 1 120px; padding: 8px 12px; border-right: 1px solid var(--line); }
+.inv-meta div:last-child { border-right: 0; }
+.inv-meta dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.inv-meta dd { margin: 2px 0 0; font-weight: 700; }
+
+.inv-lines, .inv-totals { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.inv-lines { width: calc(100% - 28mm); margin: 6mm 14mm 0; }
+.inv-lines th { padding: 8px 10px; background: #111; color: #fff; font-size: 12px; text-align: left; }
+.inv-lines td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.inv-lines .num, .inv-totals .num { text-align: right; white-space: nowrap; }
+.inv-concept { white-space: pre-line; }
+.inv-totals { margin: 4mm 14mm 0 auto; min-width: 280px; }
+.inv-totals th { padding: 6px 12px; text-align: left; font-weight: 600; color: var(--muted); }
+.inv-totals td { padding: 6px 12px; }
+.inv-totals .inv-total th, .inv-totals .inv-total td { padding: 10px 12px; background: var(--brand); color: #111; font-size: 17px; font-weight: 800; }
+
+.inv-pay { margin: 10mm 14mm 0; padding: 10px 12px; border-left: 4px solid var(--brand); background: #fafafa; }
+.inv-pay p { margin: 0; }
+.inv-foot { position: absolute; left: 14mm; right: 14mm; bottom: 8mm; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); text-align: center; }
+
+@media (max-width: 640px) {
+  .inv-parties { grid-template-columns: 1fr; }
+  .inv-head { padding: 14px 16px; }
+  .inv-head img { height: 44px; }
+}
+@media print {
+  @page { size: A4; margin: 0; }
+  body.invoice-page { background: #fff; }
+  .inv-toolbar { display: none; }
+  .invoice { width: 210mm; margin: 0; box-shadow: none; }
+}

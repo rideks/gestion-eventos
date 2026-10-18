@@ -105,8 +105,10 @@ INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_
   (3, 'Catering Lazo', 'Señal cena de gala', NULL, NULL, 200000, 220000, '10', NULL, 'pagado', '2026-10-01', 'tarjeta', 0, 2);
 INSERT INTO purchase_orders (id, expediente_id, number, billed_to, amount_cents, issued_on, notes, created_by) VALUES
   (6, 3, '4700112233', 'ROCHE FARMA', 4820000, '2026-10-05', 'Anticipo 50 %', 2);
-INSERT INTO invoices (id, expediente_id, number, billed_to, concept, base_cents, total_cents, vat, status, created_by, created_at) VALUES
-  (15, 3, NULL, 'ROCHE FARMA', 'Anticipo 50 % convención', 4820000, 5543000, 'mixto', 'por_emitir', 2, '2026-10-16T09:30:00Z');
+INSERT INTO invoices (id, expediente_id, number, billed_to, concept, base_cents, total_cents, vat, vat_lines, status, created_by, created_at) VALUES
+  (15, 3, NULL, 'ROCHE FARMA', 'Anticipo 50 % convención', 4820000, 5502200, 'mixto',
+   '[{"rate":1000,"label":"IVA 10 %","base":3000000,"total":3300000},{"rate":2100,"label":"IVA 21 %","base":1820000,"total":2202200}]',
+   'por_emitir', 2, '2026-10-16T09:30:00Z');
 INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (15, 6, 4820000);
 
 -- ── Solicitud · GLENMARK (por abrir) ──────────────────────────────────────
@@ -141,6 +143,24 @@ UPDATE supplier_invoices SET review = 'pendiente', reviewed_by = NULL, reviewed_
 UPDATE supplier_invoices SET review = 'pendiente', reviewed_by = NULL, reviewed_at = NULL, uploaded_by = 2, uploaded_at = '2026-10-17T09:30:00Z'
  WHERE number = '33C5526E-962314';
 
+-- ── Facturas al cliente: datos fiscales, envío y numeración ───────────────
+-- Las emitidas ya se enviaron (fuera de la aplicación). Datos fiscales y de la empresa: de EJEMPLO.
+UPDATE invoices SET billed_tax_id = 'A00000001', billed_address = 'Avenida de Ejemplo 1, 28000 Madrid', billed_email = 'facturas.bmw@example.com'
+ WHERE billed_to = 'BMW Ibérica' AND status <> 'por_emitir';
+UPDATE invoices SET billed_tax_id = 'A00000002', billed_address = 'Calle de Ejemplo 2, 28000 Madrid', billed_email = 'facturas.elecnor@example.com'
+ WHERE billed_to = 'ELECNOR';
+UPDATE invoices SET billed_tax_id = 'B00000' || printf('%03d', id), billed_address = 'Polígono de Ejemplo, 47000 Valladolid'
+ WHERE expediente_id = 1 AND billed_to <> 'BMW Ibérica';
+UPDATE invoices SET sent_at = issued_on || 'T10:00:00Z' WHERE status IN ('emitida', 'cobrada');
+DELETE FROM settings WHERE key = 'invoice_pattern' OR key LIKE 'invoice_next%' OR key LIKE 'company_%';
+INSERT INTO settings (key, value) VALUES
+  ('invoice_pattern', 'G/{n}/{yy}/01'),
+  ('company_legal_name', 'Seven Worlds Events & Congresses, S.L.'),
+  ('company_tax_id', 'B00000000'),
+  ('company_address', 'Calle de Ejemplo 7, 28001 Madrid'),
+  ('company_iban', 'ES00 0000 0000 0000 0000 0000'),
+  ('company_email', 'administracion@example.com');
+
 -- ── Actividad ─────────────────────────────────────────────────────────────
 INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUES
   (1, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 58.500,00 € sin IVA y 4 pagos previstos', '2026-06-10T09:12:00Z'),
@@ -158,5 +178,5 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (3, 2, 'Marta López', 'supplier_proforma.add', 'subió la proforma PF-2026-118 de Hotel Alfonso XIII (35.000,00 €). Comentario: Proforma del 1er pago: el hotel la pide pagada antes del 15/10', '2026-09-26T09:00:00Z'),
   (3, 2, 'Marta López', 'payment.add', 'añadió un pago a Catering Lazo (2.200,00 €)', '2026-10-01T13:00:00Z'),
   (3, 2, 'Marta López', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
-  (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.430,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),
+  (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.022,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),
   (4, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z');

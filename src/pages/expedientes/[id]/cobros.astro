@@ -1,27 +1,27 @@
 ---
 // Cobros al cliente (lado derecho del cierre): sus órdenes de compra (PO) y nuestras facturas.
-// Eventos sube las PO y pide la factura; Administración la emite (nº y PDF) y registra el cobro.
+// El recorrido: PO → «Guardar PO y crear la factura» → la factura (página propia, con los datos del
+// cliente) → emitida con número automático → enviada al cliente (simulado) → cobrada.
+// Eventos sube las PO y pide la factura; Administración la emite, la envía y registra el cobro.
 import { env } from 'cloudflare:workers';
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import PoForm from '../../../components/PoForm.astro';
 import PoItem from '../../../components/PoItem.astro';
-import InvoiceForm from '../../../components/InvoiceForm.astro';
 import InvoiceItem from '../../../components/InvoiceItem.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
-import { PoSchema, InvoiceSchema, parseAllocations, validate, formToObject } from '../../../lib/validate.js';
+import { PoSchema, validate, formToObject } from '../../../lib/validate.js';
 import { storeFile, getFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
-import { loadRates, invoiceAmounts, rawVatLines, defaultRate, totalFromBaseBp } from '../../../lib/vat.js';
 import { today } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markCollected } from '../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const now = today();
-const [exp, fin, rates] = id ? await Promise.all([getExpediente(db, id), loadFinance(db, id, now), loadRates(db)]) : [];
+const [exp, fin] = id ? await Promise.all([getExpediente(db, id), loadFinance(db, id, now)]) : [];
 if (!exp) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
@@ -30,19 +30,7 @@ const locked = isLocked(exp);
 let error = null;
 let errors = {};
 let poValues = { billed_to: exp.company };
-let invValues = { billed_to: exp.company };
-let checked = null;
-let invLines = [];
 let open = Astro.url.searchParams.get('nuevo');
-
-// «Facturar» desde una PO: la factura nueva sale con esa PO marcada, su cliente y su saldo
-const fromPo = open === 'factura' && !locked ? fin.summary.poRows.find((p) => p.id === parseId(Astro.url.searchParams.get('po'))) : null;
-if (fromPo && fromPo.billable_cents > 0) {
-  const rate = defaultRate(rates);
-  invValues = { billed_to: fromPo.billed_to };
-  checked = [fromPo.id];
-  invLines = [{ rate, base: fromPo.billable_cents, total: totalFromBaseBp(fromPo.billable_cents, rate) }];
-}
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -67,56 +55,13 @@ if (Astro.request.method === 'POST') {
       try {
         const file = getFile(form, 'file');
         const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
-        await db.batch([
-          db.prepare('INSERT INTO purchase_orders (expediente_id, number, billed_to, amount_cents, issued_on, file_id, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(id, d.number, d.billed_to, d.amount, d.issued_on, fileId, d.notes, me.id),
-          activityStmt(db, who, id, 'po.add', `subió la PO ${d.number} de ${d.billed_to} (${eur(d.amount)} sin IVA)`),
-        ]);
+        const po = await db.prepare(
+          'INSERT INTO purchase_orders (expediente_id, number, billed_to, amount_cents, issued_on, file_id, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id',
+        ).bind(id, d.number, d.billed_to, d.amount, d.issued_on, fileId, d.notes, me.id).first();
+        await activityStmt(db, who, id, 'po.add', `subió la PO ${d.number} de ${d.billed_to} (${eur(d.amount)} sin IVA)`).run();
+        // «Guardar PO y crear la factura»: directamente a la factura, con esta PO y su importe
+        if (input.then === 'invoice') return Astro.redirect(`/expedientes/${id}/facturas/nueva?po=${po.id}`, 303);
         return Astro.redirect(`/expedientes/${id}/cobros?ok=creado`, 303);
-      } catch (err) {
-        if (!(err instanceof UploadError)) throw err;
-        error = err.message;
-      }
-    }
-  } else if (input.intent === 'add_invoice') {
-    open = 'factura';
-    invValues = input;
-    checked = form.getAll('po_ids').map(Number);
-    invLines = rawVatLines(form);
-    const alloc = parseAllocations(form, fin.summary.poRows);
-    const parsed = validate(InvoiceSchema, input);
-    // Sin importe escrito: la suma de las PO marcadas
-    const amounts = alloc.ok ? invoiceAmounts(form, rates, alloc.rows) : null;
-    if (!alloc.ok) {
-      error = alloc.message;
-    } else if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-    } else if (!amounts.ok) {
-      error = amounts.message;
-      errors = { amount: amounts.message };
-    } else {
-      const d = { ...parsed.data, base: amounts.base, total: amounts.total };
-      // Administración puede registrarla ya emitida (con su número)
-      const issued = admin && d.number;
-      try {
-        const file = admin ? getFile(form, 'file') : null;
-        const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: id, userId: me.id }) : null;
-        const inv = await db.prepare(
-          `INSERT INTO invoices (expediente_id, number, billed_to, concept, base_cents, total_cents, vat, vat_lines, status, issued_on, due_date, file_id, notes, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        ).bind(id, issued ? d.number : null, d.billed_to, d.concept, d.base, d.total, amounts.vat, JSON.stringify(amounts.lines), issued ? 'emitida' : 'por_emitir',
-          issued ? (d.issued_on ?? now) : null, issued ? d.due_date : null, fileId, d.notes, me.id).first();
-        const poText = alloc.rows.length
-          ? ` con la${alloc.rows.length > 1 ? 's' : ''} PO ${alloc.rows.map((r) => fin.summary.poRows.find((p) => p.id === r.po_id).number).join(', ')}`
-          : '';
-        await db.batch([
-          ...alloc.rows.map((r) => db.prepare('INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (?, ?, ?)').bind(inv.id, r.po_id, r.amount)),
-          activityStmt(db, who, id, issued ? 'invoice.issue' : 'invoice.request', issued
-            ? `emitió la factura ${d.number} a ${d.billed_to} (${eur(d.total)})${poText}`
-            : `pidió una factura a ${d.billed_to} por ${eur(d.total)}${poText}`),
-        ]);
-        return Astro.redirect(`/expedientes/${id}/cobros?ok=${issued ? 'emitida' : 'pedida'}`, 303);
       } catch (err) {
         if (!(err instanceof UploadError)) throw err;
         error = err.message;
@@ -158,7 +103,11 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
       <summary class="btn btn-ghost"><Icon name="plus" size={18} /> <span class="when-closed">Subir PO</span><span class="when-open">Cerrar formulario</span></summary>
       <form method="post" enctype="multipart/form-data" class="form-section">
         <PoForm v={poValues} errors={open === 'po' ? errors : {}} companies={companies} id="newpo" />
-        <div class="actions-inline"><button class="btn btn-primary" type="submit" name="intent" value="add_po" data-busy="Subiendo…">Guardar PO</button></div>
+        <input type="hidden" name="intent" value="add_po" />
+        <div class="actions-inline">
+          <button class="btn btn-primary" type="submit" name="then" value="invoice" data-busy="Guardando…"><Icon name="send" size={18} /> {admin ? 'Guardar PO y crear la factura' : 'Guardar PO y pedir la factura'}</button>
+          <button class="btn btn-ghost" type="submit" name="then" value="list" data-busy="Guardando…">Sólo guardar la PO</button>
+        </div>
       </form>
     </details>
   )}
@@ -172,19 +121,11 @@ const coverage = s.sale.base > 0 ? Math.round(Math.min(1, s.poTotal / s.sale.bas
   <div class="sec-head">
     <h2><Icon name="receipt" /> Facturas al cliente</h2>
     <p>{admin
-      ? 'Las que pide Eventos salen como «Por emitir»: ponles número y PDF al emitirlas. También puedes registrarlas tú directamente.'
-      : 'Pide aquí la factura con las PO que cubre. Administración la emite y te avisa en la actividad del expediente.'}</p>
+      ? 'Un expediente puede tener una o varias facturas, con o sin PO. El número se asigna solo al emitirla; luego se envía al cliente (envío simulado).'
+      : 'Pide aquí la factura (con las PO que cubre, si las hay). Administración la emite, la envía al cliente y te avisa en la actividad.'}</p>
   </div>
   {!locked && (
-    <details class="add" id="nueva-factura" open={open === 'factura'}>
-      <summary class="btn btn-primary"><Icon name="send" size={18} /> <span class="when-closed">{admin ? 'Nueva factura' : 'Pedir factura'}</span><span class="when-open">Cerrar formulario</span></summary>
-      <form method="post" enctype="multipart/form-data" class="form-section">
-        <InvoiceForm v={invValues} errors={open === 'factura' ? errors : {}} companies={companies} poRows={s.poRows} admin={admin} checked={checked} rates={rates} lines={invLines} id="newinv" />
-        <div class="actions-inline">
-          <button class="btn btn-primary" type="submit" name="intent" value="add_invoice" data-busy="Guardando…">{admin ? 'Guardar factura' : 'Pedir factura a Administración'}</button>
-        </div>
-      </form>
-    </details>
+    <p><a class="btn btn-primary" href={`/expedientes/${id}/facturas/nueva`}><Icon name="send" size={18} /> {admin ? 'Nueva factura' : 'Pedir factura'}</a></p>
   )}
   {fin.invoices.length ? (
     <>

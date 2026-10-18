@@ -1,0 +1,131 @@
+---
+// Factura nueva al cliente (desde una PO —?po=— o sin PO). Hecha en la aplicación «a mano»:
+// cliente con sus datos fiscales, PO que cubre, concepto e importes.
+//  · Administración: «Emitir y enviar al cliente» (número automático + envío simulado), «Emitir sin enviar»
+//    o «Guardar borrador».
+//  · Eventos: «Pedir factura a Administración» (queda por emitir; Administración la emite y la envía).
+import { env } from 'cloudflare:workers';
+import App from '../../../../layouts/App.astro';
+import Icon from '../../../../components/Icon.astro';
+import ExpHeader from '../../../../components/ExpHeader.astro';
+import InvoiceForm from '../../../../components/InvoiceForm.astro';
+import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
+import { getExpediente, loadFinance, suggestions, knownClients } from '../../../../lib/data.js';
+import { formToObject } from '../../../../lib/validate.js';
+import { loadRates, defaultRate, totalFromBaseBp, rawVatLines } from '../../../../lib/vat.js';
+import {
+  readInvoiceForm, invoiceValues, INVOICE_FIELDS, issueInvoice, markSent, peekInvoiceNumber, DUE_DAYS,
+} from '../../../../lib/invoicing.js';
+import { eur } from '../../../../lib/money.js';
+import { today, addDays, formatRange } from '../../../../lib/dates.js';
+import { isLocked } from '../../../../lib/actions.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const now = today();
+const [exp, fin, rates, clients] = id
+  ? await Promise.all([getExpediente(db, id), loadFinance(db, id, now), loadRates(db), knownClients(db)])
+  : [];
+if (!exp) return Astro.rewrite('/404');
+if (isLocked(exp)) return Astro.redirect(`/expedientes/${id}/cobros`, 303);
+
+const me = Astro.locals.user;
+const admin = can(me, 'invoice.issue');
+const back = `/expedientes/${id}/cobros`;
+const clientOf = (name) => clients.find((c) => c.billed_to.toLowerCase() === String(name ?? '').toLowerCase()) ?? {};
+
+// Valores de partida: la PO (si se viene de ella), los datos del cliente si ya se le ha facturado,
+// y un concepto con el nombre y las fechas del evento
+const fromPo = fin.summary.poRows.find((p) => p.id === parseId(Astro.url.searchParams.get('po')) && p.billable_cents > 0) ?? null;
+const billedTo = fromPo?.billed_to ?? exp.company;
+const known = clientOf(billedTo);
+let v = {
+  billed_to: billedTo,
+  billed_tax_id: known.billed_tax_id ?? '',
+  billed_address: known.billed_address ?? '',
+  billed_email: known.billed_email ?? exp.contact_email ?? '',
+  concept: [exp.name, exp.destination, formatRange(exp.start_date, exp.end_date)].filter(Boolean).join(' · '),
+  issued_on: now,
+  due_date: addDays(now, DUE_DAYS),
+};
+let checked = fromPo ? [fromPo.id] : [];
+let lines = fromPo ? [{ rate: defaultRate(rates), base: fromPo.billable_cents, total: totalFromBaseBp(fromPo.billable_cents, defaultRate(rates)) }] : [];
+let error = null;
+let errors = {};
+
+if (Astro.request.method === 'POST') {
+  const who = actor(Astro);
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const intent = admin && ['emit', 'emit_send'].includes(input.intent) ? input.intent : 'draft';
+  v = input;
+  checked = form ? form.getAll('po_ids').map(Number) : [];
+  lines = rawVatLines(form);
+  const r = form
+    ? readInvoiceForm({ form, input, poRows: fin.summary.poRows, rates, mode: intent === 'emit_send' ? 'send' : intent === 'emit' ? 'emit' : 'draft', today: now })
+    : { ok: false, message: 'No se ha podido leer el formulario.' };
+  if (!r.ok) {
+    error = r.message;
+    errors = r.errors ?? {};
+  } else {
+    const d = r.data;
+    const inv = await db.prepare(
+      `INSERT INTO invoices (expediente_id, ${INVOICE_FIELDS}, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'por_emitir', ?)
+       RETURNING id, expediente_id, total_cents, concept, sent_at`,
+    ).bind(id, ...invoiceValues(d, r.amounts), me.id).first();
+    const poText = r.alloc.rows.length
+      ? ` con la${r.alloc.rows.length > 1 ? 's' : ''} PO ${r.alloc.rows.map((a) => fin.summary.poRows.find((p) => p.id === a.po_id).number).join(', ')}`
+      : '';
+    await db.batch([
+      ...r.alloc.rows.map((a) => db.prepare('INSERT INTO invoice_pos (invoice_id, po_id, amount_cents) VALUES (?, ?, ?)').bind(inv.id, a.po_id, a.amount)),
+      ...(intent === 'draft'
+        ? [activityStmt(db, who, id, admin ? 'invoice.draft' : 'invoice.request',
+          `${admin ? 'preparó un borrador de factura' : 'pidió una factura'} a ${d.billed_to} por ${eur(d.total)}${poText}`)]
+        : []),
+    ]);
+    if (intent === 'draft') return Astro.redirect(admin ? `/expedientes/${id}/facturas/${inv.id}?ok=guardado` : `${back}?ok=pedida`, 303);
+    // Emitir: número automático (y, si se pide, envío simulado al email de facturación)
+    const number = await issueInvoice({
+      db, invoiceId: inv.id, issuedOn: d.issued_on, dueDate: d.due_date,
+      extra: (n) => [activityStmt(db, who, id, 'invoice.issue', `emitió la factura ${n} a ${d.billed_to} (${eur(d.total)})${poText}`)],
+    });
+    if (intent === 'emit_send') {
+      await markSent({ db, who, inv: { ...inv, number }, to: d.billed_email });
+      return Astro.redirect(`/expedientes/${id}/facturas/${inv.id}?ok=enviada`, 303);
+    }
+    return Astro.redirect(`/expedientes/${id}/facturas/${inv.id}?ok=emitida`, 303);
+  }
+  Astro.response.status = 400;
+}
+
+const [{ companies }, next] = await Promise.all([suggestions(db), admin ? peekInvoiceNumber(db, Number(now.slice(0, 4))) : null]);
+---
+<App title="Nueva factura" section="expedientes" error={error} fieldErrors={errors}>
+  <ExpHeader exp={exp} tab="cobros" current={admin ? 'Nueva factura' : 'Pedir factura'} />
+
+  <form method="post" class="form-section">
+    <div class="sec-head">
+      <h2><Icon name="receipt" /> {admin ? 'Nueva factura al cliente' : 'Pedir factura a Administración'}</h2>
+      {admin && next && <span class="pill pill-gold" title="Se asigna al emitirla">Nº {next.number}</span>}
+      <p>{admin
+        ? `Se crea aquí mismo (aún sin plantilla de contabilidad). El número se asigna solo al emitirla: será el ${next?.number}. Luego se envía al cliente (de momento, envío simulado).`
+        : 'Rellena lo que sepas: Administración la revisa, la emite (con su número) y la envía al cliente.'}
+        {fromPo && <> Viene de la PO <strong>{fromPo.number}</strong>: {eur(fromPo.billable_cents)} sin facturar.</>}</p>
+    </div>
+    <InvoiceForm v={v} errors={errors} companies={companies} poRows={fin.summary.poRows} admin={admin} checked={checked} rates={rates} lines={lines} clients={clients} id="inv" />
+    <div class="actions-inline">
+      {admin ? (
+        <>
+          <button class="btn btn-primary" type="submit" name="intent" value="emit_send" data-busy="Emitiendo…"
+              data-requires="#inv-billed_tax_id, #inv-billed_address, #inv-concept, #inv-billed_email" data-requires-msg="Hace falta para emitir y enviar la factura."><Icon name="send" size={18} /> Emitir y enviar al cliente</button>
+          <button class="btn btn-ghost" type="submit" name="intent" value="emit" data-busy="Emitiendo…"
+              data-requires="#inv-billed_tax_id, #inv-billed_address, #inv-concept" data-requires-msg="Hace falta para emitir la factura.">Emitir sin enviar</button>
+          <button class="btn btn-ghost" type="submit" name="intent" value="draft" formnovalidate data-busy="Guardando…">Guardar borrador</button>
+        </>
+      ) : (
+        <button class="btn btn-primary" type="submit" name="intent" value="draft" data-busy="Enviando…"><Icon name="send" size={18} /> Pedir factura a Administración</button>
+      )}
+      <a class="btn btn-ghost" href={back}>Cancelar</a>
+    </div>
+  </form>
+</App>

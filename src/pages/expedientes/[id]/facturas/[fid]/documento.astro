@@ -1,0 +1,126 @@
+---
+// La factura como documento (la «plantilla» mientras no haya la del programa de contabilidad):
+// emisor, cliente, número, fechas, concepto, desglose por tipo de IVA, total y forma de pago.
+// Se imprime o se guarda en PDF desde el navegador. Un borrador sale marcado como BORRADOR y sin número.
+import '@fontsource/barlow/latin-400.css';
+import '@fontsource/barlow/latin-600.css';
+import '@fontsource/barlow/latin-700.css';
+import '@fontsource/barlow-condensed/latin-800.css';
+import '../../../../../styles/invoice.css';
+import { env } from 'cloudflare:workers';
+import { parseId } from '../../../../../lib/app.js';
+import { getExpediente } from '../../../../../lib/data.js';
+import { invoiceSettings } from '../../../../../lib/invoicing.js';
+import { linesOf, pctText } from '../../../../../lib/vat.js';
+import { num } from '../../../../../lib/money.js';
+import { formatDate } from '../../../../../lib/dates.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const fid = parseId(Astro.params.fid);
+const [exp, inv, settings, pos] = id && fid ? await Promise.all([
+  getExpediente(db, id),
+  db.prepare('SELECT * FROM invoices WHERE id = ? AND expediente_id = ?').bind(fid, id).first(),
+  invoiceSettings(db),
+  db.prepare('SELECT po.number FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = ? ORDER BY po.id').bind(fid).all().then((r) => r.results),
+]) : [];
+if (!exp || !inv) return Astro.rewrite('/404');
+
+const draft = inv.status === 'por_emitir';
+const c = settings.company;
+const companyName = c.name || `${env.COMPANY_NAME || 'Seven Worlds'} Events & Congresses`;
+const lines = linesOf(inv).map((l) => ({ ...l, quota: l.total - l.base }));
+const money = (cents) => `${num(cents)} €`;
+const missing = (v, what) => v || `[${what}: pendiente]`;
+const title = draft ? 'Borrador de factura' : `Factura ${inv.number}`;
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title} · {companyName}</title>
+    <link rel="icon" href="/favicon.png" type="image/png" />
+  </head>
+  <body class="invoice-page">
+    <nav class="inv-toolbar">
+      <a href={`/expedientes/${id}/facturas/${fid}`}>← Volver a la factura</a>
+      <span class="inv-note">{draft ? 'Borrador: el número se asigna al emitirla.' : 'Documento generado por la aplicación (aún sin la plantilla de contabilidad).'}</span>
+      <button type="button" data-print>Imprimir / Guardar PDF</button>
+    </nav>
+
+    <article class:list={['invoice', { 'is-draft': draft, 'is-void': inv.status === 'anulada' }]}>
+      {draft && <p class="inv-stamp">Borrador</p>}
+      {inv.status === 'anulada' && <p class="inv-stamp">Anulada</p>}
+      <header class="inv-head">
+        <img src="/brand/logo.png" alt={companyName} width="178" height="85" />
+        <div class="inv-title">
+          <h1>Factura</h1>
+          <p class="inv-number">{draft ? 'Sin número (borrador)' : inv.number}</p>
+        </div>
+      </header>
+
+      <section class="inv-parties">
+        <div>
+          <h2>Emisor</h2>
+          <p><strong>{companyName}</strong></p>
+          <p>CIF: {missing(c.taxId, 'CIF')}</p>
+          <p>{missing(c.address, 'dirección')}</p>
+          {c.email && <p>{c.email}</p>}
+        </div>
+        <div>
+          <h2>Cliente</h2>
+          <p><strong>{inv.billed_to}</strong></p>
+          <p>NIF/CIF: {missing(inv.billed_tax_id, 'NIF/CIF')}</p>
+          <p>{missing(inv.billed_address, 'dirección fiscal')}</p>
+          {inv.billed_email && <p>{inv.billed_email}</p>}
+        </div>
+      </section>
+
+      <dl class="inv-meta">
+        <div><dt>Fecha de emisión</dt><dd>{inv.issued_on ? formatDate(inv.issued_on) : '—'}</dd></div>
+        <div><dt>Vencimiento</dt><dd>{inv.due_date ? formatDate(inv.due_date) : '—'}</dd></div>
+        <div><dt>Expediente</dt><dd>{exp.number ? `EXP ${exp.number}` : exp.name}</dd></div>
+        {pos.length > 0 && <div><dt>{pos.length > 1 ? 'Sus PO' : 'Su PO'}</dt><dd>{pos.map((p) => p.number).join(', ')}</dd></div>}
+      </dl>
+
+      <table class="inv-lines">
+        <thead>
+          <tr><th scope="col">Concepto</th><th scope="col" class="num">Base imponible</th><th scope="col" class="num">IVA</th><th scope="col" class="num">Cuota</th><th scope="col" class="num">Total</th></tr>
+        </thead>
+        <tbody>
+          {lines.map((l, i) => (
+            <tr>
+              <td>{i === 0 ? <span class="inv-concept">{inv.concept || exp.name}</span> : <span class="muted">Ídem</span>}</td>
+              <td class="num">{money(l.base)}</td>
+              <td class="num">{l.rate != null ? `${pctText(l.rate)} %` : l.label}</td>
+              <td class="num">{money(l.quota)}</td>
+              <td class="num">{money(l.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <table class="inv-totals">
+        <tbody>
+          <tr><th scope="row">Base imponible</th><td class="num">{money(inv.base_cents)}</td></tr>
+          {lines.map((l) => <tr><th scope="row">{l.rate != null ? l.label : 'IVA (varios tipos)'}</th><td class="num">{money(l.quota)}</td></tr>)}
+          <tr class="inv-total"><th scope="row">Total factura</th><td class="num">{money(inv.total_cents)}</td></tr>
+        </tbody>
+      </table>
+
+      <section class="inv-pay">
+        <h2>Forma de pago</h2>
+        <p>Transferencia bancaria{inv.due_date && ` antes del ${formatDate(inv.due_date)}`} a la cuenta {missing(c.iban, 'IBAN')}.</p>
+        <p>Indique en el concepto el número de factura{pos.length ? ' y la PO' : ''}.</p>
+      </section>
+
+      <footer class="inv-foot">{companyName} · CIF {missing(c.taxId, 'CIF')} · {missing(c.address, 'dirección')}</footer>
+    </article>
+
+    <script>
+      document.querySelector('[data-print]')?.addEventListener('click', () => window.print());
+    </script>
+  </body>
+</html>

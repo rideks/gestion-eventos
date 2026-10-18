@@ -159,13 +159,45 @@ export const PoSchema = z.object({
   notes: optText('Notas', 1000),
 });
 
+/**
+ * Factura al cliente (borrador o pedida). El número no se escribe: se asigna al emitirla.
+ * billed_*: los datos fiscales del cliente que salen en la factura y el email al que se envía.
+ */
 export const InvoiceSchema = z.object({
   billed_to: reqText('Cliente', 2, 120),
-  concept: optText('Concepto', 200),
-  number: optText('Nº de factura', 60),
+  billed_tax_id: optText('NIF/CIF del cliente', 20),
+  billed_address: optText('Dirección fiscal', 300),
+  billed_email: optEmail('Email de facturación'),
+  concept: optText('Concepto', 500),
   issued_on: optDate('Fecha de emisión'),
   due_date: optDate('Vencimiento'),
   notes: optText('Notas', 1000),
+});
+
+/** Para emitirla hacen falta los datos que exige una factura (además del importe) */
+export const EmitSchema = z.object({
+  billed_tax_id: reqText('NIF/CIF del cliente', 5, 20),
+  billed_address: reqText('Dirección fiscal del cliente', 5, 300),
+  concept: reqText('Concepto (lo que se factura)', 3, 500),
+  issued_on: reqDate('Fecha de emisión'),
+  due_date: optDate('Vencimiento'),
+});
+
+/** Envío al cliente (simulado) */
+export const SendSchema = z.object({
+  sent_to: z.preprocess((v) => clean(v ?? '').toLowerCase(), z.email('Email de facturación: no es un email válido').max(200)),
+});
+
+/** Ajustes de facturación: formato del número, próximo número y datos del emisor */
+export const InvoiceSettingsSchema = z.object({
+  invoice_pattern: reqText('Formato', 3, 40),
+  invoice_next: z.preprocess((v) => Number(clean(v ?? '')), z.number({ error: 'Próximo número: escribe un número' })
+    .int('Próximo número: sin decimales').min(1, 'Próximo número: mayor que 0').max(999_999, 'Próximo número: como mucho 999999')),
+  company_legal_name: optText('Razón social', 120),
+  company_tax_id: optText('CIF', 20),
+  company_address: optText('Dirección', 300),
+  company_iban: optText('IBAN', 40),
+  company_email: optEmail('Email de facturación'),
 });
 
 /** Un tipo de IVA nuevo (Ajustes) */
@@ -180,12 +212,6 @@ export const VatRateSchema = z.object({
 export const FirstNumberSchema = z.object({
   first_number: z.preprocess((v) => Number(clean(v ?? '')), z.number({ error: 'Primer número: escribe un número' })
     .int('Primer número: sin decimales').min(1, 'Primer número: mayor que 0').max(9_999_999)),
-});
-
-export const IssueSchema = z.object({
-  number: reqText('Nº de factura', 1, 60),
-  issued_on: reqDate('Fecha de emisión'),
-  due_date: optDate('Vencimiento'),
 });
 
 export const CollectSchema = z.object({

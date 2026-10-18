@@ -96,6 +96,12 @@ export function documentState(d, paid = true) {
     : { key: 'recibida', label: 'Factura recibida · espera al pago', tone: 'info' };
 }
 
+/** Envío al cliente de una factura emitida (y aún sin cobrar): enviada o sin enviar */
+export function sentState(i) {
+  if (i.status !== 'emitida') return null;
+  return i.sent_at ? { key: 'enviada', label: 'Enviada', tone: 'ok' } : { key: 'sin_enviar', label: 'Sin enviar al cliente', tone: 'warn' };
+}
+
 export function invoiceState(i, now) {
   if (i.status === 'por_emitir') return { key: 'por_emitir', label: 'Por emitir', tone: 'warn' };
   if (i.status === 'cobrada') return { key: 'cobrada', label: 'Cobrada', tone: 'ok' };
@@ -136,6 +142,7 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const toIssue = live.filter((i) => i.status === 'por_emitir');
   const collectedRows = live.filter((i) => i.status === 'cobrada');
   const uncollected = live.filter((i) => i.status === 'emitida');
+  const unsent = uncollected.filter((i) => !i.sent_at);
   const overdueInvoices = uncollected.filter((i) => isDate(i.due_date) && i.due_date < now);
   const sales = { base: sum(live, 'base_cents'), total: sum(live, 'total_cents') };
   const invoiced = { base: sum(issued, 'base_cents'), total: sum(issued, 'total_cents') };
@@ -169,7 +176,7 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
 
   return {
     payments, sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview,
-    sales, invoiced, collected, toCollect, toIssue, uncollected, overdueInvoices,
+    sales, invoiced, collected, toCollect, toIssue, uncollected, unsent, overdueInvoices,
     poRows, poTotal, poLeft, poClosedLeft, poMissing,
     expectedMargin, margin,
     // Venta del cierre: lo facturado (o pedido) si ya hay facturas; si no, el presupuesto
@@ -193,9 +200,10 @@ export function nextSteps(e, s, now) {
   if (s.overdueInvoices.length) add('danger', 'cobros', `${plural(s.overdueInvoices.length, 'factura', 'facturas')} con el cobro vencido (${eur(sum(s.overdueInvoices, 'total_cents'))})`, s.overdueInvoices, toInvoice);
   if (s.soon.length) add('warn', 'pagos', `${plural(s.soon.length, 'pago vence', 'pagos vencen')} en los próximos ${SOON_DAYS} días (${eur(sum(s.soon, 'total_cents'))})`, s.soon, toPayment);
   if (s.toIssue.length) add('warn', 'cobros', `${plural(s.toIssue.length, 'factura', 'facturas')} al cliente por emitir (${eur(sum(s.toIssue, 'total_cents'))})`, s.toIssue, toInvoice);
+  if (s.unsent.length) add('warn', 'cobros', `${plural(s.unsent.length, 'factura emitida', 'facturas emitidas')} sin enviar al cliente`, s.unsent, (i) => `facturas/${i.id}#envio`);
   if (s.poLeft > 0) {
     const open = s.poRows.filter((p) => p.billable_cents > 0);
-    add('warn', 'cobros', `Hay ${eur(s.poLeft)} en PO sin facturar`, open, (p) => `po/${p.id}`);
+    add('warn', 'cobros', `Hay ${eur(s.poLeft)} en PO sin facturar`, open, (p) => `facturas/nueva?po=${p.id}`);
   }
   if (s.poMissing > 0 && s.sale.base > 0) steps.push({ tone: 'info', tab: 'cobros', text: `Faltan PO del cliente por ${eur(s.poMissing)} para cubrir el presupuesto`, path: 'cobros?nuevo=po' });
   // Sólo las que ya se pueden conformar (el pago está hecho); las demás esperan a su pago

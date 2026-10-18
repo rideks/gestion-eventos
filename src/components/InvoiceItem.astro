@@ -2,13 +2,14 @@
 // Una factura al cliente (en el expediente y en la bandeja de cobros).
 import Icon from './Icon.astro';
 import Pill from './Pill.astro';
-import { invoiceState } from '../lib/finance.js';
+import { invoiceState, sentState } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { formatDate, dueText } from '../lib/dates.js';
 import { fileUrl } from '../lib/files.js';
 
 const { i, now, showExp = false, canIssue = false, canEdit = true, poNumbers = '' } = Astro.props;
 const state = invoiceState(i, now);
+const sent = sentState(i);
 const href = fileUrl(i);
 const edit = `/expedientes/${i.expediente_id}/facturas/${i.id}`;
 const pos = poNumbers || i.po_numbers;
@@ -29,6 +30,7 @@ const actions = canEdit && canIssue;
     </span>
     <span class="item-flags">
       <Pill state={state} />
+      {sent && <Pill state={sent} />}
       {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{i.file_name}</a>}
     </span>
   </div>

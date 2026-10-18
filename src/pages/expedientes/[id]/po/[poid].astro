@@ -159,7 +159,7 @@ const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'dang
     {!locked && (
       <div class="actions-inline mt no-print">
         {!po.closed && left > 0 && (
-          <a class="btn btn-primary btn-sm" href={`${back}?nuevo=factura&po=${poid}#nueva-factura`}>
+          <a class="btn btn-primary btn-sm" href={`/expedientes/${id}/facturas/nueva?po=${poid}`}>
             <Icon name="send" size={16} /> {admin ? 'Facturar' : 'Pedir factura'} {eur(left)}</a>
         )}
         {!po.closed && left > 0 && (
