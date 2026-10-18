@@ -12,17 +12,18 @@ const state = paymentState(p, now);
 const href = fileUrl(p);
 const edit = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
 const invoice = supplierInvoiceState(p);
-const missingInvoice = !p.supplier_invoice_id && p.total_cents !== 0;
+const missingInvoice = !p.invoice_count && p.total_cents !== 0;
 const canPay = canEdit && p.status !== 'pagado';
+const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name });
 ---
 <li class="item is-row">
   <div class="item-body">
     {showExp && <a class="item-meta" href={`/expedientes/${p.expediente_id}/pagos`}><strong>{p.exp_number ? `EXP ${p.exp_number}` : 'Solicitud'}</strong> · {p.exp_name}</a>}
     <a class="item-title" href={edit}>{p.supplier}{p.concept && <span class="muted"> · {p.concept}</span>}</a>
     <span class="item-meta">
-      {p.supplier_invoice_id
-        ? <span>Factura {p.invoice_number ?? 'sin número todavía'}{p.invoice_date && ` · ${formatDate(p.invoice_date)}`}</span>
-        : <span>Sin factura todavía</span>}
+      {p.invoice_count
+        ? <span>{p.invoice_count > 1 ? 'Facturas' : 'Factura'} {p.invoice_number ?? 'sin número todavía'}</span>
+        : <span>{p.proforma_count ? 'Con proforma, sin factura todavía' : 'Sin factura todavía'}</span>}
       {p.status === 'pagado'
         ? <span>Pagado el {formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</span>
         : p.due_date ? <span>Límite {formatDate(p.due_date)} · {dueText(p.due_date, now)}</span> : <span>Sin fecha límite</span>}
@@ -30,8 +31,8 @@ const canPay = canEdit && p.status !== 'pagado';
     <span class="item-flags">
       <Pill state={state} />
       {invoice && invoice.key !== 'sin' && <Pill state={invoice} />}
-      {!p.planned && <span class="pill pill-gold" title="No estaba en la previsión de pagos de la solicitud">Añadido después</span>}
       {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{p.file_name}</a>}
+      {receipt && <a class="doc-link" href={receipt} target="_blank" rel="noopener"><Icon name="banknote" size={15} />Justificante</a>}
     </span>
   </div>
   <div class="item-amount">
@@ -40,7 +41,7 @@ const canPay = canEdit && p.status !== 'pagado';
   </div>
   <div class="item-foot">
       {canPay && (
-        <form method="post" class="quick-form">
+        <form method="post" class="quick-form" data-has-receipt={p.receipt_file_id ? '1' : '0'} data-receipt-href={`${edit}#justificante`}>
           <input type="hidden" name="intent" value="pay" />
           <input type="hidden" name="payment_id" value={p.id} />
           <label class="visually-hidden" for={`paid-${p.id}`}>Fecha de pago</label>
@@ -49,7 +50,7 @@ const canPay = canEdit && p.status !== 'pagado';
           <select id={`method-${p.id}`} name="method">
             {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option value={k}>{v}</option>)}
           </select>
-          <button class="btn btn-sm" type="submit" data-busy="Guardando…"><Icon name="check" size={16} /> Pagado</button>
+          <button class="btn btn-sm" type="submit" data-receipt-check data-busy="Guardando…"><Icon name="check" size={16} /> Pagado</button>
         </form>
       )}
       {canEdit && missingInvoice

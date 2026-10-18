@@ -1,11 +1,14 @@
 ---
-// Campos de un pago a proveedor (alta y edición). La factura va aparte (SupplierInvoiceFields):
-// una misma factura puede cubrir varios pagos.
+// Campos de un pago a proveedor (alta y edición). Los documentos van aparte (SupplierDocFields):
+// un pago puede tener varias facturas y proformas, y una factura puede cubrir varios pagos.
+// El importe se escribe CON IVA (lo que pone la factura) y el sin IVA se calcula.
 import VatLines from './VatLines.astro';
+import FileField from './FileField.astro';
 import { PAYMENT_METHODS } from '../lib/finance.js';
 
 // lines: desglose por tipos de IVA (guardado o lo escrito antes de un error)
-const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [] } = Astro.props;
+// receipt: muestra el campo del justificante bancario (si se marca «Ya pagado» por transferencia)
+const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [], receipt = false } = Astro.props;
 const status = v.status ?? 'pendiente';
 ---
 <div class="row row-2">
@@ -19,7 +22,8 @@ const status = v.status ?? 'pendiente';
     <input id={`${id}-concept`} name="concept" type="text" maxlength="160" value={v.concept ?? ''} placeholder="Alojamiento, transferencia, comisión…" />
   </div>
 </div>
-<VatLines id={id} lines={lines} rates={rates} error={errors.amount} />
+<VatLines id={id} lines={lines} rates={rates} error={errors.amount} totalFirst
+  hint="Escribe el importe con IVA de la factura y el sin IVA se calcula solo. Si hay varios tipos de IVA, añade una línea por tipo. Abonos y comisiones, en negativo." />
 <div class="row row-2">
   <div class:list={['field', { 'has-error': errors.due_date }]}>
     <label for={`${id}-due_date`}>Fecha límite de pago</label>
@@ -34,18 +38,21 @@ const status = v.status ?? 'pendiente';
     </div>
   </fieldset>
 </div>
-<div class="row row-2">
-  <div class:list={['field', { 'has-error': errors.paid_on }]}>
-    <label for={`${id}-paid_on`}>Fecha de pago <span class="opt">(si ya está pagado)</span></label>
-    <input id={`${id}-paid_on`} name="paid_on" type="date" value={v.paid_on ?? ''} />
+<div class="paid-only" data-paid-only>
+  <div class="row row-2">
+    <div class:list={['field', { 'has-error': errors.paid_on }]}>
+      <label for={`${id}-paid_on`}>Fecha de pago</label>
+      <input id={`${id}-paid_on`} name="paid_on" type="date" value={v.paid_on ?? ''} />
+    </div>
+    <div class:list={['field', { 'has-error': errors.method }]}>
+      <label for={`${id}-method`}>Forma de pago</label>
+      <select id={`${id}-method`} name="method">
+        <option value="">—</option>
+        {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k} selected={v.method === k}>{l}</option>)}
+      </select>
+    </div>
   </div>
-  <div class="field">
-    <label for={`${id}-method`}>Forma de pago</label>
-    <select id={`${id}-method`} name="method">
-      <option value="">—</option>
-      {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k} selected={v.method === k}>{l}</option>)}
-    </select>
-  </div>
+  {receipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." />}
 </div>
 <div class:list={['field', { 'has-error': errors.notes }]}>
   <label for={`${id}-notes`}>Notas <span class="opt">(opcional)</span></label>

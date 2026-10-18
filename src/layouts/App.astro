@@ -123,7 +123,20 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
       </form>
     </dialog>
 
+    <dialog id="alert-dialog" class="confirm-dialog" aria-labelledby="alert-text">
+      <form method="dialog">
+        <span class="confirm-icon"><Icon name="triangle-alert" size={26} /></span>
+        <p id="alert-text" data-alert-text></p>
+        <div class="confirm-actions">
+          <button class="btn btn-ghost" value="cancel" data-alert-close>Entendido</button>
+          <a class="btn btn-primary" href="#" data-alert-link hidden>Subir justificante</a>
+        </div>
+      </form>
+    </dialog>
+
     <script>
+      import { needsReceipt, RECEIPT_MISSING } from '../lib/finance.js';
+
       // Confirmación antes de acciones delicadas: <button data-confirm="¿Borrar…?" data-confirm-ok="Borrar">
       // Ventana propia (no la del navegador, que algunos bloquean). Al confirmar se repite el clic.
       const dialog = document.getElementById('confirm-dialog');
@@ -158,6 +171,62 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         }, { once: true });
         dialog.showModal();
       });
+      // «Pagado» por transferencia sin justificante: aviso antes de enviar (el servidor también lo comprueba).
+      // <form data-has-receipt="0|1" data-receipt-href="ficha#justificante"> + <button data-receipt-check>;
+      // data-receipt-check="status": sólo si el formulario pasa el pago a «Ya pagado».
+      const alertBox = document.getElementById('alert-dialog');
+      document.addEventListener('submit', (e) => {
+        const form = e.target;
+        const btn = e.submitter;
+        if (!(form instanceof HTMLFormElement) || !(btn instanceof HTMLElement) || !btn.hasAttribute('data-receipt-check')) return;
+        if (btn.dataset.receiptCheck === 'status') {
+          const status = form.querySelector('input[name="status"]:checked');
+          if (!(status instanceof HTMLInputElement) || status.value !== 'pagado' || form.dataset.wasPaid === '1') return;
+        }
+        const method = form.elements.namedItem('method');
+        if (!(method instanceof HTMLSelectElement) || !needsReceipt(method.value) || form.dataset.hasReceipt === '1') return;
+        const file = form.querySelector('input[type="file"][name="receipt"]');
+        if (file instanceof HTMLInputElement && file.files?.length) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (!(alertBox instanceof HTMLDialogElement) || typeof alertBox.showModal !== 'function') {
+          window.alert(RECEIPT_MISSING);
+          return;
+        }
+        alertBox.querySelector('[data-alert-text]').textContent = RECEIPT_MISSING;
+        const link = alertBox.querySelector('[data-alert-link]');
+        const close = alertBox.querySelector('[data-alert-close]');
+        const href = form.dataset.receiptHref;
+        link.hidden = !href;
+        if (href) link.href = href;
+        close.className = href ? 'btn btn-ghost' : 'btn btn-primary';
+        alertBox.addEventListener('close', () => {
+          // En la ficha: lleva al campo del justificante
+          if (!href && file instanceof HTMLInputElement) {
+            file.closest('[data-file-field]')?.scrollIntoView({ block: 'center' });
+            file.focus();
+          }
+        }, { once: true });
+        alertBox.showModal();
+      }, true);
+
+      // Desplegables: las sugerencias (proveedores, clientes…) salen al escribir, no nada más entrar en el
+      // campo, y el navegador no propone lo escrito otras veces: así se ve el ejemplo del campo.
+      const syncList = (input) => {
+        if (!input.dataset.list) {
+          if (!input.hasAttribute('list')) return;
+          input.dataset.list = input.getAttribute('list');
+        }
+        if (input.value.trim().length >= 2) input.setAttribute('list', input.dataset.list);
+        else input.removeAttribute('list');
+      };
+      document.querySelectorAll('input[list]').forEach(syncList);
+      document.addEventListener('input', (e) => {
+        if (e.target instanceof HTMLInputElement) syncList(e.target);
+      });
+      document.querySelectorAll('.a-main input:not([type="hidden"]):not([autocomplete]), .a-main textarea:not([autocomplete])')
+        .forEach((el) => el.setAttribute('autocomplete', 'off'));
+
       // Evita el doble envío (y da feedback mientras se suben documentos)
       document.addEventListener('submit', (e) => {
         const form = e.target;

@@ -23,7 +23,7 @@ export async function GET({ params }) {
   const salesRows = sales.length
     ? sales.map((i) => [i.billed_to, i.number ?? 'por emitir', csvAmount(i.base_cents), csvAmount(i.total_cents)])
     : [[exp.company, `presupuesto v${fin.budget?.version ?? ''}`, csvAmount(s.sale.base), csvAmount(s.sale.total)]];
-  const costRows = [...fin.payments].sort((a, b) => a.id - b.id).map((p) => [p.invoice_number ?? (p.supplier_invoice_id ? 'sin nº' : 'pendiente'), [p.supplier, p.concept].filter(Boolean).join(' - '), csvAmount(p.base_cents), csvAmount(p.total_cents)]);
+  const costRows = [...fin.payments].sort((a, b) => a.id - b.id).map((p) => [p.invoice_number ?? (p.invoice_count ? 'sin nº' : p.proforma_count ? 'proforma' : 'pendiente'), [p.supplier, p.concept].filter(Boolean).join(' - '), csvAmount(p.base_cents), csvAmount(p.total_cents)]);
   const n = Math.max(costRows.length, salesRows.length);
   const profit = s.closingSales.base - s.cost.base;
   const profitTotal = s.closingSales.total - s.cost.total;

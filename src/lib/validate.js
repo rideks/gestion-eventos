@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { isDate } from './dates.js';
 import { parseAmount } from './money.js';
 import { parseRate, rateLabel, vatColumn, baseFromTotalBp } from './vat.js';
-import { PAYMENT_METHODS } from './finance.js';
+import { PAYMENT_METHODS, DOC_KINDS } from './finance.js';
 
 // Quita caracteres de control (salvo saltos de línea y tabuladores) y espacios sobrantes
 const clean = (v) => (typeof v === 'string' ? v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim() : v);
@@ -124,13 +124,19 @@ export const PaymentSchema = z.object({
   notes: optText('Notas', 1000),
 }).refine((d) => d.status !== 'pagado' || d.paid_on, { path: ['paid_on'], message: 'Fecha de pago: indica cuándo se pagó' });
 
-/** Factura de un proveedor (lo que se anota del documento) */
-export const SupplierInvoiceSchema = z.object({
-  invoice_number: optText('Nº de factura', 60),
-  invoice_date: optDate('Fecha de la factura'),
+/**
+ * Documento de un proveedor: si es factura o proforma y lo que se anota de él.
+ * El tipo se comprueba en cada pantalla (en el alta de un pago, el documento es opcional).
+ * comment: por qué se sube (obligatorio si ya hay una factura conforme y se sube otra).
+ */
+export const SupplierDocSchema = z.object({
+  doc_kind: z.preprocess(blankToNull, z.enum(Object.keys(DOC_KINDS), { error: 'Tipo de documento: factura o proforma' }).nullable()),
+  invoice_number: optText('Nº del documento', 60),
+  invoice_date: optDate('Fecha del documento'),
   invoice_total: z.preprocess((v) => parseAmount(v), z.custom((v) => v === null || (typeof v === 'number' && !Number.isNaN(v)),
-    'Total de la factura: escríbelo con números, por ejemplo 50.000 o 3303,60')),
-}).transform((d) => ({ number: d.invoice_number, issued_on: d.invoice_date, total: d.invoice_total }));
+    'Total del documento: escríbelo con números, por ejemplo 50.000 o 3303,60')),
+  doc_comment: optText('Comentario', 500),
+}).transform((d) => ({ kind: d.doc_kind, number: d.invoice_number, issued_on: d.invoice_date, total: d.invoice_total, comment: d.doc_comment }));
 
 /** Administración la da por buena: el número es obligatorio */
 export const ConformSchema = z.object({
@@ -140,7 +146,7 @@ export const ConformSchema = z.object({
 
 export const PaySchema = z.object({
   paid_on: reqDate('Fecha de pago'),
-  method,
+  method: z.enum(Object.keys(PAYMENT_METHODS), { error: 'Forma de pago: elige cómo se ha pagado' }),
 });
 
 // ── Cliente ────────────────────────────────────────────────────────────────

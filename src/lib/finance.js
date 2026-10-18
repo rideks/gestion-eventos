@@ -18,6 +18,14 @@ export const PAYMENT_METHODS = {
   otro: 'Otro',
 };
 
+/** Formas de pago que necesitan el justificante bancario para marcarse como pagadas */
+export const RECEIPT_METHODS = ['transferencia'];
+export const needsReceipt = (method) => RECEIPT_METHODS.includes(method);
+export const RECEIPT_MISSING = 'Falta el justificante bancario de la transferencia: súbelo antes de marcar el pago como pagado.';
+
+/** Documentos del proveedor: facturas (Administración las revisa) y proformas (no avisan a nadie) */
+export const DOC_KINDS = { factura: 'Factura', proforma: 'Proforma' };
+
 // ── Estados ────────────────────────────────────────────────────────────────
 // tone → clase .pill-<tone> (ok, warn, danger, info, accent, muted)
 
@@ -37,25 +45,33 @@ export function paymentState(p, now) {
     if (d < 0) return { key: 'vencido', label: 'Vencido', tone: 'danger' };
     if (d <= SOON_DAYS) return { key: 'pronto', label: d === 0 ? 'Vence hoy' : 'Vence pronto', tone: 'warn' };
   }
-  if (!p.supplier_invoice_id && p.planned) return { key: 'previsto', label: 'Previsto', tone: 'muted' };
+  if (!p.invoice_count && p.planned) return { key: 'previsto', label: 'Previsto', tone: 'muted' };
   return { key: 'pendiente', label: 'Por pagar', tone: 'info' };
 }
 
 /**
- * Factura del proveedor de un pago:
- *  · sin factura (en rojo si ya está pagado: hay que reclamarla)
- *  · subida y pendiente de que Administración la revise (naranja)
- *  · revisada y conforme (verde)
+ * Factura del proveedor de un pago (p.invoice_count, p.invoice_pending, p.proforma_count):
+ *  · alguna factura sin revisar por Administración (naranja), aunque ya hubiera otra conforme
+ *  · todas revisadas y conformes (verde)
+ *  · sin factura: en rojo si ya está pagado (hay que reclamarla); si hay proforma, se indica
  */
 export function supplierInvoiceState(p) {
-  if (!p.supplier_invoice_id) {
-    if (p.total_cents === 0) return null;
-    return p.status === 'pagado'
-      ? { key: 'falta', label: 'Falta factura', tone: 'danger' }
-      : { key: 'sin', label: 'Sin factura', tone: 'muted' };
+  if (p.invoice_count > 0) {
+    return p.invoice_pending > 0
+      ? { key: 'revisar', label: 'Factura por revisar', tone: 'orange' }
+      : { key: 'conforme', label: 'Con factura', tone: 'ok' };
   }
-  return p.invoice_review === 'conforme'
-    ? { key: 'conforme', label: 'Con factura', tone: 'ok' }
+  if (p.total_cents === 0 && !p.proforma_count) return null;
+  if (p.status === 'pagado') return { key: 'falta', label: 'Falta factura', tone: 'danger' };
+  if (p.proforma_count > 0) return { key: 'proforma', label: 'Con proforma', tone: 'info' };
+  return { key: 'sin', label: 'Sin factura', tone: 'muted' };
+}
+
+/** Estado de un documento del proveedor: proforma (sin revisión), factura por revisar o conforme */
+export function documentState(d) {
+  if (d.kind === 'proforma') return { key: 'proforma', label: 'Proforma', tone: 'info' };
+  return d.review === 'conforme'
+    ? { key: 'conforme', label: 'Factura conforme', tone: 'ok' }
     : { key: 'revisar', label: 'Factura por revisar', tone: 'orange' };
 }
 
@@ -75,7 +91,7 @@ const sum = (rows, field) => rows.reduce((acc, r) => acc + (r[field] ?? 0), 0);
  * @param {{ budget?: any, payments: any[], pos: any[], invoices: any[], allocations: any[] }} data
  *   allocations: filas de invoice_pos ({ invoice_id, po_id, amount_cents })
  */
-export function summarize({ budget = null, payments = [], pos = [], invoices = [], allocations = [] }, now) {
+export function summarize({ budget = null, payments = [], pos = [], invoices = [], allocations = [], documents = [] }, now) {
   // Venta prevista: el presupuesto vigente (última versión)
   const sale = { base: budget?.base_cents ?? 0, total: budget?.total_cents ?? 0 };
 
@@ -87,10 +103,11 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const toPay = sum(pendingRows, 'total_cents');
   const overdue = pendingRows.filter((p) => isDate(p.due_date) && p.due_date < now);
   const soon = pendingRows.filter((p) => isDate(p.due_date) && p.due_date >= now && daysBetween(now, p.due_date) <= SOON_DAYS);
-  const withoutInvoice = payments.filter((p) => !p.supplier_invoice_id && p.total_cents !== 0);
+  // Una proforma no es una factura: el pago sigue «sin factura»
+  const withoutInvoice = payments.filter((p) => !p.invoice_count && p.total_cents !== 0);
   const paidWithoutInvoice = withoutInvoice.filter((p) => p.status === 'pagado');
   // Facturas subidas que Administración aún no ha revisado (una factura puede cubrir varios pagos)
-  const toReview = [...new Set(payments.filter((p) => p.supplier_invoice_id && p.invoice_review !== 'conforme').map((p) => p.supplier_invoice_id))];
+  const toReview = documents.filter((d) => d.kind === 'factura' && d.review !== 'conforme');
 
   // Facturas al cliente (las anuladas no cuentan)
   const live = invoices.filter((i) => i.status !== 'anulada');

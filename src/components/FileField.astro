@@ -4,11 +4,12 @@ import Icon from './Icon.astro';
 import { ACCEPT, MAX_FILE_BYTES, fileUrl } from '../lib/files.js';
 
 // removable: botón «Quitar» junto al documento actual (envía intent=remove_file en el mismo formulario)
-const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false } = Astro.props;
+// optional: «(opcional)» junto a la etiqueta si no es obligatorio (no se pone si depende de otra cosa)
+const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, optional = true } = Astro.props;
 const href = fileUrl(current);
 ---
 <div class="field">
-  <span class="label">{label}{!required && <span class="opt"> (opcional)</span>}</span>
+  <span class="label">{label}{!required && optional && <span class="opt"> (opcional)</span>}</span>
   {href && (
     <p class="file-current">
       <Icon name="paperclip" size={16} />

@@ -1,19 +1,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, nextNumber } from '../src/lib/finance.js';
-import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, SupplierInvoiceSchema, ConformSchema, parseAllocations, validate } from '../src/lib/validate.js';
+import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, documentState, needsReceipt, nextNumber } from '../src/lib/finance.js';
+import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, SupplierDocSchema, ConformSchema, PaySchema, parseAllocations, validate } from '../src/lib/validate.js';
+import { paidProblem } from '../src/lib/actions.js';
 import { formatRange, dueText, addDays, isDate } from '../src/lib/dates.js';
 
 const NOW = '2026-08-20';
 
 // Cierre del EXP 1287 (Workshop BMW) del Excel de ejemplo, simplificado
-// supplier_invoice_id: la factura del proveedor (una factura puede cubrir varios pagos)
+// invoice_count / invoice_pending / proforma_count: resumen de sus documentos (data.js PAYMENT_SELECT)
 const payments = [
-  { id: 1, supplier: 'Hotel Barceló Valladolid', supplier_invoice_id: 101, invoice_review: 'conforme', invoice_number: '10000001225', base_cents: 238182, total_cents: 262000, status: 'pagado', planned: 1 },
-  { id: 2, supplier: 'Hotel Barceló Valladolid', supplier_invoice_id: 102, invoice_review: 'conforme', invoice_number: 'NT/000086/26', base_cents: -23255, total_cents: -39150, status: 'pagado', planned: 0 },
-  { id: 3, supplier: 'AV Sistemas', supplier_invoice_id: 103, invoice_review: 'pendiente', invoice_number: '238', base_cents: 277406, total_cents: 335661, status: 'pendiente', due_date: '2026-08-10', planned: 1 },
-  { id: 4, supplier: 'Gráficas Mercurio', supplier_invoice_id: null, base_cents: 39100, total_cents: 47311, status: 'pendiente', due_date: '2026-08-25', planned: 1 },
-  { id: 5, supplier: 'Mentimeter', supplier_invoice_id: null, base_cents: 16800, total_cents: 20328, status: 'pagado', planned: 0 },
+  { id: 1, supplier: 'Hotel Barceló Valladolid', invoice_count: 1, invoice_pending: 0, invoice_number: '10000001225', base_cents: 238182, total_cents: 262000, status: 'pagado', planned: 1 },
+  { id: 2, supplier: 'Hotel Barceló Valladolid', invoice_count: 1, invoice_pending: 0, invoice_number: 'NT/000086/26', base_cents: -23255, total_cents: -39150, status: 'pagado', planned: 0 },
+  { id: 3, supplier: 'AV Sistemas', invoice_count: 1, invoice_pending: 1, invoice_number: '238', base_cents: 277406, total_cents: 335661, status: 'pendiente', due_date: '2026-08-10', planned: 1 },
+  { id: 4, supplier: 'Gráficas Mercurio', invoice_count: 0, proforma_count: 1, base_cents: 39100, total_cents: 47311, status: 'pendiente', due_date: '2026-08-25', planned: 1 },
+  { id: 5, supplier: 'Mentimeter', invoice_count: 0, base_cents: 16800, total_cents: 20328, status: 'pagado', planned: 0 },
+];
+// Documentos del expediente: las facturas 101-103 y una proforma (que no se revisa)
+const documents = [
+  { id: 101, kind: 'factura', review: 'conforme' },
+  { id: 102, kind: 'factura', review: 'conforme' },
+  { id: 103, kind: 'factura', review: 'pendiente' },
+  { id: 104, kind: 'proforma', review: 'pendiente' },
 ];
 const pos = [
   { id: 10, number: 'PO-4500123', amount_cents: 1452046 },
@@ -33,15 +41,16 @@ const allocations = [
 const budget = { base_cents: 5000000, total_cents: 6000000 };
 
 test('summarize: costes, ventas, PO y margen', () => {
-  const s = summarize({ budget, payments, pos, invoices, allocations }, NOW);
+  const s = summarize({ budget, payments, pos, invoices, allocations, documents }, NOW);
   assert.equal(s.cost.base, 238182 - 23255 + 277406 + 39100 + 16800);
   assert.equal(s.paid, 262000 - 39150 + 20328);
   assert.equal(s.toPay, 335661 + 47311);
   assert.deepEqual(s.overdue.map((p) => p.id), [3]);
   assert.deepEqual(s.soon.map((p) => p.id), [4]);
+  // La 4 sólo tiene proforma: sigue sin factura
   assert.deepEqual(s.withoutInvoice.map((p) => p.id), [4, 5]);
   assert.deepEqual(s.paidWithoutInvoice.map((p) => p.id), [5]);
-  assert.deepEqual(s.toReview, [103]);
+  assert.deepEqual(s.toReview.map((d) => d.id), [103]);
   // Ventas: sin la anulada, con la que está por emitir
   assert.equal(s.sales.base, 1452046 + 1998000 + 1392220);
   assert.equal(s.invoiced.base, 1452046 + 1998000);
@@ -66,7 +75,7 @@ test('summarize: expediente vacío', () => {
 });
 
 test('nextSteps y closingChecks', () => {
-  const s = summarize({ budget, payments, pos, invoices, allocations }, NOW);
+  const s = summarize({ budget, payments, pos, invoices, allocations, documents }, NOW);
   const steps = nextSteps({ status: 'abierto' }, s, NOW);
   assert.equal(steps[0].tone, 'danger');
   assert.match(steps[0].text, /1 pago vencido/);
@@ -78,7 +87,8 @@ test('nextSteps y closingChecks', () => {
 
   const done = summarize({
     budget,
-    payments: [{ id: 1, supplier_invoice_id: 1, invoice_review: 'conforme', invoice_number: 'F1', base_cents: 100, total_cents: 121, status: 'pagado' }],
+    payments: [{ id: 1, invoice_count: 1, invoice_pending: 0, invoice_number: 'F1', base_cents: 100, total_cents: 121, status: 'pagado' }],
+    documents: [{ id: 1, kind: 'factura', review: 'conforme' }],
     pos: [{ id: 1, amount_cents: 1000 }],
     invoices: [{ id: 1, base_cents: 1000, total_cents: 1210, status: 'cobrada' }],
     allocations: [{ invoice_id: 1, po_id: 1, amount_cents: 1000 }],
@@ -92,7 +102,7 @@ test('estados', () => {
   assert.equal(paymentState({ status: 'pendiente', due_date: NOW }, NOW).label, 'Vence hoy');
   assert.equal(paymentState({ status: 'pendiente', due_date: '2026-08-27' }, NOW).key, 'pronto');
   assert.equal(paymentState({ status: 'pendiente', due_date: '2026-09-30', planned: 1 }, NOW).key, 'previsto');
-  assert.equal(paymentState({ status: 'pendiente', supplier_invoice_id: 7 }, NOW).key, 'pendiente');
+  assert.equal(paymentState({ status: 'pendiente', invoice_count: 1, planned: 1 }, NOW).key, 'pendiente');
   assert.equal(invoiceState({ status: 'emitida', due_date: '2026-08-01' }, NOW).key, 'vencida');
   assert.equal(invoiceState({ status: 'emitida', due_date: '2026-09-01' }, NOW).key, 'emitida');
   assert.equal(expedienteState({ status: 'abierto', start_date: '2026-08-01', end_date: '2026-08-02' }, NOW).key, 'por_cerrar');
@@ -153,31 +163,52 @@ test('fechas', () => {
   assert.equal(isDate('2026-02-30'), false);
 });
 
-test('factura del proveedor: sin factura, por revisar (naranja) y con factura (verde)', () => {
+test('factura del proveedor: sin factura, proforma, por revisar (naranja) y con factura (verde)', () => {
   assert.equal(supplierInvoiceState({ status: 'pendiente', total_cents: 100 }).key, 'sin');
   assert.deepEqual(supplierInvoiceState({ status: 'pagado', total_cents: 100 }), { key: 'falta', label: 'Falta factura', tone: 'danger' });
-  assert.deepEqual(supplierInvoiceState({ supplier_invoice_id: 3, invoice_review: 'pendiente', total_cents: 100 }), { key: 'revisar', label: 'Factura por revisar', tone: 'orange' });
-  assert.deepEqual(supplierInvoiceState({ supplier_invoice_id: 3, invoice_review: 'conforme', total_cents: 100 }), { key: 'conforme', label: 'Con factura', tone: 'ok' });
+  assert.deepEqual(supplierInvoiceState({ invoice_count: 1, invoice_pending: 1, total_cents: 100 }), { key: 'revisar', label: 'Factura por revisar', tone: 'orange' });
+  assert.deepEqual(supplierInvoiceState({ invoice_count: 1, invoice_pending: 0, total_cents: 100 }), { key: 'conforme', label: 'Con factura', tone: 'ok' });
   assert.equal(supplierInvoiceState({ status: 'pagado', total_cents: 0 }), null);
+  // Proforma: no es una factura (si ya está pagado, sigue faltando la factura)
+  assert.deepEqual(supplierInvoiceState({ status: 'pendiente', proforma_count: 1, total_cents: 100 }), { key: 'proforma', label: 'Con proforma', tone: 'info' });
+  assert.equal(supplierInvoiceState({ status: 'pagado', proforma_count: 1, total_cents: 100 }).key, 'falta');
+  // Otra factura subida después de una conforme: vuelve a estar por revisar (naranja)
+  assert.equal(supplierInvoiceState({ invoice_count: 2, invoice_pending: 1, total_cents: 100 }).key, 'revisar');
+  assert.equal(documentState({ kind: 'proforma', review: 'pendiente' }).label, 'Proforma');
+  assert.equal(documentState({ kind: 'factura', review: 'pendiente' }).tone, 'orange');
+  assert.equal(documentState({ kind: 'factura', review: 'conforme' }).tone, 'ok');
 });
 
-test('una factura que cubre dos pagos cuenta una sola vez para revisar', () => {
+test('por revisar: sólo las facturas pendientes (no las proformas), cada una una vez aunque cubra dos pagos', () => {
   const s = summarize({
     payments: [
-      { id: 1, supplier_invoice_id: 9, invoice_review: 'pendiente', base_cents: 1945455, total_cents: 2140000, status: 'pagado' },
-      { id: 2, supplier_invoice_id: 9, invoice_review: 'pendiente', base_cents: 2600000, total_cents: 2860000, status: 'pagado' },
+      { id: 1, invoice_count: 1, invoice_pending: 1, base_cents: 1945455, total_cents: 2140000, status: 'pagado' },
+      { id: 2, invoice_count: 1, invoice_pending: 1, base_cents: 2600000, total_cents: 2860000, status: 'pagado' },
     ],
+    documents: [{ id: 9, kind: 'factura', review: 'pendiente' }, { id: 10, kind: 'proforma', review: 'pendiente' }],
   }, NOW);
-  assert.deepEqual(s.toReview, [9]);
+  assert.deepEqual(s.toReview.map((d) => d.id), [9]);
   assert.equal(s.withoutInvoice.length, 0);
   assert.equal(closingChecks(s).find((c) => /revisa/.test(c.text)).ok, false);
 });
 
-test('validación: datos de la factura del proveedor', () => {
-  assert.deepEqual(validate(SupplierInvoiceSchema, { invoice_number: ' F-12 ', invoice_date: '2026-10-01', invoice_total: '50.000' }).data,
-    { number: 'F-12', issued_on: '2026-10-01', total: 5000000 });
-  assert.deepEqual(validate(SupplierInvoiceSchema, {}).data, { number: null, issued_on: null, total: null });
-  assert.equal(validate(SupplierInvoiceSchema, { invoice_total: 'mucho' }).ok, false);
+test('justificante: obligatorio para marcar pagado por transferencia', () => {
+  assert.equal(needsReceipt('transferencia'), true);
+  assert.equal(needsReceipt('tarjeta'), false);
+  assert.match(paidProblem({ method: 'transferencia', hasReceipt: false }), /justificante/);
+  assert.equal(paidProblem({ method: 'transferencia', hasReceipt: true }), null);
+  assert.equal(paidProblem({ method: 'tarjeta', hasReceipt: false }), null);
+  assert.match(paidProblem({ method: null, hasReceipt: true }), /Forma de pago/);
+  assert.equal(validate(PaySchema, { paid_on: '2026-10-01' }).ok, false);
+  assert.equal(validate(PaySchema, { paid_on: '2026-10-01', method: 'tarjeta' }).ok, true);
+});
+
+test('validación: documento del proveedor (factura o proforma)', () => {
+  assert.deepEqual(validate(SupplierDocSchema, { doc_kind: 'proforma', invoice_number: ' F-12 ', invoice_date: '2026-10-01', invoice_total: '50.000', doc_comment: ' La anterior tenía mal el CIF ' }).data,
+    { kind: 'proforma', number: 'F-12', issued_on: '2026-10-01', total: 5000000, comment: 'La anterior tenía mal el CIF' });
+  assert.deepEqual(validate(SupplierDocSchema, {}).data, { kind: null, number: null, issued_on: null, total: null, comment: null });
+  assert.equal(validate(SupplierDocSchema, { invoice_total: 'mucho' }).ok, false);
+  assert.equal(validate(SupplierDocSchema, { doc_kind: 'albaran' }).ok, false);
   assert.equal(validate(ConformSchema, { invoice_number: '' }).ok, false);
   assert.deepEqual(validate(ConformSchema, { invoice_number: '238' }).data, { number: '238', issued_on: null });
 });

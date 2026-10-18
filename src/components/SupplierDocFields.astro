@@ -1,0 +1,45 @@
+---
+// Un documento del proveedor: hay que indicar si es FACTURA o PROFORMA, y se adjunta el archivo
+// con lo que se sepa de él (número, fecha, total). Las facturas quedan pendientes de que Administración
+// las revise (le sale el aviso); las proformas no avisan a nadie.
+// comment: 'optional' | 'required' (el pago ya tiene una factura conforme: hay que decir por qué se sube otra)
+import Icon from './Icon.astro';
+import FileField from './FileField.astro';
+import { amountInput } from '../lib/money.js';
+
+const { v = {}, errors = {}, id = 'doc', fileRequired = false, comment = 'optional' } = Astro.props;
+const total = typeof v.invoice_total === 'string' ? v.invoice_total : amountInput(v.invoice_total ?? null);
+---
+<fieldset class:list={['field', { 'has-error': errors.doc_kind }]}>
+  <legend class="label">¿Qué documento es?</legend>
+  <div class="segmented">
+    <label><input type="radio" name="doc_kind" value="factura" checked={v.doc_kind === 'factura'} required={fileRequired} /><Icon name="receipt" />Factura</label>
+    <label><input type="radio" name="doc_kind" value="proforma" checked={v.doc_kind === 'proforma'} /><Icon name="file-text" />Proforma</label>
+  </div>
+  <p class="hint">La factura la revisa Administración (le llega el aviso). La proforma se guarda sin avisar a nadie.</p>
+</fieldset>
+<FileField id={`${id}-file`} label="Documento (PDF o foto)" required={fileRequired} />
+<div class="row row-3">
+  <div class:list={['field', { 'has-error': errors.invoice_number }]}>
+    <label for={`${id}-number`}>Nº del documento <span class="opt">(si lo sabes)</span></label>
+    <input id={`${id}-number`} name="invoice_number" type="text" maxlength="60" value={v.invoice_number ?? ''} placeholder="F000102/596" />
+  </div>
+  <div class:list={['field', { 'has-error': errors.invoice_date }]}>
+    <label for={`${id}-date`}>Fecha <span class="opt">(opcional)</span></label>
+    <input id={`${id}-date`} name="invoice_date" type="date" value={v.invoice_date ?? ''} />
+  </div>
+  <div class:list={['field', { 'has-error': errors.invoice_total }]}>
+    <label for={`${id}-total`}>Total <span class="opt">(opcional)</span></label>
+    <input id={`${id}-total`} name="invoice_total" type="text" inputmode="decimal" value={total} placeholder="IVA incluido" />
+  </div>
+</div>
+{comment !== 'none' && (
+  <div class:list={['field', { 'has-error': errors.doc_comment }]}>
+    <label for={`${id}-comment`}>
+      Comentario {comment === 'required' ? <span class="opt">(obligatorio si es otra factura: ¿por qué se sube?)</span> : <span class="opt">(opcional)</span>}
+    </label>
+    <input id={`${id}-comment`} name="doc_comment" type="text" maxlength="500" value={v.doc_comment ?? ''}
+      placeholder={comment === 'required' ? 'La anterior tenía mal el CIF' : 'Para Administración'} />
+  </div>
+)}
+<p class="hint muted small">Si una factura cubre varios pagos (p. ej. dos anticipos), pon su total: así se comprueba que cuadra con la suma de los pagos.</p>

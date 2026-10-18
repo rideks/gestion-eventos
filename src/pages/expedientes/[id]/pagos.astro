@@ -1,26 +1,26 @@
 ---
 // Pagos a proveedores del expediente (lado izquierdo del cierre).
 // Las previsiones de la solicitud ya están aquí: al llegar la factura se le añade y se marca pagada.
-// Se pueden ir añadiendo pagos en cualquier momento: uno con su factura, o varios de golpe
+// Se pueden ir añadiendo pagos en cualquier momento: uno con su factura o proforma, o varios de golpe
 // (al mismo proveedor o a varios).
 import { env } from 'cloudflare:workers';
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import PaymentForm from '../../../components/PaymentForm.astro';
-import SupplierInvoiceFields from '../../../components/SupplierInvoiceFields.astro';
+import SupplierDocFields from '../../../components/SupplierDocFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
 import { parseId, readForm, actor, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
-import { PaymentSchema, SupplierInvoiceSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
-import { attachNewInvoice } from '../../../lib/supplier.js';
+import { PaymentSchema, SupplierDocSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
+import { attachDocument } from '../../../lib/supplier.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../../lib/vat.js';
-import { getFile, UploadError } from '../../../lib/files.js';
+import { getFile, storeFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { plural } from '../../../lib/finance.js';
 import { today } from '../../../lib/dates.js';
-import { isLocked, LOCKED_MSG, markPaid } from '../../../lib/actions.js';
+import { isLocked, LOCKED_MSG, markPaid, paidProblem } from '../../../lib/actions.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
@@ -57,35 +57,52 @@ if (Astro.request.method === 'POST') {
     open = 'uno';
     lines = rawVatLines(form);
     const parsed = validate(PaymentSchema, input);
-    const inv = validate(SupplierInvoiceSchema, input);
+    const doc = validate(SupplierDocSchema, input);
     const amounts = parseVatLines(form, rates);
+    const file = form ? getFile(form, 'file') : null;
+    const receipt = form ? getFile(form, 'receipt') : null;
+    const paidIssue = parsed.ok && parsed.data.status === 'pagado' ? paidProblem({ method: parsed.data.method, hasReceipt: !!receipt }) : null;
     if (!parsed.ok) {
       error = parsed.message;
       errors = parsed.errors;
     } else if (!amounts.ok) {
       error = amounts.message;
       errors = { amount: amounts.message };
-    } else if (!inv.ok) {
-      error = inv.message;
-      errors = inv.errors;
+    } else if (paidIssue) {
+      error = paidIssue;
+      errors = parsed.data.method ? { receipt: paidIssue } : { method: paidIssue };
+    } else if (!doc.ok) {
+      error = doc.message;
+      errors = doc.errors;
+    } else if ((file || doc.data.number) && !doc.data.kind) {
+      error = 'Indica si el documento es una factura o una proforma.';
+      errors = { doc_kind: error };
     } else {
       const d = parsed.data;
-      const payment = await db.prepare(
-        `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines,
-                               due_date, status, paid_on, method, planned, notes, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, supplier_invoice_id`,
-      ).bind(id, d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
-        d.due_date, d.status, d.status === 'pagado' ? d.paid_on : null, d.status === 'pagado' ? d.method : null, d.notes, me.id).first();
-      await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${d.supplier} (${eur(amounts.total)})`).run();
-      // La factura (si se ha adjuntado o se sabe su número) queda pendiente de revisar
-      const file = getFile(form, 'file');
+      const paid = d.status === 'pagado';
       try {
-        if (file || inv.data.number) await attachNewInvoice({ db, bucket: env.DOCS, who, payment, file, data: inv.data });
-        return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
+        // El justificante se guarda antes: si no se puede subir, no se crea nada
+        const receiptId = paid && receipt ? await storeFile({ db, bucket: env.DOCS, file: receipt, expedienteId: id, userId: me.id }) : null;
+        const payment = await db.prepare(
+          `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines,
+                                 due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents`,
+        ).bind(id, d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
+          d.due_date, d.status, paid ? d.paid_on : null, paid ? d.method : null, receiptId, d.notes, me.id).first();
+        await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${d.supplier} (${eur(amounts.total)})${paid ? ' ya pagado' : ''}`).run();
+        // El documento (si se ha adjuntado o se sabe su número): la factura queda pendiente de revisar
+        try {
+          if (file || doc.data.number) await attachDocument({ db, bucket: env.DOCS, who, payment, file, data: doc.data });
+          return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
+        } catch (err) {
+          if (!(err instanceof UploadError)) throw err;
+          // El pago ya está guardado: se lleva a su ficha para volver a intentar subir el documento
+          return Astro.redirect(`/expedientes/${id}/pagos/${payment.id}?aviso_doc=${encodeURIComponent(err.message)}`, 303);
+        }
       } catch (err) {
         if (!(err instanceof UploadError)) throw err;
-        // El pago ya está guardado: se lleva a su ficha para volver a intentar subir la factura
-        return Astro.redirect(`/expedientes/${id}/pagos/${payment.id}?aviso_doc=${encodeURIComponent(err.message)}`, 303);
+        error = `Justificante · ${err.message}`;
+        errors = { receipt: error };
       }
     }
   } else if (input.intent === 'add_many') {
@@ -137,9 +154,9 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
           <h2><Icon name="receipt" /> Pago a proveedor</h2>
           <p class="muted">Un pago nuevo (aunque no estuviera previsto), un pago con tarjeta o un abono/comisión (en negativo).
             Si es la factura de un pago que ya está en la lista, ábrelo y añádesela allí.</p>
-          <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} id="new" />
-          <h3 class="form-sub"><Icon name="paperclip" size={18} /> Factura del proveedor <span class="opt muted">(si ya la tienes)</span></h3>
-          <SupplierInvoiceFields v={v} errors={errors} id="newinv" />
+          <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} receipt id="new" />
+          <h3 class="form-sub"><Icon name="paperclip" size={18} /> Factura o proforma del proveedor <span class="opt muted">(si ya la tienes)</span></h3>
+          <SupplierDocFields v={v} errors={errors} id="newinv" comment="none" />
           <div class="actions-inline">
             <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…">Guardar</button>
           </div>

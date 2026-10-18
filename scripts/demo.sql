@@ -10,7 +10,7 @@
 -- ════════════════════════════════════════════════════════════════════════════
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
-DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
+DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
 DELETE FROM vat_rates;
 INSERT INTO vat_rates (label, rate_bp, is_default) VALUES
@@ -115,18 +115,23 @@ INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents,
   (4, 'Hotel Puente Romano', '2º pago', 2600000, 2860000, '10', '2027-02-28', 1, 2),
   (4, 'DMC Marbella', 'Traslados y actividades', 500000, 605000, '21', '2027-04-01', 1, 2);
 
--- ── Facturas de proveedor ─────────────────────────────────────────────────
--- Arriba los pagos llevan su nº de factura; aquí pasan a ser facturas aparte (como hace la
--- migración 0003). La de La Parrilla (F000102/596) cubre DOS pagos: transferencia y tarjeta.
-INSERT INTO supplier_invoices (expediente_id, supplier, number, issued_on, review, reviewed_by, reviewed_at, uploaded_by, uploaded_at)
-SELECT expediente_id, supplier, invoice_number, MIN(invoice_date), 'conforme', 1, MIN(created_at), MIN(created_by), MIN(created_at)
+-- ── Documentos del proveedor ──────────────────────────────────────────────
+-- Arriba los pagos llevan su nº de factura; aquí pasan a ser facturas aparte (como hacen las
+-- migraciones 0003 y 0005). La de La Parrilla (F000102/596) cubre DOS pagos: transferencia y tarjeta.
+INSERT INTO supplier_invoices (expediente_id, kind, supplier, number, issued_on, review, reviewed_by, reviewed_at, uploaded_by, uploaded_at)
+SELECT expediente_id, 'factura', supplier, invoice_number, MIN(invoice_date), 'conforme', 1, MIN(created_at), MIN(created_by), MIN(created_at)
   FROM payments WHERE invoice_number IS NOT NULL
  GROUP BY expediente_id, supplier, invoice_number;
-UPDATE payments SET supplier_invoice_id = (
-  SELECT si.id FROM supplier_invoices si
-   WHERE si.expediente_id = payments.expediente_id AND si.supplier = payments.supplier AND si.number = payments.invoice_number
-) WHERE invoice_number IS NOT NULL;
+INSERT INTO payment_documents (payment_id, document_id)
+SELECT p.id, si.id FROM payments p JOIN supplier_invoices si
+    ON si.expediente_id = p.expediente_id AND si.supplier = p.supplier AND si.number = p.invoice_number
+ WHERE p.invoice_number IS NOT NULL;
 UPDATE payments SET invoice_number = NULL, invoice_date = NULL, file_id = NULL;
+-- Proforma del hotel para el 1er pago de ROCHE (las proformas no se revisan ni avisan)
+INSERT INTO supplier_invoices (expediente_id, kind, supplier, number, issued_on, total_cents, uploaded_by, uploaded_at, notes)
+VALUES (3, 'proforma', 'Hotel Alfonso XIII', 'PF-2026-118', '2026-09-25', 3500000, 2, '2026-09-26T09:00:00Z', 'Proforma del 1er pago: el hotel la pide pagada antes del 15/10');
+INSERT INTO payment_documents (payment_id, document_id)
+SELECT p.id, si.id FROM payments p, supplier_invoices si WHERE p.concept = '1er pago alojamiento' AND si.number = 'PF-2026-118';
 UPDATE supplier_invoices SET total_cents = 347820 WHERE number = 'F000102/596';
 -- Recién subida por Marta: le sale a Tania en la campana para revisarla
 UPDATE supplier_invoices SET review = 'pendiente', reviewed_by = NULL, reviewed_at = NULL, uploaded_by = 2, uploaded_at = '2026-10-16T10:00:00Z'
@@ -145,6 +150,7 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (2, 1, 'Tania Ruiz', 'expediente.close', 'cerró el expediente: ventas 18.940,00 €, costes 15.655,95 €, beneficio 3.284,05 €', '2026-06-15T16:20:00Z'),
   (3, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 96.400,00 € sin IVA y 4 pagos previstos', '2026-09-20T10:00:00Z'),
   (3, 1, 'Tania Ruiz', 'expediente.open', 'abrió el expediente con el número 1289', '2026-09-21T08:15:00Z'),
+  (3, 2, 'Marta López', 'supplier_proforma.add', 'subió la proforma PF-2026-118 de Hotel Alfonso XIII (35.000,00 €). Comentario: Proforma del 1er pago: el hotel la pide pagada antes del 15/10', '2026-09-26T09:00:00Z'),
   (3, 2, 'Marta López', 'payment.add', 'añadió un pago a Catering Lazo (2.200,00 €)', '2026-10-01T13:00:00Z'),
   (3, 2, 'Marta López', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
   (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.430,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),

@@ -1,6 +1,7 @@
 ---
-// Una factura de proveedor pendiente de revisar (bandeja de Administración).
+// Una factura de proveedor pendiente de revisar (bandeja de Administración). Las proformas no salen aquí.
 // Acceso directo al documento y, para Administración, «Conforme» con su número en la misma fila.
+// Si el pago ya tenía otra factura conforme, se avisa y se ve el comentario de por qué se ha subido otra.
 import Icon from './Icon.astro';
 import { eur } from '../lib/money.js';
 import { formatStamp } from '../lib/dates.js';
@@ -8,7 +9,7 @@ import { fileUrl } from '../lib/files.js';
 
 const { si, canReview = false } = Astro.props;
 const doc = fileUrl({ file_id: si.file_id, file_name: si.file_name });
-const payment = `/expedientes/${si.expediente_id}/pagos/${si.first_payment_id}`;
+const payment = `/expedientes/${si.expediente_id}/pagos/${si.first_payment_id}#factura`;
 const closed = si.exp_status === 'cerrado';
 ---
 <li class="item is-row">
@@ -19,8 +20,10 @@ const closed = si.exp_status === 'cerrado';
       <span>Subida por {si.uploaded_by_name ?? '—'} · {formatStamp(si.uploaded_at)}</span>
       <span>Cubre {si.payment_count} {si.payment_count === 1 ? 'pago' : 'pagos'}: {eur(si.payments_total)}</span>
     </span>
+    {si.notes && <p class="doc-note"><Icon name="message-square" size={15} /> {si.notes}</p>}
     <span class="item-flags">
       <span class="pill pill-orange">Por revisar</span>
+      {si.replaces_conforme ? <span class="pill pill-warn">Otra factura: ya había una conforme</span> : null}
       {si.total_cents != null && (si.total_cents === si.payments_total
         ? <span class="pill pill-ok">La factura cuadra con los pagos</span>
         : <span class="pill pill-danger">Factura de {eur(si.total_cents)}: no cuadra</span>)}

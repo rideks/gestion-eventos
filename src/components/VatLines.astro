@@ -3,13 +3,14 @@
 // «Añadir otro tipo de IVA» añade líneas (hotel al 10 % + servicios al 21 %…).
 // En cada línea basta con escribir uno de los dos importes: el otro se calcula; si se escriben
 // los dos (copiados de la factura, con sus redondeos) se respetan. Los tipos salen de Ajustes.
+// totalFirst: el importe con IVA va primero (pagos a proveedores: se copia el total de la factura).
 import Icon from './Icon.astro';
 import { amountInput } from '../lib/money.js';
 import { MANUAL, defaultRate, pctText } from '../lib/vat.js';
 
 const {
   id = 'vl', lines = [], rates = [], error = null, hint = null,
-  labelBase = 'Importe sin IVA', labelTotal = 'Importe con IVA',
+  labelBase = 'Importe sin IVA', labelTotal = 'Importe con IVA', totalFirst = false,
 } = Astro.props;
 const def = defaultRate(rates);
 const rows = lines.length ? lines : [{ rate: def }];
@@ -18,10 +19,16 @@ const known = new Set(rates.map((r) => String(r.rate_bp)));
 const value = (v) => (typeof v === 'string' ? v : amountInput(v ?? null));
 const rateValue = (l) => (l.rate === null ? MANUAL : String(l.rate ?? def));
 ---
-<div class="vat-lines" data-vat-lines>
+<div class:list={['vat-lines', { 'is-total-first': totalFirst }]} data-vat-lines>
   <div data-vat-rows>
     {rows.map((l, i) => (
       <div class="vat-row" data-vat-row>
+        {totalFirst && (
+          <div class:list={['field vat-total', { 'has-error': error }]}>
+            <label class="vat-label" for={`${id}-total-${i}`}>{labelTotal}</label>
+            <input id={`${id}-total-${i}`} name="vl_total" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={value(l.total)} data-total />
+          </div>
+        )}
         <div class:list={['field vat-base', { 'has-error': error }]}>
           <label class="vat-label" for={`${id}-base-${i}`}>{labelBase}</label>
           <input id={`${id}-base-${i}`} name="vl_base" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={value(l.base)} data-base />
@@ -34,10 +41,12 @@ const rateValue = (l) => (l.rate === null ? MANUAL : String(l.rate ?? def));
             <option value={MANUAL} selected={rateValue(l) === MANUAL}>Otro (escribir los dos importes)</option>
           </select>
         </div>
-        <div class:list={['field vat-total', { 'has-error': error }]}>
-          <label class="vat-label" for={`${id}-total-${i}`}>{labelTotal}</label>
-          <input id={`${id}-total-${i}`} name="vl_total" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={value(l.total)} data-total />
-        </div>
+        {!totalFirst && (
+          <div class:list={['field vat-total', { 'has-error': error }]}>
+            <label class="vat-label" for={`${id}-total-${i}`}>{labelTotal}</label>
+            <input id={`${id}-total-${i}`} name="vl_total" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={value(l.total)} data-total />
+          </div>
+        )}
         <button type="button" class="btn btn-ghost btn-icon vat-remove" data-remove-line aria-label="Quitar esta línea" title="Quitar esta línea" hidden={rows.length === 1}>
           <Icon name="x" size={18} />
         </button>

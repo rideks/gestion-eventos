@@ -535,12 +535,15 @@ fieldset.form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .vat-rate { grid-area: rate; }
 .vat-total { grid-area: total; }
 .vat-remove { grid-area: remove; align-self: end; margin-bottom: 4px; }
+/* Importe con IVA primero (pagos a proveedores) */
+.is-total-first .vat-row { grid-template-areas: 'total base remove' 'rate rate rate'; }
 .vat-row input[data-base], .vat-row input[data-total] { text-align: right; font-variant-numeric: tabular-nums; }
 .vat-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .vat-sum { font-weight: 700; }
 .vat-sum:empty { display: none; }
 @media (min-width: 640px) {
   .vat-row { grid-template-columns: 1fr minmax(170px, 1fr) 1fr auto; grid-template-areas: 'base rate total remove'; padding: 0; border: 0; background: none; }
+  .is-total-first .vat-row { grid-template-areas: 'total rate base remove'; }
   /* Las etiquetas sólo en la primera línea (las demás, para lectores de pantalla) */
   .vat-row:not(:first-child) .vat-label { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
@@ -548,6 +551,7 @@ fieldset.form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .add-group { display: flex; flex-wrap: wrap; gap: 0 10px; }
 .add-group > details[open] { flex-basis: 100%; order: 2; }
 .vat-line { display: block; font-weight: 600; }
+.vat-line.money { white-space: normal; }
 .vat-line + .vat-line { margin-top: 2px; }
 .vat-line:last-child:not(:first-child) { padding-top: 4px; border-top: 1px dashed var(--line); }
 .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
@@ -556,6 +560,9 @@ fieldset.form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .form-sub { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 14px; border-top: 1px dashed var(--line); font-size: 1.02rem; }
 .form-sub svg { color: var(--c1); }
 .warn-text { color: #c2410c; font-weight: 700; }
+/* Fecha, forma de pago y justificante: sólo si el pago se marca como «Ya pagado» */
+form:has(input[name='status'][value='pendiente']:checked) [data-paid-only] { display: none; }
+.paid-only { display: flex; flex-direction: column; gap: 14px; }
 .form-section > h3 { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
 .form-section > h3 svg { color: var(--c1); }
 .actions-inline > details.add { margin-bottom: 0; }
@@ -582,3 +589,13 @@ fieldset.form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .confirm-dialog p { font-size: 1.05rem; font-weight: 600; line-height: 1.4; }
 .confirm-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%; }
 .confirm-actions .btn { flex: 1 1 140px; }
+
+/* ── Documentos del proveedor (facturas y proformas) y justificante ─────── */
+.doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.doc { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.doc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.doc .doc-link, .doc-current a { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--c1); overflow-wrap: anywhere; }
+.doc-note { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 6px 10px; border-radius: 8px; background: var(--c2-soft); color: var(--c2-text); font-size: 0.9rem; font-weight: 600; }
+.doc-note svg { flex: none; margin-top: 2px; }
+.doc-actions { margin-top: 4px; }
+.doc-current { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

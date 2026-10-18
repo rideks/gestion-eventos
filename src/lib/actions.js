@@ -3,14 +3,24 @@ import { activityStmt, can } from './app.js';
 import { PaySchema, CollectSchema, validate } from './validate.js';
 import { eur } from './money.js';
 import { formatDate, nowIso } from './dates.js';
-import { PAYMENT_METHODS } from './finance.js';
+import { PAYMENT_METHODS, needsReceipt, RECEIPT_MISSING } from './finance.js';
 
 /** ¿Se puede tocar el expediente? Los cerrados y cancelados son de sólo lectura. */
 export const isLocked = (exp) => exp.status === 'cerrado' || exp.status === 'cancelado';
 export const LOCKED_MSG = 'El expediente está cerrado: reábrelo para cambiar algo.';
 
 /**
- * Marca un pago a proveedor como hecho.
+ * Al pasar un pago a «pagado»: hace falta la forma de pago y, si es por transferencia, el justificante.
+ * @returns {string | null} el problema, o null si se puede
+ */
+export function paidProblem({ method, hasReceipt }) {
+  if (!method) return 'Forma de pago: elige cómo se ha pagado.';
+  if (needsReceipt(method) && !hasReceipt) return RECEIPT_MISSING;
+  return null;
+}
+
+/**
+ * Marca un pago a proveedor como hecho (si es por transferencia, con su justificante ya subido).
  * @returns {Promise<{ ok: true, expedienteId: number } | { ok: false, message: string }>}
  */
 export async function markPaid(db, who, input, expedienteId = null) {
@@ -18,13 +28,15 @@ export async function markPaid(db, who, input, expedienteId = null) {
   const parsed = validate(PaySchema, input);
   if (!parsed.ok) return parsed;
   const p = Number.isInteger(id) ? await db.prepare(
-    `SELECT p.id, p.supplier, p.total_cents, p.status, p.expediente_id, e.status AS exp_status
+    `SELECT p.id, p.supplier, p.total_cents, p.status, p.expediente_id, p.receipt_file_id, e.status AS exp_status
        FROM payments p JOIN expedientes e ON e.id = p.expediente_id WHERE p.id = ?`,
   ).bind(id).first() : null;
   if (!p || (expedienteId && p.expediente_id !== expedienteId)) return { ok: false, message: 'Ese pago ya no existe.' };
   if (isLocked({ status: p.exp_status })) return { ok: false, message: LOCKED_MSG };
   if (p.status === 'pagado') return { ok: true, expedienteId: p.expediente_id };
   const { paid_on, method } = parsed.data;
+  const problem = paidProblem({ method, hasReceipt: !!p.receipt_file_id });
+  if (problem) return { ok: false, message: problem };
   await db.batch([
     db.prepare("UPDATE payments SET status = 'pagado', paid_on = ?, method = ?, updated_at = ? WHERE id = ?")
       .bind(paid_on, method, nowIso(), id),

@@ -75,8 +75,8 @@ const fromBudget = sales.length === 0;
         <thead><tr><th scope="col">Nº fact.</th><th scope="col">Proveedor</th><th scope="col" class="num">Neto sin IVA</th><th scope="col" class="num">Neto con IVA</th></tr></thead>
         <tbody>
           {costs.map((p) => (
-            <tr class:list={{ 'is-planned': !p.supplier_invoice_id }}>
-              <td>{p.invoice_number ?? (p.supplier_invoice_id ? 'sin nº (por revisar)' : 'pendiente')}</td>
+            <tr class:list={{ 'is-planned': !p.invoice_count }}>
+              <td>{p.invoice_number ?? (p.invoice_count ? 'sin nº (por revisar)' : p.proforma_count ? 'proforma' : 'pendiente')}</td>
               <td>{p.supplier}{p.concept && ` · ${p.concept}`}</td>
               <td class:list={['num', { neg: p.base_cents < 0 }]}>{num(p.base_cents)} €</td>
               <td class:list={['num', { neg: p.total_cents < 0 }]}>{num(p.total_cents)} €</td>
