@@ -222,6 +222,11 @@ export function nextSteps(e, s, now, { po = true } = {}) {
   if (s.overdueInvoices.length) add('danger', 'cobros', `${plural(s.overdueInvoices.length, 'factura', 'facturas')} con el cobro vencido (${eur(sum(s.overdueInvoices, 'total_cents'))})`, s.overdueInvoices, toInvoice);
   if (s.soon.length) add('warn', 'pagos', `${plural(s.soon.length, 'pago vence', 'pagos vencen')} en los próximos ${SOON_DAYS} días (${eur(sum(s.soon, 'total_cents'))})`, s.soon, toPayment);
   if (s.toIssue.length) add('warn', 'cobros', `${plural(s.toIssue.length, 'factura', 'facturas')} al cliente por emitir (${eur(sum(s.toIssue, 'total_cents'))})`, s.toIssue, toInvoice);
+  const toBill = billingStatus({ budget_base: s.sale.base, invoiced_base: s.sales.base }, s.poLeft).left;
+  if (toBill > 0) {
+    const held = isDate(e.end_date ?? e.start_date) && (e.end_date ?? e.start_date) < now;
+    steps.push({ tone: held ? 'warn' : 'info', tab: 'cobros', text: `Falta por facturar ${eur(toBill)} del presupuesto${held ? ' (el evento ya se celebró)' : ''}`, path: 'cobros' });
+  }
   if (s.unsent.length) add('warn', 'cobros', `${plural(s.unsent.length, 'factura emitida', 'facturas emitidas')} sin enviar al cliente`, s.unsent, (i) => `facturas/${i.id}#envio`);
   if (po && s.poLeft > 0) {
     const open = s.poRows.filter((p) => p.billable_cents > 0);
@@ -242,19 +247,40 @@ export function nextSteps(e, s, now, { po = true } = {}) {
  * Comprobaciones antes de cerrar (lo que antes se cuadraba a mano en el Excel de cierre).
  * @returns {{ ok: boolean, text: string }[]}
  */
+/**
+ * Comprobaciones antes de cerrar un expediente: en verde sólo lo que está hecho de verdad.
+ * Lo que aún no existe (sin costes, sin facturas, presupuesto sin facturar) no cuenta como hecho;
+ * lo que no aplica (sin PO, sin facturas de proveedor que revisar) no sale.
+ */
 export function closingChecks(s) {
-  return [
-    { ok: !s.pending.length, text: s.pending.length ? `Quedan ${eur(s.toPay)} por pagar a proveedores` : 'Todos los proveedores están pagados' },
-    { ok: s.withoutInvoice.length === 0, text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor` : 'Todos los costes tienen factura' },
-    { ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' },
-    { ok: s.toIssue.length === 0, text: s.toIssue.length ? `${s.toIssue.length} ${s.toIssue.length === 1 ? 'factura' : 'facturas'} al cliente por emitir` : 'Todas las facturas al cliente están emitidas' },
-    { ok: s.toCollect === 0, text: s.toCollect ? `Quedan ${eur(s.toCollect)} por cobrar` : 'Todo está cobrado' },
-    {
+  const billing = billingStatus({ budget_base: s.sale.base, invoiced_base: s.sales.base }, s.poLeft);
+  const checks = [];
+  // Proveedores
+  if (!s.payments.length) {
+    checks.push({ ok: false, text: 'Aún no hay ningún coste apuntado' });
+  } else {
+    checks.push({ ok: !s.pending.length, text: s.pending.length ? `Quedan ${eur(s.toPay)} por pagar a proveedores` : 'Todos los proveedores están pagados' });
+    checks.push({ ok: s.withoutInvoice.length === 0, text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor` : 'Todos los costes tienen factura' });
+    checks.push({ ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' });
+  }
+  // Cliente: todo el presupuesto facturado, emitido y cobrado
+  checks.push(billing.overInvoiced > 0
+    ? { ok: false, text: `Se ha facturado ${eur(billing.overInvoiced)} más que el presupuesto vigente` }
+    : !s.sales.base && !s.sale.base ? { ok: false, text: 'Aún no hay presupuesto ni facturas al cliente' }
+    : { ok: billing.left === 0, text: billing.left ? `Falta por facturar ${eur(billing.left)} del presupuesto` : 'Todo el presupuesto está facturado' });
+  if (s.toIssue.length) checks.push({ ok: false, text: `${s.toIssue.length} ${s.toIssue.length === 1 ? 'factura' : 'facturas'} al cliente por emitir` });
+  checks.push(!s.invoiced.total
+    ? { ok: false, text: 'Aún no hay ninguna factura emitida al cliente' }
+    : { ok: s.toCollect === 0, text: s.toCollect ? `Quedan ${eur(s.toCollect)} por cobrar` : 'Todo lo facturado está cobrado' });
+  // PO (sólo si el cliente trabaja con ellas)
+  if (s.poRows.length) {
+    checks.push({
       ok: s.poLeft === 0,
       text: s.poLeft ? `Hay ${eur(s.poLeft)} en PO sin facturar`
         : s.poClosedLeft ? `Las PO están facturadas o cerradas (${eur(s.poClosedLeft)} de PO cerradas no se facturan)` : 'Las PO están facturadas',
-    },
-  ];
+    });
+  }
+  return checks;
 }
 
 /** Siguiente número de expediente: el mayor + 1 (o el primero configurado) */

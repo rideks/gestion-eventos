@@ -67,6 +67,9 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
   comparado con el previsto), iguales para los dos perfiles; Administración ve además «Cobrado». En la pestaña Cobros,
   «Con el presupuesto vigente» resume cómo queda tras un cambio de versión, con «Crear factura por lo que falta» (el
   importe ya repartido con los tipos de IVA del presupuesto) y «Subir PO por la diferencia».
+- **Cierre**: las comprobaciones de «Antes de cerrar» sólo salen en verde cuando está hecho de verdad: costes apuntados
+  y pagados, todo el presupuesto facturado (o avisa si se ha facturado de más), emitido y cobrado, y las PO facturadas
+  (si las hay). Un expediente recién creado no sale «todo terminado».
 - **Cobros** (sólo Administración; Eventos no ve ni el menú ni la pestaña) es un embudo: **1. Por facturar** (cada expediente desde que se crea: su presupuesto menos lo ya
   facturado o pedido, con «Crear factura» y «Facturar PO» si tiene PO con
   saldo) → **2. Por emitir** (facturas pedidas o en borrador) → **3. Por cobrar** (emitidas; las vencidas, primero).

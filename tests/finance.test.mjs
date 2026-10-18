@@ -102,11 +102,24 @@ test('nextSteps y closingChecks', () => {
     budget,
     payments: [{ id: 1, invoice_count: 1, invoice_pending: 0, invoice_number: 'F1', base_cents: 100, total_cents: 121, status: 'pagado' }],
     documents: [{ id: 1, kind: 'factura', review: 'conforme' }],
-    pos: [{ id: 1, amount_cents: 1000 }],
-    invoices: [{ id: 1, base_cents: 1000, total_cents: 1210, status: 'cobrada' }],
-    allocations: [{ invoice_id: 1, po_id: 1, amount_cents: 1000 }],
+    pos: [{ id: 1, amount_cents: 5000000 }],
+    invoices: [{ id: 1, base_cents: 5000000, total_cents: 6000000, status: 'cobrada' }],
+    allocations: [{ invoice_id: 1, po_id: 1, amount_cents: 5000000 }],
   }, NOW);
-  assert.ok(closingChecks(done).every((c) => c.ok));
+  assert.ok(closingChecks(done).every((c) => c.ok), JSON.stringify(closingChecks(done)));
+
+  // Recién creado (presupuesto, sin costes ni facturas): nada en verde, aunque no haya nada «pendiente»
+  const empty = closingChecks(summarize({ budget }, NOW));
+  assert.ok(empty.every((c) => !c.ok), JSON.stringify(empty));
+  assert.deepEqual(empty.map((c) => c.text.replace(/\s/g, ' ')), ['Aún no hay ningún coste apuntado', 'Falta por facturar 50.000,00 € del presupuesto', 'Aún no hay ninguna factura emitida al cliente']);
+  // Facturado y cobrado sólo una parte: no está terminado
+  const partial = closingChecks(summarize({ budget, invoices: [{ id: 1, base_cents: 1000000, total_cents: 1210000, status: 'cobrada' }] }, NOW));
+  assert.equal(partial.find((c) => /facturar/.test(c.text)).ok, false);
+  assert.equal(partial.find((c) => /cobrado/.test(c.text)).ok, true);
+  // Paso del resumen: lo que falta por facturar (aviso si el evento ya se celebró)
+  const held = nextSteps({ status: 'abierto', start_date: '2026-08-01', end_date: '2026-08-02' }, summarize({ budget }, NOW), NOW).find((x) => /Falta por facturar/.test(x.text));
+  assert.equal(held.tone, 'warn');
+  assert.match(held.text, /50\.000,00\s€ del presupuesto \(el evento ya se celebró\)/);
 });
 
 test('estados', () => {
