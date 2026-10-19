@@ -9,13 +9,14 @@ import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
 import ClientFields from '../../components/ClientFields.astro';
 import { parseId, readForm, can } from '../../lib/app.js';
-import { CLIENT_STATUS, formToObject } from '../../lib/validate.js';
+import { CLIENT_STATUS, CLIENT_KINDS, formToObject } from '../../lib/validate.js';
 import { feeLabel, stageOf, STAGES } from '../../lib/clients.js';
 import { expLabel, expedienteState, plural } from '../../lib/finance.js';
 import { eur } from '../../lib/money.js';
 import { formatDate, formatRange, formatStamp } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as clients from '../../services/clients.js';
+import * as travel from '../../services/travel.js';
 
 const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
@@ -56,6 +57,10 @@ if (id && Astro.request.method === 'POST') {
 const f = id ? await clients.ficha(ctx, id) : { ok: false, code: 'not_found' };
 if (!f.ok) return failure(Astro, f, '/clientes');
 const { client: c, aliases, entities, expedientes, suppliers, contacts, seniority, volume: vol, history, economy, billing, editable, others } = f.value;
+// Sus reservas de Business Travel (con ese permiso)
+const bt = can(Astro.locals.user, 'viajes') ? await travel.forClient(ctx, id) : null;
+const bookings = bt?.ok ? bt.value : null;
+const displayName = [c.title, c.name].filter(Boolean).join(' ');
 const v = openEdit && input ? { ...c, ...input } : c;
 const entityValues = (e) => (openEntity === e.id && input ? { ...e, ...input } : e);
 const now = ctx.now;
@@ -79,7 +84,7 @@ const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
 
   <div class="page-top">
     <div>
-      <h1>{c.name}</h1>
+      <h1>{displayName}</h1>
       <p class="exp-meta">
         {c.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[c.status]}</span>}
         {c.city && <span><Icon name="map-pin" size={16} />{c.city}</span>}
@@ -113,6 +118,7 @@ const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
     <section class="card">
       <h2>Datos</h2>
       <dl class="kv">
+        <dt>Tipo</dt><dd>{CLIENT_KINDS[c.kind] ?? 'Empresa'}</dd>
         <dt>Teléfono</dt><dd>{phoneHref ? <a href={phoneHref}>{c.phone}</a> : '—'}</dd>
         <dt>Email</dt><dd>{c.email ? <a href={`mailto:${c.email}`}>{c.email}</a> : '—'}</dd>
         <dt>Ciudad</dt><dd>{c.city ?? '—'}</dd>
@@ -185,6 +191,32 @@ const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
       </table>
     </div>
   ) : <p class="muted">Todavía no tiene expedientes.</p>}
+
+  {bookings && (
+    <>
+      <h2 class="section-title" id="viajes">Business Travel ({bookings.length})</h2>
+      {bookings.length ? (
+        <div class="table-scroll">
+          <table class="dtable">
+            <thead>
+              <tr><th scope="col">Reserva</th><th scope="col">Fechas</th><th scope="col" class="num">Pasajeros</th><th scope="col" class="num">Servicios</th><th scope="col" class="num">PVP</th></tr>
+            </thead>
+            <tbody>
+              {bookings.map((r) => (
+                <tr class:list={{ 'is-planned': r.status === 'cancelada' }}>
+                  <td><a href={`/viajes/${r.id}`}><strong>{r.reference}</strong>{r.title && ` · ${r.title}`}</a>{r.status === 'cancelada' && <span class="pill pill-muted">Cancelada</span>}</td>
+                  <td>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>
+                  <td class="num">{r.passengers}</td>
+                  <td class="num">{r.lines}</td>
+                  <td class="num money">{eur(r.pvp_cents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <p class="muted">Todavía no tiene reservas de Business Travel. <a href="/viajes?nueva">Crear una</a></p>}
+    </>
+  )}
 
   <div class="two-col mt">
     <section class="card">

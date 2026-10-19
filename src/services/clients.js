@@ -11,7 +11,7 @@ import { cleanName } from '../lib/suppliers.js';
 import { similarNames } from '../lib/name-match.js';
 import { clientVolume, seniority, feeLabel } from '../lib/clients.js';
 import { diffFields } from '../lib/changes.js';
-import { ClientSchema, ClientQuickSchema, ClientEntitySchema, CLIENT_STATUS, validate } from '../lib/validate.js';
+import { ClientSchema, ClientQuickSchema, ClientEntitySchema, CLIENT_STATUS, CLIENT_KINDS, validate } from '../lib/validate.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
 
 /** @typedef {import('./types').Context} Context */
@@ -39,6 +39,8 @@ const CONDITION_FIELDS = {
 };
 const DATA_FIELDS = {
   name: { label: 'Nombre' },
+  kind: { label: 'Tipo', format: (v) => CLIENT_KINDS[v] ?? v },
+  title: { label: 'Tratamiento' },
   status: { label: 'Estado', format: (v) => CLIENT_STATUS[v] ?? v },
   legal_name: { label: 'Nombre fiscal' },
   tax_id: { label: 'NIF' },
@@ -110,7 +112,7 @@ export async function ficha(ctx, id) {
  * @param {Context} ctx
  */
 export async function pickerData(ctx) {
-  if (!can(ctx.user, 'expedientes')) return forbidden();
+  if (!can(ctx.user, 'expedientes') && !can(ctx.user, 'viajes')) return forbidden();
   return done({ options: await repo.options(ctx.db) });
 }
 
@@ -133,15 +135,33 @@ export async function search(ctx, q) {
  */
 export async function resolveForExpediente(ctx, pick) {
   if (!can(ctx.user, 'expedientes')) return forbidden();
+  return resolvePick(ctx, pick);
+}
+
+/**
+ * Cliente elegido en una reserva de Business Travel: igual que en una solicitud (de la lista; nunca se crea aquí).
+ * @param {Context} ctx
+ * @param {{ id?: unknown, name?: unknown }} pick
+ */
+export async function resolveForBooking(ctx, pick) {
+  if (!can(ctx.user, 'viajes')) return forbidden();
+  return resolvePick(ctx, pick, 'client');
+}
+
+/** field: el campo del formulario en el que se enseña el error @param {Context} ctx @param {{ id?: unknown, name?: unknown }} pick */
+async function resolvePick(ctx, pick, field = 'company') {
   const name = cleanName(pick?.name);
   const n = Number(pick?.id);
   const c = await repo.resolve(ctx.db, Number.isInteger(n) && n > 0 ? n : null, name);
   if (c) return done(c);
-  if (!name) return fail('invalid', 'Empresa (cliente): elígela de la lista', { fields: { company: 'Empresa (cliente): elígela de la lista' } });
+  if (!name) {
+    const message = field === 'company' ? 'Empresa (cliente): elígela de la lista' : 'Cliente: elígelo de la lista';
+    return fail('invalid', message, { fields: { [field]: message } });
+  }
   const similar = similarNames(name, await repo.options(ctx.db), 3);
   const hint = similar.length ? ` ¿Es ${orList(similar.map((x) => `«${x.name}»`))}?` : '';
   const message = `Cliente: «${name}» no está dado de alta.${hint} Elígelo de la lista o, si es nuevo, dalo de alta.`;
-  return fail('invalid', message, { fields: { company: message } });
+  return fail('invalid', message, { fields: { [field]: message } });
 }
 
 // ── Cambios ────────────────────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 ---
 // Campos de la ficha de un cliente (alta en el directorio y editar la ficha).
 // economy: los datos fiscales, el acuerdo de pago y el fee sólo los ve y los cambia quien tiene ese permiso.
-import { CLIENT_STATUS } from '../lib/validate.js';
+import { CLIENT_STATUS, CLIENT_KINDS } from '../lib/validate.js';
+import { TITLES } from '../lib/travel.js';
 import { pctText } from '../lib/vat.js';
 
 const { v = {}, errors = {}, economy = false, full = false } = Astro.props;
@@ -23,6 +24,21 @@ const fee = v.fee !== undefined ? v.fee : v.fee_bp !== null && v.fee_bp !== unde
     <label for="cl-status">Estado</label>
     <select id="cl-status" name="status">
       {Object.entries(CLIENT_STATUS).map(([k, label]) => <option value={k} selected={(v.status ?? 'activo') === k}>{label}</option>)}
+    </select>
+  </div>
+</div>
+<div class="row row-2">
+  <div class:list={['field', err('kind')]}>
+    <label for="cl-kind">Tipo de cliente</label>
+    <select id="cl-kind" name="kind">
+      {Object.entries(CLIENT_KINDS).map(([k, label]) => <option value={k} selected={(v.kind ?? 'empresa') === k}>{label}</option>)}
+    </select>
+  </div>
+  <div class:list={['field', err('title')]}>
+    <label for="cl-title">Tratamiento <span class="opt">(sólo si es una persona)</span></label>
+    <select id="cl-title" name="title">
+      <option value="">Sin tratamiento</option>
+      {TITLES.map((t) => <option value={t} selected={v.title === t}>{t}</option>)}
     </select>
   </div>
 </div>

@@ -103,6 +103,11 @@ Así se hizo Clientes (v24), y así se hará la siguiente (p. ej. Incidencias):
 
 ## Lo que aún no está en capas
 
+**Business Travel** nació ya en capas (`src/services/travel.js`, `src/repos/travel.js`, `src/lib/travel.js`) y no
+depende de los expedientes. Las numeraciones nuevas (referencias de reserva y, más adelante, albaranes y facturas de
+Business Travel) usan `src/repos/counters.js`: un contador que se incrementa en una sola sentencia, así que nunca
+sale el mismo número aunque dos personas guarden a la vez.
+
 Ya están en capas Proveedores, Contratos, Clientes y **Pagos** (la pestaña Pagos del expediente, la ficha de cada
 pago con sus facturas, proformas y justificante, y la bandeja `/pagos`; `src/services/payments.js`). El resto
 (cobros, facturas al cliente, expedientes, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está

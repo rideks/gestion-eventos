@@ -24,7 +24,7 @@ import { today, addDays, formatDate, formatRange, formatStamp, formatDateLong } 
 const db = env.DB;
 const me = Astro.locals.user;
 if (!can(me, 'expedientes')) {
-  const home = can(me, 'users') ? '/usuarios' : can(me, 'settings') ? '/ajustes' : '/cuenta';
+  const home = can(me, 'viajes') ? '/viajes' : can(me, 'users') ? '/usuarios' : can(me, 'settings') ? '/ajustes' : '/cuenta';
   return Astro.redirect(`${home}${Astro.url.search}`, 303);
 }
 const admin = can(me, 'expediente.open');

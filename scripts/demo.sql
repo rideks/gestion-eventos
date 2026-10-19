@@ -13,21 +13,23 @@
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
+DELETE FROM bt_line_passengers; DELETE FROM bt_lines; DELETE FROM bt_passengers; DELETE FROM bt_bookings; DELETE FROM counters;
 DELETE FROM change_log; DELETE FROM client_entities; DELETE FROM client_aliases; DELETE FROM clients;
 DELETE FROM supplier_contract_changes; DELETE FROM supplier_contracts;
 DELETE FROM supplier_aliases; DELETE FROM suppliers; DELETE FROM supplier_types;
 INSERT INTO supplier_types (name, sort) VALUES
   ('Hotel', 10), ('Venue / espacio', 20), ('Restaurante', 30), ('Catering', 40), ('Actividades', 50),
-  ('Formación', 60), ('Transporte', 70), ('Audiovisuales', 80), ('Otros', 90);
+  ('Formación', 60), ('Transporte', 70), ('Aerolínea', 72), ('Tren', 74), ('Central de reservas', 76), ('Inscripciones y congresos', 78),
+  ('Audiovisuales', 80), ('Otros', 90);
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
 DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
 -- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009, 0010 y 0011)
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.value FROM roles r, json_each(CASE r.key
-  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia"]'
-  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia"]'
-  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia"]'
-  WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create","clientes","clientes.create"]'
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
+  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
+  WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create","clientes","clientes.create","viajes"]'
   WHEN 'tecnico' THEN '["users"]'
 END) p;
 DELETE FROM vat_rates;
@@ -330,3 +332,62 @@ SELECT 'client', c.id, c.created_by, 'alta', 'Alta del cliente (con los expedien
 INSERT INTO change_log (entity, entity_id, user_id, action, summary, changes, at)
 SELECT 'client', id, (SELECT id FROM users WHERE email = 'direccion@example.com'), 'condiciones', 'Fee: 8 % → 10 %',
        '{"fee_bp":[800,1000]}', '2026-09-15T10:30:00Z' FROM clients WHERE name = 'BMW Ibérica';
+
+-- ── Business Travel: reservas de ejemplo (ROCHE con tres reservas, BMW con un viaje a Múnich y una cancelada) ──
+INSERT INTO suppliers (name, type_id, city, created_by) VALUES
+  ('Iryo', (SELECT id FROM supplier_types WHERE name = 'Tren'), NULL, 1),
+  ('Restel', (SELECT id FROM supplier_types WHERE name = 'Central de reservas'), NULL, 1),
+  ('Ryanair', (SELECT id FROM supplier_types WHERE name = 'Aerolínea'), NULL, 1),
+  ('Booking', (SELECT id FROM supplier_types WHERE name = 'Central de reservas'), NULL, 1),
+  ('Iberia', (SELECT id FROM supplier_types WHERE name = 'Aerolínea'), NULL, 1),
+  ('Hoteles NH', (SELECT id FROM supplier_types WHERE name = 'Hotel'), NULL, 1)
+ON CONFLICT (name) DO NOTHING;
+INSERT INTO bt_bookings (id, reference, client_id, title, status, notes, created_by, created_at, updated_at) VALUES
+  (1, 'BT-2026-0001', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Congreso SEOM 2026 · Madrid', 'abierta', 'Facturar al departamento médico; pedir la PO a Laura.', 2, '2026-09-20T10:00:00Z', '2026-09-20T10:00:00Z'),
+  (2, 'BT-2026-0002', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Reunión de expertos · Sevilla', 'abierta', NULL, 2, '2026-09-28T09:30:00Z', '2026-09-28T09:30:00Z'),
+  (3, 'BT-2026-0003', (SELECT id FROM clients WHERE name = 'BMW Ibérica'), 'Visita a la planta de Múnich', 'abierta', NULL, 2, '2026-10-02T12:00:00Z', '2026-10-02T12:00:00Z'),
+  (4, 'BT-2026-0004', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Curso de formación · Valencia', 'abierta', NULL, 2, '2026-10-08T16:00:00Z', '2026-10-08T16:00:00Z'),
+  (5, 'BT-2026-0005', (SELECT id FROM clients WHERE name = 'GLENMARK'), 'Presentación a delegados · Bilbao', 'cancelada', 'El cliente aplazó la presentación.', 2, '2026-10-10T11:00:00Z', '2026-10-10T11:00:00Z');
+INSERT INTO bt_passengers (id, booking_id, title, first_name, last_name, email, phone, notes) VALUES
+  (1, 1, 'Dra.', 'María', 'López Serrano', 'maria.lopez@example.com', '+34 600 100 001', NULL),
+  (2, 1, 'Dr.', 'Carlos', 'García Ruiz', 'carlos.garcia@example.com', '+34 600 100 002', 'Tarjeta Iryo Plus 7781'),
+  (3, 2, 'Dra.', 'María', 'López Serrano', 'maria.lopez@example.com', '+34 600 100 001', NULL),
+  (4, 3, NULL, 'Javier', 'Martín Gómez', 'javier.martin@example.com', NULL, NULL),
+  (5, 3, NULL, 'Lucía', 'Fernández Pardo', NULL, NULL, 'Sin email: el bono se le entrega en mano'),
+  (6, 4, 'Dr.', 'Carlos', 'García Ruiz', 'carlos.garcia@example.com', '+34 600 100 002', NULL),
+  (7, 5, NULL, 'Ana', 'Torres Vega', 'ana.torres@example.com', NULL, NULL);
+INSERT INTO bt_lines (id, booking_id, kind, supplier_id, supplier, description, start_date, end_date, locator, issued_on, details, base_cents, vat_bp, total_cents, fee_cents, pvp_cents, created_by) VALUES
+  (1, 1, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iryo'), 'Iryo', 'Barcelona Sants → Madrid Atocha · ida y vuelta', '2026-11-18', '2026-11-20', 'IRY7Q2K', '2026-09-21', 'Clase Singular, plazas 5A y 5B', 22364, 1000, 24600, 1500, 26100, 2),
+  (2, 1, 'alojamiento', (SELECT id FROM suppliers WHERE name = 'Restel'), 'Restel', 'NH Collection Madrid Eurobuilding', '2026-11-18', '2026-11-20', 'RST-449120', NULL, 'Dos habitaciones dobles de uso individual, desayuno incluido', 72000, 1000, 79200, 4000, 83200, 2),
+  (3, 1, 'inscripcion', NULL, NULL, 'Congreso Nacional SEOM 2026', '2026-11-18', '2026-11-20', 'SEOM-1187', NULL, NULL, 65000, 2100, 78650, 1000, 79650, 2),
+  (4, 1, 'inscripcion', NULL, NULL, 'Congreso Nacional SEOM 2026', '2026-11-18', '2026-11-20', 'SEOM-1188', NULL, NULL, 65000, 2100, 78650, 1000, 79650, 2),
+  (5, 1, 'otros', NULL, NULL, 'Traslado estación de Atocha - hotel', '2026-11-18', NULL, NULL, NULL, 'Taxi concertado', 4500, 1000, 4950, 500, 5450, 2),
+  (6, 2, 'transporte', (SELECT id FROM suppliers WHERE name = 'Ryanair'), 'Ryanair', 'Madrid → Sevilla · FR 5512 / FR 5513', '2026-10-27', '2026-10-28', 'R7KX2P', '2026-09-29', NULL, 16945, 1000, 18640, 1500, 20140, 2),
+  (7, 2, 'alojamiento', (SELECT id FROM suppliers WHERE name = 'Booking'), 'Booking', 'Hotel Alfonso XIII', '2026-10-27', '2026-10-28', '4412.889.120', NULL, NULL, 21000, 1000, 23100, 2000, 25100, 2),
+  (8, 3, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iberia'), 'Iberia', 'Madrid → Múnich · IB 3510 / IB 3511', '2026-11-04', '2026-11-06', 'IB9HQ3', '2026-10-03', 'Tarifa flexible', 78400, 0, 78400, 3000, 81400, 2),
+  (9, 3, 'alojamiento', (SELECT id FROM suppliers WHERE name = 'Hoteles NH'), 'Hoteles NH', 'NH Collection München Bavaria', '2026-11-04', '2026-11-06', 'NH-77120', NULL, NULL, 62000, 0, 62000, 3000, 65000, 2),
+  (10, 4, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iryo'), 'Iryo', 'Madrid Atocha → Valencia Joaquín Sorolla', '2026-11-25', '2026-11-26', 'IRY4M8D', '2026-10-09', NULL, 8000, 1000, 8800, 1500, 10300, 2),
+  (11, 4, 'inscripcion', NULL, NULL, 'Curso de actualización en oncología', '2026-11-25', '2026-11-26', NULL, NULL, NULL, 30000, 2100, 36300, 1000, 37300, 2),
+  (12, 5, 'transporte', (SELECT id FROM suppliers WHERE name = 'Ryanair'), 'Ryanair', 'Madrid → Bilbao', '2026-12-02', NULL, NULL, NULL, NULL, 8909, 1000, 9800, 1500, 11300, 2);
+INSERT INTO bt_line_passengers (line_id, passenger_id) VALUES
+  (1, 1),
+  (1, 2),
+  (2, 1),
+  (2, 2),
+  (3, 1),
+  (4, 2),
+  (5, 1),
+  (5, 2),
+  (6, 3),
+  (7, 3),
+  (8, 4),
+  (8, 5),
+  (9, 4),
+  (9, 5),
+  (10, 6),
+  (11, 6),
+  (12, 7);
+INSERT INTO counters (key, value) VALUES ('bt_booking:2026', 5);
+INSERT INTO change_log (entity, entity_id, user_id, action, summary, at)
+SELECT 'bt_booking', b.id, 2, 'alta', 'Alta de la reserva para ' || c.name, b.created_at FROM bt_bookings b JOIN clients c ON c.id = b.client_id;
+INSERT INTO change_log (entity, entity_id, user_id, action, summary, at) VALUES ('bt_booking', 5, 2, 'estado', 'Reserva cancelada', '2026-10-14T09:00:00Z');

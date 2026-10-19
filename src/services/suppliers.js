@@ -67,7 +67,7 @@ export async function ficha(ctx, id) {
  * @param {Context} ctx
  */
 export async function pickerData(ctx) {
-  if (!can(ctx.user, 'expedientes')) return forbidden();
+  if (!can(ctx.user, 'expedientes') && !can(ctx.user, 'viajes')) return forbidden();
   const [options, types] = await Promise.all([repo.options(ctx.db), repo.types(ctx.db)]);
   return done({ options, types });
 }
@@ -83,6 +83,22 @@ export async function pickerData(ctx) {
  */
 export async function resolveForPayment(ctx, pick, { keepId = null } = {}) {
   if (!can(ctx.user, 'expedientes')) return forbidden();
+  return resolvePick(ctx, pick, keepId);
+}
+
+/**
+ * Proveedor de un servicio de una reserva de Business Travel: igual que en un pago (de la lista).
+ * @param {Context} ctx
+ * @param {{ id?: unknown, name?: unknown }} pick
+ * @param {{ keepId?: number|null }} [options]
+ */
+export async function resolveForTravel(ctx, pick, { keepId = null } = {}) {
+  if (!can(ctx.user, 'viajes')) return forbidden();
+  return resolvePick(ctx, pick, keepId);
+}
+
+/** @param {Context} ctx @param {{ id?: unknown, name?: unknown }} pick @param {number|null} keepId */
+async function resolvePick(ctx, pick, keepId) {
   const name = cleanName(pick?.name);
   const n = Number(pick?.id);
   const s = await repo.resolve(ctx.db, Number.isInteger(n) && n > 0 ? n : null, name);

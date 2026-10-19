@@ -1,0 +1,147 @@
+---
+// Business Travel: las reservas de viajes de empresa, con buscador (referencia, cliente, pasajero, proveedor o
+// localizador), estado y mes (el de sus servicios). Aquí se crea una reserva nueva: el cliente de la lista y una
+// descripción; los pasajeros y los servicios se añaden en su ficha. Todo pasa por src/services/travel.js.
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import EntityPicker from '../../components/EntityPicker.astro';
+import EntityPickerKit from '../../components/EntityPickerKit.astro';
+import { readForm } from '../../lib/app.js';
+import { formToObject } from '../../lib/validate.js';
+import { BOOKING_STATUS } from '../../lib/travel.js';
+import { eur } from '../../lib/money.js';
+import { formatRange, formatMonth } from '../../lib/dates.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as travel from '../../services/travel.js';
+
+const ctx = serviceContext(Astro);
+let error = null;
+let errors = {};
+let v = {};
+let openNew = Astro.url.searchParams.has('nueva');
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const r = input.intent === 'create' ? await travel.create(ctx, input) : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
+  if (r.ok) return Astro.redirect(`/viajes/${r.value.id}?ok=creada`, 303);
+  const back = failure(Astro, r, '/viajes');
+  if (back) return back;
+  error = r.message;
+  errors = r.fields ?? {};
+  openNew = true;
+  v = input;
+}
+
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 80);
+const [res, picker] = await Promise.all([
+  travel.list(ctx, { q, status: params.get('estado') ?? '', month: params.get('mes') ?? '' }),
+  travel.draft(ctx),
+]);
+if (!res.ok) return failure(Astro, res, '/');
+const { rows, status, month, fee } = res.value;
+const filtered = q || status || month;
+const sum = (f) => rows.filter((r) => r.status !== 'cancelada').reduce((a, r) => a + (r[f] ?? 0), 0);
+// Los últimos doce meses para el filtro (el mes de sus servicios)
+const months = Array.from({ length: 15 }, (_, i) => {
+  const d = new Date(Date.UTC(Number(ctx.now.slice(0, 4)), Number(ctx.now.slice(5, 7)) - 1 + 2 - i, 1));
+  return d.toISOString().slice(0, 7);
+});
+const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(' ');
+---
+<App title="Business Travel" section="viajes" error={error} fieldErrors={errors} origin="Business Travel">
+  <div class="page-top">
+    <div>
+      <h1>Business Travel</h1>
+      <p>Reservas de viajes de empresa: pasajeros, transporte, alojamiento, inscripciones y otros servicios</p>
+    </div>
+  </div>
+
+  <details class="add" open={openNew}>
+    <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Nueva reserva</span><span class="when-open">Cerrar formulario</span></summary>
+    <form method="post" class="form-section">
+      <h2><Icon name="plane" /> Nueva reserva</h2>
+      <p class="muted">El cliente y una descripción. Los pasajeros y los servicios se añaden después, en su ficha.</p>
+      <div class="row row-2">
+        <div class:list={['field', { 'has-error': errors.client }]}>
+          <label for="bt-client">Cliente</label>
+          <EntityPicker kind="client" id="bt-client" name="client" value={v.client} valueId={v.client_id} required placeholder="Busca el cliente" />
+        </div>
+        <div class:list={['field', { 'has-error': errors.title }]}>
+          <label for="bt-title">Descripción <span class="opt">(opcional)</span></label>
+          <input id="bt-title" name="title" type="text" maxlength="140" value={v.title ?? ''} placeholder="Congreso SEOM 2026 · Viaje comercial a Sevilla" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="bt-notes">Comentarios internos <span class="opt">(opcional)</span></label>
+        <textarea id="bt-notes" name="notes" rows="2" maxlength="2000">{v.notes ?? ''}</textarea>
+      </div>
+      <div><button class="btn btn-primary" type="submit" name="intent" value="create" data-busy="Guardando…"><Icon name="check" size={18} /> Crear reserva</button></div>
+    </form>
+  </details>
+  <EntityPickerKit kind="client" options={picker.ok ? picker.value.clients : []} />
+
+  <form method="get" class="quick-form supplier-filters" role="search">
+    <label class="visually-hidden" for="q">Buscar reserva</label>
+    <input id="q" name="q" type="search" value={q} placeholder="Referencia, cliente, pasajero, proveedor o localizador" />
+    <label class="visually-hidden" for="mes">Mes</label>
+    <select id="mes" name="mes">
+      <option value="">Todos los meses</option>
+      {months.map((m) => <option value={m} selected={month === m}>{formatMonth(m)}</option>)}
+    </select>
+    <label class="visually-hidden" for="estado">Estado</label>
+    <select id="estado" name="estado">
+      <option value="">Todos los estados</option>
+      {Object.entries(BOOKING_STATUS).map(([k, label]) => <option value={k} selected={status === k}>{label}</option>)}
+    </select>
+    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+    {filtered && <a class="btn btn-ghost btn-sm" href="/viajes">Quitar filtros</a>}
+  </form>
+
+  <p class="muted mt">
+    {rows.length} {rows.length === 1 ? 'reserva' : 'reservas'}
+    {rows.length > 0 && <> · PVP: <b class="money">{eur(sum('pvp_cents'))}</b>{fee && <> · fees: <b class="money">{eur(sum('fee_cents'))}</b></>} <span class="small">(sin las canceladas)</span></>}
+  </p>
+
+  {rows.length ? (
+    <div class="table-scroll mt">
+      <table class="dtable bookings">
+        <thead>
+          <tr>
+            <th scope="col">Reserva</th>
+            <th scope="col">Cliente</th>
+            <th scope="col">Fechas</th>
+            <th scope="col" class="num">Pasajeros</th>
+            <th scope="col" class="num">Servicios</th>
+            <th scope="col" class="num">Con IVA</th>
+            {fee && <th scope="col" class="num">Fee</th>}
+            <th scope="col" class="num">PVP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr class:list={{ 'is-planned': r.status === 'cancelada' }}>
+              <td>
+                <a href={`/viajes/${r.id}`}><strong>{r.reference}</strong></a>
+                {r.status === 'cancelada' && <span class="pill pill-muted">Cancelada</span>}
+                {r.title && <div class="small muted">{r.title}</div>}
+              </td>
+              <td>{clientLabel(r)}</td>
+              <td>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>
+              <td class="num">{r.passengers}</td>
+              <td class="num">{r.lines}</td>
+              <td class="num money">{eur(r.total_cents)}</td>
+              {fee && <td class="num money">{eur(r.fee_cents)}</td>}
+              <td class="num money"><strong>{eur(r.pvp_cents)}</strong></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <div class="empty mt">
+      <p>{filtered ? 'Ninguna reserva con esos filtros.' : 'Todavía no hay reservas. Crea la primera con «Nueva reserva».'}</p>
+    </div>
+  )}
+</App>

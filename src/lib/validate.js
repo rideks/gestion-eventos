@@ -132,10 +132,16 @@ const taxId = z.preprocess((v) => (blankToNull(v) === null ? null : String(clean
 
 // ── Clientes ───────────────────────────────────────────────────────────────
 export const CLIENT_STATUS = { activo: 'Activo', inactivo: 'Inactivo' };
+export const CLIENT_KINDS = { empresa: 'Empresa', persona: 'Persona' };
+// Tratamiento (Dr. / Dra.) de una persona: cliente particular o pasajero
+const personTitle = z.preprocess(blankToNull, z.enum(['Dr.', 'Dra.'], { error: 'Tratamiento: Dr., Dra. o sin tratamiento' }).nullable());
+const phone = z.preprocess(blankToNull, z.string().regex(/^[+\d\s().-]{6,20}$/, 'Teléfono no válido').nullable());
 
 export const ClientSchema = z.object({
   name: reqText('Nombre del cliente', 2, 120),
   status: z.enum(Object.keys(CLIENT_STATUS), { error: 'Elige el estado' }),
+  kind: z.preprocess((v) => blankToNull(v) ?? 'empresa', z.enum(Object.keys(CLIENT_KINDS), { error: 'Tipo: empresa o persona' })),
+  title: personTitle,
   legal_name: optText('Nombre fiscal', 160),
   tax_id: taxId,
   fiscal_address: optText('Dirección fiscal', 300),
@@ -147,7 +153,7 @@ export const ClientSchema = z.object({
   fee: optPercentBp('Fee'),
   since_on: optDate('Inicio de la relación'),
   notes: optText('Comentarios internos', 2000),
-});
+}).transform((d) => (d.kind === 'empresa' ? { ...d, title: null } : d)); // una empresa no lleva tratamiento
 
 // Alta rápida desde el selector de una solicitud: lo básico (el resto, en su ficha)
 export const ClientQuickSchema = z.object({ name: reqText('Nombre del cliente', 2, 120), city: optText('Ciudad', 80) });
@@ -162,6 +168,41 @@ export const ClientEntitySchema = z.object({
 
 // Fee aplicado a un expediente (se copia del cliente al pedirlo; se puede ajustar en ese expediente)
 export const ExpedienteFeeSchema = z.object({ fee: optPercentBp('Fee del expediente') });
+
+// ── Business Travel ────────────────────────────────────────────────────────
+export const BtBookingSchema = z.object({
+  title: optText('Descripción', 140),
+  notes: optText('Comentarios internos', 2000),
+});
+
+export const BtPassengerSchema = z.object({
+  title: personTitle,
+  first_name: reqText('Nombre', 1, 80),
+  last_name: reqText('Apellidos', 1, 120),
+  email: optEmail('Email'),
+  phone,
+  notes: optText('Datos adicionales', 500),
+});
+
+/**
+ * Datos de un servicio de una reserva (los importes se leen aparte: parseLineAmounts en src/lib/travel.js).
+ * labels/required: los de su bloque (LINE_KINDS en src/lib/travel.js).
+ */
+export const btLineSchema = (labels, required = []) => z.object({
+  description: optText(labels.description ?? 'Descripción', 200),
+  start_date: optDate(labels.start_date ?? 'Fecha'),
+  end_date: optDate(labels.end_date ?? 'Fecha de fin'),
+  locator: optText(labels.locator ?? 'Referencia', 60),
+  issued_on: optDate(labels.issued_on ?? 'Fecha de emisión'),
+  details: optText(labels.details ?? 'Información adicional', 1000),
+}).superRefine((d, ctx) => {
+  for (const f of required) {
+    if (!d[f]) ctx.addIssue({ code: 'custom', path: [f], message: `${labels[f]}: ${f.endsWith('date') ? 'elige una fecha' : 'escríbelo'}` });
+  }
+  if (d.start_date && d.end_date && d.end_date < d.start_date) {
+    ctx.addIssue({ code: 'custom', path: ['end_date'], message: `${labels.end_date}: no puede ser anterior a ${labels.start_date.toLowerCase()}` });
+  }
+});
 
 export const RoleSchema = z.object({
   name: reqText('Nombre del rol', 2, 40),

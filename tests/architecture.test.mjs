@@ -53,9 +53,9 @@ test('los repositorios no deciden permisos ni dependen de los servicios', () => 
 });
 
 // Áreas ya en capas: sus páginas sólo usan servicios (cada área nueva se añade aquí)
-const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/expedientes/[id]/pagos'];
+const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/'];
 
-test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes, Pagos) sólo hablan con los servicios', () => {
+test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes, Pagos, Business Travel) sólo hablan con los servicios', () => {
   for (const p of all.filter((f) => LAYERED.some((dir) => rel(f).startsWith(dir)))) {
     const code = read(p);
     assert.ok(!SQL.test(code) && !code.includes('cloudflare:workers') && !imports(code, '/repos/') && !imports(code, 'lib/data.js'), `${rel(p)}: usa src/services/`);

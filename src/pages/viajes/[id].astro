@@ -1,0 +1,263 @@
+---
+// Ficha de una reserva de Business Travel: su cliente, sus pasajeros, sus servicios en cuatro bloques
+// (transporte, alojamiento, inscripción y otros), el resumen económico (sin IVA, con IVA, fees y PVP) y el historial.
+// El fee de cada servicio sólo lo ven y lo cambian quienes tienen «viajes.fee» (el servicio ni lo devuelve si no).
+// Una reserva cancelada es de sólo lectura (se puede reabrir). Todo pasa por src/services/travel.js.
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import EntityPicker from '../../components/EntityPicker.astro';
+import EntityPickerKit from '../../components/EntityPickerKit.astro';
+import PassengerFields from '../../components/PassengerFields.astro';
+import TravelLineFields from '../../components/TravelLineFields.astro';
+import { parseId, readForm, can } from '../../lib/app.js';
+import { formToObject } from '../../lib/validate.js';
+import { LINE_KINDS, KIND_KEYS, BOOKING_STATUS, personName } from '../../lib/travel.js';
+import { pctText } from '../../lib/vat.js';
+import { eur } from '../../lib/money.js';
+import { formatDate, formatRange, formatStamp } from '../../lib/dates.js';
+import { plural } from '../../lib/finance.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as travel from '../../services/travel.js';
+
+const ctx = serviceContext(Astro);
+const id = parseId(Astro.params.id);
+const self = `/viajes/${id}`;
+let error = null;
+let errors = {};
+let input = null;
+// Qué formulario se vuelve a abrir si hay un error: 'datos' · 'pasajero:new' · 'pasajero:<id>' · 'linea:<kind>' · 'linea:<id>'
+let open = Astro.url.searchParams.has('editar') ? 'datos' : null;
+
+if (id && Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  input = form ? formToObject(form) : {};
+  const passengerIds = form ? form.getAll('passenger_ids') : [];
+  const pid = parseId(input.passenger_id);
+  const lid = parseId(input.line_id);
+  // Cada acción, a dónde vuelve si sale bien
+  const ACTIONS = {
+    save: [() => travel.update(ctx, id, input), `${self}?ok=guardado`, 'datos'],
+    cancel: [() => travel.setStatus(ctx, id, 'cancelada'), `${self}?ok=cancelada`],
+    reopen: [() => travel.setStatus(ctx, id, 'abierta'), `${self}?ok=reabierta`],
+    delete: [() => travel.remove(ctx, id), '/viajes?ok=borrado'],
+    passenger_add: [() => travel.addPassenger(ctx, id, input), `${self}?ok=pasajero#pasajeros`, 'pasajero:new'],
+    passenger_save: [() => travel.updatePassenger(ctx, id, pid, input), `${self}?ok=guardado#pasajeros`, `pasajero:${pid}`],
+    passenger_delete: [() => travel.removePassenger(ctx, id, pid), `${self}?ok=quitado#pasajeros`],
+    line_add: [() => travel.addLine(ctx, id, input.kind, input, passengerIds), `${self}?ok=servicio#${input.kind}`, `linea:${input.kind}`],
+    line_save: [() => travel.updateLine(ctx, id, lid, input, passengerIds), `${self}?ok=guardado#${input.kind}`, `linea:${lid}`],
+    line_delete: [() => travel.removeLine(ctx, id, lid), `${self}?ok=quitado#${input.kind}`],
+  };
+  const action = Object.hasOwn(ACTIONS, input.intent) ? ACTIONS[input.intent] : null;
+  const r = action ? await action[0]() : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
+  if (r.ok) return Astro.redirect(action[1], 303);
+  const back = failure(Astro, r, self);
+  if (back) return back;
+  error = r.message;
+  errors = r.fields ?? {};
+  open = action?.[2] ?? null;
+}
+
+const f = id ? await travel.detail(ctx, id) : { ok: false, code: 'not_found' };
+if (!f.ok) return failure(Astro, f, '/viajes');
+const { booking: b, passengers, lines, summary, dates, history, rates, options, types, clients, known, fee, editable } = f.value;
+const clientLabel = [b.client_title, b.client_name].filter(Boolean).join(' ');
+const seesClient = can(Astro.locals.user, 'clientes');
+const nameOf = new Map(passengers.map((p) => [p.id, personName(p)]));
+const servicesOf = (pid) => lines.filter((l) => l.passenger_ids.includes(pid)).length;
+// Lo escrito si hubo un error en ese formulario; si no, lo guardado
+const valuesFor = (key, saved) => (open === key && input ? { ...saved, ...input } : saved);
+const selectedFor = (key, saved) => (open === key && input ? [].concat(input.passenger_ids ?? []) : saved);
+const lineValues = (l) => valuesFor(`linea:${l.id}`, { ...l, keep_supplier_id: l.supplier_id });
+const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDate(l.start_date)} → ${formatDate(l.end_date)}` : formatDate(l.start_date));
+---
+<App title={b.reference} section="viajes" error={error} fieldErrors={errors}>
+  <div class="crumbs">
+    <nav aria-label="Estás en">
+      <ol>
+        <li class="is-parent"><a href="/viajes" data-crumb-list><Icon name="arrow-left" size={16} class="crumb-arrow" />Business Travel</a></li>
+        <li><span aria-current="page">{b.reference}</span></li>
+      </ol>
+    </nav>
+    <a class="btn btn-ghost btn-sm return-link" href="/" data-return hidden><Icon name="corner-up-left" size={16} /> Volver a <span data-return-label></span></a>
+  </div>
+
+  <div class="page-top">
+    <div>
+      <h1>{b.reference}{b.title && <span class="muted"> · {b.title}</span>}</h1>
+      <p class="exp-meta">
+        {b.status === 'cancelada' && <span class="pill pill-danger">Cancelada</span>}
+        <span><Icon name="building" size={16} />{seesClient ? <a href={`/clientes/${b.client_id}`}>{clientLabel}</a> : clientLabel}</span>
+        {dates.from && <span><Icon name="calendar-days" size={16} />{formatRange(dates.from, dates.to)}</span>}
+        <span><Icon name="users" size={16} />{plural(passengers.length, 'pasajero', 'pasajeros')}</span>
+        <span class="muted small">Creada el {formatStamp(b.created_at, { year: true })}{b.created_by_name && ` por ${b.created_by_name}`}</span>
+      </p>
+    </div>
+  </div>
+
+  <div class:list={['kpis', { 'is-3': !fee }]}>
+    <div class="kpi"><span>Total sin IVA</span><b class="money">{eur(summary.base)}</b><small>{plural(summary.count, 'servicio', 'servicios')}</small></div>
+    <div class="kpi"><span>Total con IVA</span><b class="money">{eur(summary.total)}</b><small>lo que cobran los proveedores</small></div>
+    {fee && <div class="kpi"><span>Fees internos</span><b class="money">{eur(summary.fee)}</b><small>no salen en los documentos</small></div>}
+    <div class="kpi is-gold"><span>PVP total</span><b class="money">{eur(summary.pvp)}</b><small>lo que se cobra al cliente</small></div>
+  </div>
+
+  {editable && (
+    <details class="add mt" id="datos" open={open === 'datos'}>
+      <summary class="btn btn-ghost btn-sm"><Icon name="pencil" size={16} /> <span class="when-closed">Editar reserva</span><span class="when-open">Cerrar</span></summary>
+      <form method="post" class="form-section">
+        <h2><Icon name="plane" /> Datos de la reserva</h2>
+        <div class="row row-2">
+          <div class:list={['field', { 'has-error': errors.client }]}>
+            <label for="bk-client">Cliente</label>
+            <EntityPicker kind="client" id="bk-client" name="client" value={valuesFor('datos', { client: b.client_name }).client} valueId={open === 'datos' && input ? input.client_id : b.client_id} required />
+          </div>
+          <div class:list={['field', { 'has-error': errors.title }]}>
+            <label for="bk-title">Descripción <span class="opt">(opcional)</span></label>
+            <input id="bk-title" name="title" type="text" maxlength="140" value={valuesFor('datos', b).title ?? ''} />
+          </div>
+        </div>
+        <div class="field">
+          <label for="bk-notes">Comentarios internos <span class="opt">(opcional)</span></label>
+          <textarea id="bk-notes" name="notes" rows="2" maxlength="2000">{valuesFor('datos', b).notes ?? ''}</textarea>
+        </div>
+        <div><button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar</button></div>
+      </form>
+    </details>
+  )}
+  {b.notes && <p class="mt muted"><Icon name="message-square" size={16} /> {b.notes}</p>}
+
+  <!-- Pasajeros -->
+  <section class="card mt" id="pasajeros">
+    <div class="sec-head">
+      <h2><Icon name="users" /> Pasajeros ({passengers.length})</h2>
+      <p>Cada pasajero tendrá su propio bono, con sólo sus servicios.</p>
+    </div>
+    {passengers.length > 0 && (
+      <ul class="entity-list">
+        {passengers.map((p) => (
+          <li>
+            <div>
+              <strong>{personName(p)}</strong>
+              <span class="muted small"> {[p.email ?? 'sin email', p.phone, plural(servicesOf(p.id), 'servicio', 'servicios')].filter(Boolean).join(' · ')}</span>
+              {p.notes && <div class="small muted">{p.notes}</div>}
+            </div>
+            {editable && (
+              <details class="inline-edit" open={open === `pasajero:${p.id}`}>
+                <summary class="btn btn-ghost btn-sm"><Icon name="pencil" size={14} /> Cambiar</summary>
+                <form method="post" class="form-section mt">
+                  <input type="hidden" name="passenger_id" value={p.id} />
+                  <PassengerFields id={`px-${p.id}`} v={valuesFor(`pasajero:${p.id}`, p)} errors={open === `pasajero:${p.id}` ? errors : {}} />
+                  <div class="actions-inline">
+                    <button class="btn btn-primary btn-sm" type="submit" name="intent" value="passenger_save">Guardar</button>
+                    <button class="btn btn-danger btn-sm" type="submit" name="intent" value="passenger_delete" formnovalidate
+                      data-confirm={`¿Quitar a ${personName(p)} de la reserva? También se quita de sus servicios.`}>Quitar</button>
+                  </div>
+                </form>
+              </details>
+            )}
+          </li>
+        ))}
+      </ul>
+    )}
+    {editable && (
+      <details class="inline-edit mt" open={open === 'pasajero:new' || (!passengers.length && !lines.length)}>
+        <summary class="btn btn-ghost btn-sm"><Icon name="plus" size={14} /> Añadir pasajero</summary>
+        <form method="post" class="form-section mt">
+          <PassengerFields id="px-new" v={open === 'pasajero:new' ? input : {}} errors={open === 'pasajero:new' ? errors : {}} known={known} />
+          <div class="actions-inline"><button class="btn btn-primary btn-sm" type="submit" name="intent" value="passenger_add">Añadir pasajero</button></div>
+        </form>
+      </details>
+    )}
+  </section>
+
+  <!-- Los cuatro bloques de servicios -->
+  {KIND_KEYS.map((kind) => {
+    const k = LINE_KINDS[kind];
+    const rows = lines.filter((l) => l.kind === kind);
+    const t = summary.byKind[kind];
+    return (
+      <section class="card mt bt-block" id={kind}>
+        <div class="sec-head bt-block-head">
+          <h2><Icon name={k.icon} /> {k.label} ({rows.length})</h2>
+          {rows.length > 0 && <p class="money">PVP {eur(t.pvp)}</p>}
+        </div>
+        {rows.length > 0 && (
+          <ul class="entity-list bt-lines">
+            {rows.map((l) => (
+              <li>
+                <div>
+                  <strong>{[l.supplier, l.description].filter(Boolean).join(' · ') || k.label}</strong>
+                  <div class="small">
+                    {[l.start_date && dateText(l), l.locator && `${k.fields.locator} ${l.locator}`, l.issued_on && `emitido el ${formatDate(l.issued_on)}`].filter(Boolean).join(' · ')}
+                  </div>
+                  <div class="small muted">
+                    {l.passenger_ids.length ? l.passenger_ids.map((x) => nameOf.get(x)).join(', ') : 'Sin pasajero asignado'}
+                    {l.details && <> · {l.details}</>}
+                  </div>
+                </div>
+                <dl class="bt-money">
+                  <div><dt>Sin IVA</dt><dd class="money">{eur(l.base_cents)}</dd></div>
+                  <div><dt>IVA</dt><dd>{pctText(l.vat_bp)} %</dd></div>
+                  <div><dt>Con IVA</dt><dd class="money">{eur(l.total_cents)}</dd></div>
+                  {fee && <div><dt>Fee</dt><dd class="money">{eur(l.fee_cents)}</dd></div>}
+                  <div class="is-pvp"><dt>PVP</dt><dd class="money">{eur(l.pvp_cents)}</dd></div>
+                </dl>
+                {editable && (
+                  <details class="inline-edit" open={open === `linea:${l.id}`}>
+                    <summary class="btn btn-ghost btn-sm"><Icon name="pencil" size={14} /> Cambiar</summary>
+                    <form method="post" class="form-section mt">
+                      <input type="hidden" name="line_id" value={l.id} />
+                      <input type="hidden" name="kind" value={kind} />
+                      <TravelLineFields kind={kind} id={`ln-${l.id}`} v={lineValues(l)} errors={open === `linea:${l.id}` ? errors : {}} rates={rates}
+                        passengers={passengers} selected={selectedFor(`linea:${l.id}`, l.passenger_ids)} fee={fee} />
+                      <div class="actions-inline">
+                        <button class="btn btn-primary btn-sm" type="submit" name="intent" value="line_save" data-busy="Guardando…">Guardar</button>
+                        <button class="btn btn-danger btn-sm" type="submit" name="intent" value="line_delete" formnovalidate
+                          data-confirm={`¿Quitar este servicio (${k.one}) de la reserva?`}>Quitar</button>
+                      </div>
+                    </form>
+                  </details>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {!rows.length && !editable && <p class="muted">Sin servicios de {k.one}.</p>}
+        {editable && (
+          <details class="inline-edit mt" open={open === `linea:${kind}`}>
+            <summary class="btn btn-ghost btn-sm"><Icon name="plus" size={14} /> Añadir {k.one}</summary>
+            <form method="post" class="form-section mt">
+              <input type="hidden" name="kind" value={kind} />
+              <TravelLineFields kind={kind} id={`new-${kind}`} v={open === `linea:${kind}` ? input : {}} errors={open === `linea:${kind}` ? errors : {}}
+                rates={rates} passengers={passengers} selected={selectedFor(`linea:${kind}`, passengers.length === 1 ? [passengers[0].id] : [])} fee={fee} />
+              <div class="actions-inline"><button class="btn btn-primary btn-sm" type="submit" name="intent" value="line_add" data-busy="Guardando…">Añadir {k.one}</button></div>
+            </form>
+          </details>
+        )}
+      </section>
+    );
+  })}
+  {editable && <EntityPickerKit kind="supplier" options={options} types={types} />}
+  {editable && <EntityPickerKit kind="client" options={clients} />}
+
+  {history.length > 0 && (
+    <section class="mt">
+      <h2 class="section-title">Historial</h2>
+      <ul class="compact-list card">
+        {history.map((h) => <li><span class="muted small">{formatStamp(h.at, { year: true })} · {h.user_name ?? '—'}</span> {h.summary}</li>)}
+      </ul>
+    </section>
+  )}
+
+  <section class="card mt">
+    <div class="sec-head"><h2>Estado de la reserva: {BOOKING_STATUS[b.status]}</h2></div>
+    <form method="post" class="actions-inline">
+      {b.status === 'abierta'
+        ? <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="cancel" data-confirm={`¿Cancelar la reserva ${b.reference}? Se conserva y se puede reabrir.`}><Icon name="ban" size={16} /> Cancelar reserva</button>
+        : <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen"><Icon name="rotate-ccw" size={16} /> Reabrir reserva</button>}
+      {!passengers.length && !lines.length && (
+        <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar la reserva ${b.reference}? Está vacía.`}><Icon name="trash-2" size={16} /> Borrar reserva</button>
+      )}
+    </form>
+  </section>
+</App>

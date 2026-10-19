@@ -83,6 +83,35 @@ Cambiarlo en la ficha no cambia el de los expedientes ya pedidos (cada uno conse
 ajustar en «Editar datos» del expediente). Cada cambio del fee, del acuerdo de pago o de los datos fiscales queda en el
 **historial de la ficha**: antes y después, quién y cuándo (`Fee: 8 % → 10 %`).
 
+### Business Travel: reservas, servicios y PVP (cómo se calcula)
+
+Reservas de viajes de empresa, **aparte de los expedientes** (no los usan ni los cambian). Cada reserva es de un
+cliente de la ficha de Clientes y recibe una referencia única y correlativa (`BT-2026-0001`) que no se reutiliza
+aunque se borre una reserva vacía. Tiene sus **pasajeros** (con tratamiento Dr./Dra., email y teléfono) y sus
+**servicios** en cuatro bloques, cada uno con las filas que haga falta:
+
+| Bloque | Lo que se apunta |
+|---|---|
+| Transporte | Proveedor (Ryanair, Iryo…), trayecto, ida y vuelta, localizador, fecha de emisión, pasajeros |
+| Alojamiento | Proveedor (Restel, Booking, Hoteles NH…), establecimiento, check-in y check-out, nº de reserva, huéspedes |
+| Inscripción | Inscripción o evento, fechas, nº de inscripción y su asistente (uno) |
+| Otros | Descripción, proveedor y pasajeros si los hay |
+
+Los proveedores salen del directorio de Proveedores (con los tipos Aerolínea, Tren, Central de reservas e
+Inscripciones y congresos); si no está, se da de alta desde el mismo selector.
+
+Importes de cada servicio (en céntimos; nada se redondea dos veces):
+
+| Importe | Cómo |
+|---|---|
+| Sin IVA / con IVA | Se escribe uno y el otro se calcula con el % de IVA: con IVA = sin IVA × (1 + IVA). Si se escriben los dos (copiados de la factura del proveedor), se respetan. Se propone el 10 % en transporte y alojamiento y el 21 % en inscripciones |
+| Fee oculto | Lo que se cobra además del servicio. Sólo lo ven y lo cambian quienes tienen «Ver y cambiar el fee interno»; nunca sale en los documentos del cliente |
+| PVP | Con IVA + fee |
+
+El resumen de la reserva (total sin IVA, con IVA, fees y PVP) suma sus servicios: un hotel con dos huéspedes es
+un servicio con un importe, así que los pasajeros no duplican nada. Una reserva **cancelada** queda de sólo
+lectura (se puede reabrir); cada cambio queda en su historial.
+
 ### Quién hace qué (roles y permisos)
 
 Cada persona tiene **un rol** y cada rol, una lista de **permisos** (lista blanca: lo que no tiene marcado, no
@@ -114,6 +143,8 @@ Reparto inicial:
 | **Dar de alta** clientes nuevos (también desde la solicitud, con aviso de los que tienen un nombre parecido) | ✔ | ✔ | ✔ | ✔ | |
 | Editar, fusionar y borrar clientes | ✔ | ✔ | ✔ | | |
 | Ver y cambiar los **datos fiscales, el fee, el acuerdo de pago y lo presupuestado** de cada cliente (y sus entidades) | ✔ | ✔ | ✔ | | |
+| Ver y gestionar las reservas de **Business Travel** (pasajeros, servicios, importes y PVP) | ✔ | ✔ | ✔ | ✔ | |
+| Ver y cambiar el **fee interno** de los viajes | ✔ | ✔ | ✔ | | |
 | Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
 | Usuarios, roles y permisos | | | | | ✔ |
 
@@ -184,6 +215,10 @@ Reparto inicial:
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
+- **Business Travel**: las reservas con buscador (referencia, cliente, pasajero, proveedor o localizador), mes y
+  estado, con sus pasajeros, servicios y PVP. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
+  añaden los pasajeros (si ya viajaron con ese cliente, se eligen y se rellenan sus datos) y los servicios de cada
+  bloque, con el resumen económico arriba y el historial abajo. La ficha del cliente enseña sus reservas.
 - **Clientes**: directorio con buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
   entidades), filtro de estado y orden por nombre, próximo o último evento, expedientes, altas recientes o lo
   presupuestado; con permiso económico, el fee y lo presupuestado de cada uno (y, con cobros, lo facturado y lo
@@ -240,7 +275,7 @@ Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-
 
 `npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
 (lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios);
-también los **servicios** de Proveedores, Contratos, Clientes y Pagos contra una base SQLite en memoria con las migraciones y los
+también los **servicios** de Proveedores, Contratos, Clientes, Pagos y Business Travel contra una base SQLite en memoria con las migraciones y los
 datos de ejemplo (permisos de cada rol, datos que se devuelven, cambios en la base; necesita Node 22.13 o superior)
 y las **reglas de la arquitectura**. `npm run typecheck` comprueba los tipos de servicios y repositorios y
 `npm run check` hace las dos cosas. Cómo está organizado el código: [ARQUITECTURA.md](ARQUITECTURA.md).
@@ -256,6 +291,11 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 ```
 
 **Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Business Travel (migración 0012)**: sólo añade tablas (`bt_bookings`, `bt_passengers`, `bt_lines`,
+`bt_line_passengers` y `counters` para las numeraciones), el tipo (empresa o persona) y el tratamiento de los
+clientes, cuatro tipos de proveedor y los permisos de Business Travel. El historial común (`change_log`) se rehace
+igual para admitir las reservas (no tiene nada que apunte a él). No toca los expedientes.
 
 **Clientes (migración 0011)**: sólo añade tablas (`clients`, sus nombres anteriores, sus entidades y el historial
 común `change_log`) y dos columnas a `expedientes` (`client_id` y `fee_bp`); no se borra ni se recrea nada.
@@ -318,13 +358,14 @@ un sandbox). Se comprueba el tipo real de cada archivo por sus primeros bytes.
 src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
-  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients, payments
-                    y files (guardar y borrar documentos); result y context
+  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients, payments,
+                    travel (Business Travel) y files (guardar y borrar documentos); result y context
   repos/            El SQL de cada área: suppliers, contracts, clients, payments, supplier-docs (facturas y proformas
-                    de proveedor), files, rates (tipos de IVA), expedientes (su cabecera) y changes (historial común)
+                    de proveedor), files, rates (tipos de IVA), expedientes (su cabecera), travel (reservas de Business
+                    Travel), counters (numeraciones) y changes (historial común)
   lib/              Reglas puras: money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
                     suppliers (volumen de negocio), clients (relación económica, antigüedad), changes (qué cambió),
-                    name-match (nombres parecidos), supplier (reglas de las facturas de proveedor), files (comprobar
+                    travel (servicios de viaje, importes y PVP), name-match (nombres parecidos), supplier (reglas de las facturas de proveedor), files (comprobar
                     archivos), validate (formularios), permissions… y lo que aún no está en capas: data (consultas),
                     actions (cobrar), invoicing (nº de factura y envío), auth…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)

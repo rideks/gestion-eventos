@@ -6,7 +6,7 @@
 
 /**
  * @param {Db} db
- * @param {'client'} entity
+ * @param {'client' | 'bt_booking' | 'bt_albaran' | 'bt_invoice'} entity
  * @param {number} entityId
  * @param {number | null} userId
  * @param {string} action alta · datos · condiciones · fusion · entidad…
@@ -21,7 +21,7 @@ export function changeStmt(db, entity, entityId, userId, action, summary, change
 /**
  * Historial de una ficha, lo más reciente primero
  * @param {Db} db
- * @param {'client'} entity
+ * @param {'client' | 'bt_booking' | 'bt_albaran' | 'bt_invoice'} entity
  * @param {number} entityId
  */
 export const forEntity = (db, entity, entityId) => db.prepare(
@@ -32,7 +32,7 @@ export const forEntity = (db, entity, entityId) => db.prepare(
 /**
  * Lo que había de una ficha que desaparece (al fusionar) pasa a la otra
  * @param {Db} db
- * @param {'client'} entity
+ * @param {'client' | 'bt_booking' | 'bt_albaran' | 'bt_invoice'} entity
  * @param {number} fromId
  * @param {number} intoId
  */

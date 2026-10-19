@@ -1,0 +1,151 @@
+---
+// Campos de un servicio de una reserva de Business Travel (transporte, alojamiento, inscripción u otros):
+// proveedor del directorio, sus datos (los de su bloque), pasajeros de la reserva e importes.
+// Importes: se escribe el importe sin IVA o el importe con IVA y el otro se calcula con el % de IVA (el último que
+// se escribe manda); PVP = con IVA + fee. El fee sólo se ve y se escribe con permiso (fee=true).
+// Necesita en la página un <EntityPickerKit kind="supplier" /> para el selector de proveedor.
+//   id: prefijo único de este formulario en la página · v: valores (guardados o los escritos si hubo un error)
+import EntityPicker from './EntityPicker.astro';
+import { LINE_KINDS, personName, suggestedVat } from '../lib/travel.js';
+import { amountInput } from '../lib/money.js';
+import { defaultRate, pctText } from '../lib/vat.js';
+
+const { kind, id, v = {}, errors = {}, rates = [], passengers = [], selected = [], fee = false } = Astro.props;
+const k = LINE_KINDS[kind];
+const err = (f) => ({ 'has-error': errors[f] });
+const val = (f) => v[f] ?? '';
+// Lo escrito (texto) o lo guardado (céntimos)
+const money = (raw, cents) => (raw !== undefined ? raw : cents !== undefined && cents !== null ? amountInput(cents) : '');
+const vat = String(v.vat ?? v.vat_bp ?? suggestedVat(kind, rates, defaultRate(rates)));
+const known = new Set(rates.map((r) => String(r.rate_bp)));
+const picked = new Set((selected ?? []).map(Number));
+const one = k.passengers === 'one';
+---
+<div class="bt-line-fields" data-bt-line>
+  <div class="row row-2">
+    <div class:list={['field', err('supplier')]}>
+      <label for={`${id}-supplier`}>Proveedor {k.supplier === 'optional' && <span class="opt">(si lo hay)</span>}</label>
+      <EntityPicker kind="supplier" id={`${id}-supplier`} name="supplier" value={v.supplier} valueId={v.supplier_id} keepId={v.keep_supplier_id}
+        required={k.supplier === 'required'} placeholder="Busca el proveedor" />
+    </div>
+    <div class:list={['field', err('description')]}>
+      <label for={`${id}-description`}>{k.fields.description} {!k.required.includes('description') && <span class="opt">(opcional)</span>}</label>
+      <input id={`${id}-description`} name="description" type="text" maxlength="200" value={val('description')} placeholder={k.placeholders.description}
+        required={k.required.includes('description')} />
+    </div>
+  </div>
+  <div class:list={['row', kind === 'transporte' ? 'row-4' : kind === 'otros' ? 'row-2' : 'row-3']}>
+    <div class:list={['field', err('start_date')]}>
+      <label for={`${id}-start`}>{k.fields.start_date} {!k.required.includes('start_date') && <span class="opt">(opcional)</span>}</label>
+      <input id={`${id}-start`} name="start_date" type="date" value={val('start_date')} required={k.required.includes('start_date')} />
+    </div>
+    {k.fields.end_date && (
+      <div class:list={['field', err('end_date')]}>
+        <label for={`${id}-end`}>{k.fields.end_date} {!k.required.includes('end_date') && <span class="opt">(opcional)</span>}</label>
+        <input id={`${id}-end`} name="end_date" type="date" value={val('end_date')} required={k.required.includes('end_date')} />
+      </div>
+    )}
+    <div class:list={['field', err('locator')]}>
+      <label for={`${id}-locator`}>{k.fields.locator} <span class="opt">(opcional)</span></label>
+      <input id={`${id}-locator`} name="locator" type="text" maxlength="60" value={val('locator')} autocapitalize="characters" />
+    </div>
+    {k.fields.issued_on && (
+      <div class:list={['field', err('issued_on')]}>
+        <label for={`${id}-issued`}>{k.fields.issued_on} <span class="opt">(opcional)</span></label>
+        <input id={`${id}-issued`} name="issued_on" type="date" value={val('issued_on')} />
+      </div>
+    )}
+  </div>
+  <div class:list={['field', err('details')]}>
+    <label for={`${id}-details`}>{k.fields.details} <span class="opt">(opcional)</span></label>
+    <input id={`${id}-details`} name="details" type="text" maxlength="1000" value={val('details')} placeholder={k.placeholders.details} />
+  </div>
+
+  <fieldset class:list={['field', 'bt-who', err('passengers')]}>
+    <legend>{k.who} {kind === 'otros' && <span class="opt">(si es de alguien en concreto)</span>}</legend>
+    {passengers.length ? (
+      <div class="bt-who-list">
+        {passengers.map((p) => (
+          <label class="check">
+            <input type={one ? 'radio' : 'checkbox'} name="passenger_ids" value={p.id} checked={picked.has(p.id)} required={one} />
+            {personName(p)}
+          </label>
+        ))}
+      </div>
+    ) : <p class="muted small">Todavía no hay pasajeros: añádelos arriba, en «Pasajeros».</p>}
+  </fieldset>
+
+  <div class="bt-amounts" data-bt-amounts>
+    <div class:list={['field', err('amount')]}>
+      <label for={`${id}-base`}>Importe sin IVA</label>
+      <input id={`${id}-base`} name="base" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={money(v.base, v.base_cents)} data-bt-base />
+    </div>
+    <div class:list={['field', err('vat')]}>
+      <label for={`${id}-vat`}>IVA</label>
+      <select id={`${id}-vat`} name="vat" data-bt-vat>
+        {rates.map((r) => <option value={r.rate_bp} selected={vat === String(r.rate_bp)}>{r.label}</option>)}
+        {!known.has(vat) && <option value={vat} selected>{pctText(Number(vat))} %</option>}
+      </select>
+    </div>
+    <div class:list={['field', err('amount')]}>
+      <label for={`${id}-total`}>Importe con IVA</label>
+      <input id={`${id}-total`} name="total" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={money(v.total, v.total_cents)} data-bt-total />
+    </div>
+    {fee && (
+      <div class:list={['field', err('fee')]}>
+        <label for={`${id}-fee`}>Fee oculto</label>
+        <input id={`${id}-fee`} name="fee" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value={money(v.fee, v.fee_cents)} data-bt-fee />
+      </div>
+    )}
+    <div class="field bt-pvp">
+      <span class="vat-label">PVP</span>
+      <output class="money" data-bt-pvp data-fee-cents={fee ? undefined : v.fee_cents ?? 0}>—</output>
+    </div>
+  </div>
+  <p class="hint muted small">Escribe el importe sin IVA o con IVA y el otro se calcula. PVP = importe con IVA{fee ? ' + fee' : ''}.{fee && ' El fee no sale en los documentos del cliente.'}</p>
+</div>
+
+<script>
+  import { parseAmount } from '../lib/money.js';
+  import { totalFromBaseBp, baseFromTotalBp } from '../lib/vat.js';
+
+  // Importes en céntimos → '1.234,50' (siempre con dos decimales)
+  const two = (c) => (c / 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const plain = (c) => (c / 100).toFixed(2).replace('.', ',');
+
+  document.querySelectorAll('[data-bt-amounts]').forEach((box) => {
+    const base = box.querySelector('[data-bt-base]');
+    const total = box.querySelector('[data-bt-total]');
+    const vat = box.querySelector('[data-bt-vat]');
+    const fee = box.querySelector('[data-bt-fee]');
+    const pvp = box.querySelector('[data-bt-pvp]');
+    if (!(base instanceof HTMLInputElement) || !(total instanceof HTMLInputElement) || !(vat instanceof HTMLSelectElement)) return;
+    // El último importe que se escribe manda; el otro se recalcula (sin bucles: sólo al escribir en uno)
+    let source = total.value.trim() && !base.value.trim() ? 'total' : 'base';
+    const value = (input) => {
+      const n = parseAmount(input.value);
+      return n === null || Number.isNaN(n) ? null : n;
+    };
+    const pvpText = () => {
+      const t = value(total);
+      const f = fee instanceof HTMLInputElement ? value(fee) ?? 0 : Number(pvp?.dataset.feeCents ?? 0);
+      if (pvp) pvp.textContent = t === null ? '—' : `${two(t + f)} €`;
+    };
+    const sync = () => {
+      const bp = Number(vat.value);
+      if (source === 'base') {
+        const b = value(base);
+        total.value = b === null ? '' : plain(totalFromBaseBp(b, bp));
+      } else {
+        const t = value(total);
+        base.value = t === null ? '' : plain(baseFromTotalBp(t, bp));
+      }
+      pvpText();
+    };
+    base.addEventListener('input', () => { source = 'base'; sync(); });
+    total.addEventListener('input', () => { source = 'total'; sync(); });
+    vat.addEventListener('change', sync);
+    fee?.addEventListener('input', pvpText);
+    pvpText();
+  });
+</script>

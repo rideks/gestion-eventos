@@ -1,0 +1,69 @@
+---
+// Campos de un pasajero de una reserva de Business Travel: tratamiento, nombre, apellidos, email (su bono le
+// llegará a él), teléfono y datos que necesite el servicio. known: personas que ya viajaron para el cliente:
+// al elegir una se rellenan sus datos.
+import { TITLES } from '../lib/travel.js';
+
+const { id, v = {}, errors = {}, known = [] } = Astro.props;
+const err = (f) => ({ 'has-error': errors[f] });
+const val = (f) => v[f] ?? '';
+---
+<div class="bt-passenger-fields" data-bt-passenger>
+  {known.length > 0 && (
+    <div class="field">
+      <label for={`${id}-known`}>Ya ha viajado con este cliente <span class="opt">(opcional)</span></label>
+      <select id={`${id}-known`} data-bt-known={JSON.stringify(known)}>
+        <option value="">Elige para rellenar sus datos…</option>
+        {known.map((p, i) => <option value={i}>{[p.title, p.first_name, p.last_name].filter(Boolean).join(' ')}{p.email ? ` · ${p.email}` : ''}</option>)}
+      </select>
+    </div>
+  )}
+  <div class="row row-3">
+    <div class:list={['field', err('title')]}>
+      <label for={`${id}-title`}>Tratamiento</label>
+      <select id={`${id}-title`} name="title" data-f="title">
+        <option value="">Sin tratamiento</option>
+        {TITLES.map((t) => <option value={t} selected={val('title') === t}>{t}</option>)}
+      </select>
+    </div>
+    <div class:list={['field', err('first_name')]}>
+      <label for={`${id}-first`}>Nombre</label>
+      <input id={`${id}-first`} name="first_name" type="text" maxlength="80" required value={val('first_name')} data-f="first_name" />
+    </div>
+    <div class:list={['field', err('last_name')]}>
+      <label for={`${id}-last`}>Apellidos</label>
+      <input id={`${id}-last`} name="last_name" type="text" maxlength="120" required value={val('last_name')} data-f="last_name" />
+    </div>
+  </div>
+  <div class="row row-3">
+    <div class:list={['field', err('email')]}>
+      <label for={`${id}-email`}>Email <span class="opt">(su bono le llega aquí)</span></label>
+      <input id={`${id}-email`} name="email" type="email" maxlength="200" value={val('email')} data-f="email" />
+    </div>
+    <div class:list={['field', err('phone')]}>
+      <label for={`${id}-phone`}>Teléfono <span class="opt">(opcional)</span></label>
+      <input id={`${id}-phone`} name="phone" type="tel" maxlength="20" value={val('phone')} data-f="phone" />
+    </div>
+    <div class:list={['field', err('notes')]}>
+      <label for={`${id}-notes`}>Datos adicionales <span class="opt">(opcional)</span></label>
+      <input id={`${id}-notes`} name="notes" type="text" maxlength="500" value={val('notes')} placeholder="Tarjeta de fidelización, preferencias…" />
+    </div>
+  </div>
+</div>
+
+<script>
+  // «Ya ha viajado con este cliente»: rellena sus datos (se pueden cambiar antes de guardar)
+  document.querySelectorAll('[data-bt-known]').forEach((select) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    const list = JSON.parse(select.dataset.btKnown ?? '[]');
+    const box = select.closest('[data-bt-passenger]');
+    select.addEventListener('change', () => {
+      const p = list[Number(select.value)];
+      if (!p || !box) return;
+      for (const f of ['title', 'first_name', 'last_name', 'email', 'phone']) {
+        const el = box.querySelector(`[data-f="${f}"]`);
+        if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) el.value = p[f] ?? '';
+      }
+    });
+  });
+</script>

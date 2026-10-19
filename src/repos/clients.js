@@ -27,7 +27,7 @@ const ORDER = {
  */
 export function list(db, { q = '', status = '', order = 'name', year, now }) {
   return db.prepare(
-    `SELECT c.id, c.name, c.status, c.city, c.fee_bp, c.created_at,
+    `SELECT c.id, c.name, c.status, c.kind, c.title, c.city, c.fee_bp, c.created_at,
             COUNT(CASE WHEN ${LIVE} THEN e.id END) AS exps,
             MAX(CASE WHEN ${LIVE} AND e.start_date <= ?5 THEN e.start_date END) AS last_date,
             MIN(CASE WHEN ${LIVE} AND e.start_date > ?5 THEN e.start_date END) AS next_date,
@@ -90,7 +90,7 @@ export async function ficha(db, id) {
 /** Todos los clientes para el selector de las solicitudes (con sus nombres anteriores) @param {Db} db */
 export function options(db) {
   return db.prepare(
-    `SELECT c.id, c.name, c.status, c.city,
+    `SELECT c.id, c.name, c.status, c.title, c.city,
             (SELECT GROUP_CONCAT(a.alias, char(10)) FROM client_aliases a WHERE a.client_id = c.id) AS aliases
        FROM clients c ORDER BY c.status = 'inactivo', c.name COLLATE NOCASE LIMIT 2000`,
   ).all().then((r) => r.results.map((x) => ({ ...x, aliases: x.aliases ? x.aliases.split('\n') : [] })));
@@ -104,7 +104,7 @@ export function options(db) {
  */
 export function resolve(db, id, name) {
   return db.prepare(
-    `SELECT c.id, c.name, c.status, c.fee_bp, c.payment_terms FROM clients c
+    `SELECT c.id, c.name, c.status, c.kind, c.title, c.fee_bp, c.payment_terms FROM clients c
       WHERE c.id = COALESCE((SELECT x.id FROM clients x WHERE x.id = ?1), (SELECT x.id FROM clients x WHERE x.name = ?2),
                             (SELECT a.client_id FROM client_aliases a WHERE a.alias = ?2))`,
   ).bind(id, name).first();
@@ -153,22 +153,23 @@ export const search = (db, q) => db.prepare(
  */
 export function insert(db, d, userId) {
   return db.prepare(
-    `INSERT INTO clients (name, status, legal_name, tax_id, fiscal_address, city, phone, email, billing_email, payment_terms, fee_bp,
+    `INSERT INTO clients (name, status, kind, title, legal_name, tax_id, fiscal_address, city, phone, email, billing_email, payment_terms, fee_bp,
                           since_on, notes, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING
-     RETURNING id, name, status, city`,
-  ).bind(d.name, d.status ?? 'activo', d.legal_name ?? null, d.tax_id ?? null, d.fiscal_address ?? null, d.city ?? null, d.phone ?? null,
-    d.email ?? null, d.billing_email ?? null, d.payment_terms ?? null, d.fee_bp ?? null, d.since_on ?? null, d.notes ?? null, userId).first();
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING
+     RETURNING id, name, status, kind, title, city`,
+  ).bind(d.name, d.status ?? 'activo', d.kind ?? 'empresa', d.title ?? null, d.legal_name ?? null, d.tax_id ?? null, d.fiscal_address ?? null,
+    d.city ?? null, d.phone ?? null, d.email ?? null, d.billing_email ?? null, d.payment_terms ?? null, d.fee_bp ?? null, d.since_on ?? null,
+    d.notes ?? null, userId).first();
 }
 
 /** @param {Db} db @param {number} id @param {Record<string, any>} d */
 export function updateStmt(db, id, d) {
   return db.prepare(
-    `UPDATE clients SET name = ?, status = ?, legal_name = ?, tax_id = ?, fiscal_address = ?, city = ?, phone = ?, email = ?,
+    `UPDATE clients SET name = ?, status = ?, kind = ?, title = ?, legal_name = ?, tax_id = ?, fiscal_address = ?, city = ?, phone = ?, email = ?,
             billing_email = ?, payment_terms = ?, fee_bp = ?, since_on = ?, notes = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
       WHERE id = ?`,
-  ).bind(d.name, d.status, d.legal_name, d.tax_id, d.fiscal_address, d.city, d.phone, d.email, d.billing_email, d.payment_terms,
-    d.fee_bp, d.since_on, d.notes, id);
+  ).bind(d.name, d.status, d.kind ?? 'empresa', d.title ?? null, d.legal_name, d.tax_id, d.fiscal_address, d.city, d.phone, d.email,
+    d.billing_email, d.payment_terms, d.fee_bp, d.since_on, d.notes, id);
 }
 
 /**

@@ -45,6 +45,14 @@ export const AREAS = [
     ],
   },
   {
+    key: 'viajes',
+    label: 'Business Travel',
+    permissions: [
+      { key: 'viajes', label: 'Ver y gestionar las reservas de Business Travel', help: 'Reservas de viajes de empresa de cada cliente: pasajeros, transporte, alojamiento, inscripciones y otros servicios, con sus importes y el PVP. Aparte de los expedientes.' },
+      { key: 'viajes.fee', label: 'Ver y cambiar el fee interno de los viajes', help: 'El fee oculto de cada servicio y el total de fees de cada reserva. Nunca sale en los documentos del cliente.' },
+    ],
+  },
+  {
     key: 'proveedores',
     label: 'Proveedores',
     permissions: [
@@ -93,6 +101,7 @@ export const REQUIRES = {
   'proveedores.gasto': 'proveedores',
   contratos: 'proveedores',
   'contratos.edit': 'contratos',
+  'viajes.fee': 'viajes',
 };
 
 /**
@@ -140,6 +149,7 @@ const SECTIONS = [
   [/^\/pagos\/?$/, 'pagos'],
   [/^\/cobros\/?$/, 'cobros'],
   [/^\/clientes(\/|$)/, 'clientes'],
+  [/^\/viajes(\/|$)/, 'viajes'],
   [/^\/proveedores\/(contratos|\d+\/contratos)(\/|$)/, 'contratos'],
   [/^\/proveedores(\/|$)/, 'proveedores'],
   [/^\/usuarios(\/|$)/, 'users'],

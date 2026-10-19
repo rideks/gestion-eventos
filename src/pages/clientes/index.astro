@@ -122,7 +122,7 @@ const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
           {rows.map((r) => (
             <tr class:list={{ 'is-planned': r.status !== 'activo' }}>
               <td>
-                <a href={`/clientes/${r.id}`}><strong>{r.name}</strong></a>
+                <a href={`/clientes/${r.id}`}><strong>{[r.title, r.name].filter(Boolean).join(' ')}</strong></a>
                 {r.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[r.status]}</span>}
               </td>
               <td>{r.city ?? '—'}</td>
