@@ -1,0 +1,147 @@
+---
+// Clientes: directorio con búsqueda (nombre, nombre fiscal, NIF, ciudad, nombres anteriores y entidades),
+// filtro de estado y orden. Lo presupuestado y el fee, sólo con permiso económico; lo facturado y lo
+// pendiente de cobro, además con el de cobros: el servicio ni lo devuelve si no.
+// Aquí se dan de alta clientes (también desde el selector de una solicitud), con aviso de nombres parecidos.
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import ClientFields from '../../components/ClientFields.astro';
+import { readForm, can } from '../../lib/app.js';
+import { CLIENT_STATUS, formToObject } from '../../lib/validate.js';
+import { cleanName } from '../../lib/suppliers.js';
+import { feeLabel } from '../../lib/clients.js';
+import { eur } from '../../lib/money.js';
+import { formatDate } from '../../lib/dates.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as clients from '../../services/clients.js';
+
+const ctx = serviceContext(Astro);
+const creatable = can(Astro.locals.user, 'clientes.create');
+let error = null;
+let errors = {};
+let v = { status: 'activo' };
+let openNew = Astro.url.searchParams.has('nuevo');
+let similar = [];
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const r = input.intent === 'create' ? await clients.create(ctx, input) : { ok: false, code: 'forbidden' };
+  if (r.ok) return Astro.redirect(`/clientes/${r.value.id}?ok=creado`, 303);
+  const back = failure(Astro, r, '/clientes');
+  if (back) return back;
+  error = r.message;
+  errors = r.fields;
+  openNew = true;
+  v = input;
+  // Si se parece a alguno, se enseñan y hay que confirmar que es otro (con el mismo nombre escrito)
+  similar = r.similar ?? [];
+}
+
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 80);
+const dir = await clients.directory(ctx, { q, status: params.get('estado') ?? '', order: params.get('orden') ?? 'name' });
+if (!dir.ok) return failure(Astro, dir, '/');
+const { rows, orders: ORDERS, order, status, year, economy, billing } = dir.value;
+const filtered = q || status;
+const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
+---
+<App title="Clientes" section="clientes" error={error} fieldErrors={errors} origin="Clientes">
+  <div class="page-top">
+    <div>
+      <h1>Clientes</h1>
+      <p>Con quién trabajamos{economy && ', con qué condiciones y qué volumen representa cada uno'}</p>
+    </div>
+  </div>
+
+  {creatable && (
+    <details class="add" open={openNew}>
+      <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Nuevo cliente</span><span class="when-open">Cerrar formulario</span></summary>
+      <form method="post" class="form-section">
+        <h2><Icon name="building" /> Nuevo cliente</h2>
+        <p class="muted">Lo básico; el resto se completa en su ficha. Antes, búscalo en la lista: si ya está, no lo des de alta otra vez.</p>
+        <ClientFields v={v} errors={errors} economy={economy} />
+        {similar.length > 0 && (
+          <div class="picker-similar">
+            <p><Icon name="triangle-alert" size={18} /> Ya hay clientes con un nombre parecido. ¿Es alguno de estos?</p>
+            <ul>
+              {similar.map((x) => (
+                <li>
+                  <span><a href={`/clientes/${x.id}`}><strong>{x.name}</strong></a> <span class="picker-meta">{[x.city, x.via && `antes «${x.via}»`].filter(Boolean).join(' · ')}</span></span>
+                  {x.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[x.status]}</span>}
+                </li>
+              ))}
+            </ul>
+            <label class="check"><input type="checkbox" name="confirm_similar" value={cleanName(v.name)} /> No es ninguno de estos: es un cliente distinto</label>
+          </div>
+        )}
+        <div><button class="btn btn-primary" type="submit" name="intent" value="create" data-busy="Guardando…"><Icon name="check" size={18} /> Dar de alta</button></div>
+      </form>
+    </details>
+  )}
+
+  <form method="get" class="quick-form supplier-filters" role="search">
+    <label class="visually-hidden" for="q">Buscar cliente</label>
+    <input id="q" name="q" type="search" value={q} placeholder="Nombre, NIF, ciudad o entidad" />
+    <label class="visually-hidden" for="estado">Estado</label>
+    <select id="estado" name="estado">
+      <option value="">Todos los estados</option>
+      {Object.entries(CLIENT_STATUS).map(([k, label]) => <option value={k} selected={status === k}>{label}</option>)}
+    </select>
+    <label class="visually-hidden" for="orden">Ordenar por</label>
+    <select id="orden" name="orden">
+      {Object.entries(ORDERS).map(([k, label]) => <option value={k} selected={order === k}>{label}</option>)}
+    </select>
+    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+    {filtered && <a class="btn btn-ghost btn-sm" href="/clientes">Quitar filtros</a>}
+  </form>
+
+  <p class="muted mt">
+    {rows.length} {rows.length === 1 ? 'cliente' : 'clientes'}
+    {economy && rows.length > 0 && <> · presupuestado en {year}: <b class="money">{eur(sum('this_year'))}</b> · en total: <b class="money">{eur(sum('budget'))}</b> <span class="small">(sin IVA, sin cancelados)</span></>}
+    {billing && sum('pending') > 0 && <> · pendiente de cobro: <b class="money">{eur(sum('pending'))}</b> <span class="small">(con IVA)</span></>}
+  </p>
+
+  {rows.length ? (
+    <div class="table-scroll mt">
+      <table class="dtable clients">
+        <thead>
+          <tr>
+            <th scope="col">Cliente</th>
+            <th scope="col">Ciudad</th>
+            <th scope="col" class="num">Expedientes</th>
+            <th scope="col">Próximo evento</th>
+            <th scope="col">Último evento</th>
+            {economy && <th scope="col" class="num">Fee</th>}
+            {economy && <th scope="col" class="num">Presupuestado</th>}
+            {billing && <th scope="col" class="num">Facturado</th>}
+            {billing && <th scope="col" class="num">Pendiente de cobro</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr class:list={{ 'is-planned': r.status !== 'activo' }}>
+              <td>
+                <a href={`/clientes/${r.id}`}><strong>{r.name}</strong></a>
+                {r.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[r.status]}</span>}
+              </td>
+              <td>{r.city ?? '—'}</td>
+              <td class="num">{r.exps}</td>
+              <td>{r.next_date ? formatDate(r.next_date) : '—'}</td>
+              <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>
+              {economy && <td class="num">{feeLabel(r.fee_bp) ?? '—'}</td>}
+              {economy && <td class="num money">{eur(r.budget)}</td>}
+              {billing && <td class="num money">{eur(r.invoiced)}</td>}
+              {billing && <td class:list={['num', 'money', { neg: r.pending > 0 }]}>{eur(r.pending)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <div class="empty mt">
+      <p>{filtered ? 'Ningún cliente con esos filtros.' : 'Todavía no hay clientes. Se dan de alta con «Nuevo cliente» o al pedir un expediente.'}</p>
+    </div>
+  )}
+  {economy && <p class="muted small mt">Presupuestado: la versión vigente del presupuesto de cada expediente, sin IVA.{billing && ' Facturado: facturas emitidas o cobradas, sin IVA. Pendiente de cobro: facturas emitidas sin cobrar, con IVA.'}</p>}
+</App>

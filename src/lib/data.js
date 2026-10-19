@@ -345,15 +345,24 @@ export async function searchAll(db, q, { cobros = true, suppliers = false } = {}
 }
 
 /**
- * Datos fiscales de los clientes ya facturados (aún no hay fichas de clientes): los de su última
- * factura con NIF. Sirven para rellenar solos el NIF, la dirección y el email en una factura nueva.
+ * Datos fiscales conocidos para rellenar solos el NIF, la dirección y el email en una factura nueva:
+ * los de las fichas de clientes y sus entidades de facturación y, si no, los de su última factura con NIF.
  */
 export async function knownClients(db) {
   const { results } = await db.prepare(
-    `SELECT i.billed_to, i.billed_tax_id, i.billed_address, i.billed_email FROM invoices i
-      WHERE i.billed_tax_id IS NOT NULL
-        AND i.id = (SELECT MAX(j.id) FROM invoices j WHERE j.billed_to = i.billed_to COLLATE NOCASE AND j.billed_tax_id IS NOT NULL)
-      ORDER BY i.billed_to COLLATE NOCASE LIMIT 500`,
+    `SELECT billed_to, billed_tax_id, billed_address, billed_email FROM (
+       SELECT *, ROW_NUMBER() OVER (PARTITION BY lower(billed_to) ORDER BY src) AS rn FROM (
+         SELECT COALESCE(c.legal_name, c.name) AS billed_to, c.tax_id AS billed_tax_id, c.fiscal_address AS billed_address,
+                c.billing_email AS billed_email, 0 AS src FROM clients c WHERE c.tax_id IS NOT NULL
+         UNION ALL
+         SELECT x.legal_name, x.tax_id, x.fiscal_address, x.email, 1 FROM client_entities x
+         UNION ALL
+         SELECT i.billed_to, i.billed_tax_id, i.billed_address, i.billed_email, 2 FROM invoices i
+          WHERE i.billed_tax_id IS NOT NULL
+            AND i.id = (SELECT MAX(j.id) FROM invoices j WHERE j.billed_to = i.billed_to COLLATE NOCASE AND j.billed_tax_id IS NOT NULL)
+       )
+     ) WHERE rn = 1
+     ORDER BY billed_to COLLATE NOCASE LIMIT 500`,
   ).all();
   return results;
 }

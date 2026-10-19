@@ -10,7 +10,7 @@
 import * as repo from '../repos/suppliers.js';
 import { can, activityStmt } from '../lib/app.js';
 import { cleanName, businessVolume } from '../lib/suppliers.js';
-import { similarSuppliers } from '../lib/supplier-match.js';
+import { similarNames } from '../lib/name-match.js';
 import { SupplierSchema, SupplierQuickSchema, SupplierTypeSchema, SUPPLIER_STATUS, validate } from '../lib/validate.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
 
@@ -88,7 +88,7 @@ export async function resolveForPayment(ctx, pick, { keepId = null } = {}) {
   const s = await repo.resolve(ctx.db, Number.isInteger(n) && n > 0 ? n : null, name);
   if (!s) {
     if (!name) return fail('invalid', 'Proveedor: elígelo de la lista', { fields: { supplier: 'Proveedor: elígelo de la lista' } });
-    const similar = similarSuppliers(name, await repo.options(ctx.db), 3).filter((x) => x.status !== 'bloqueado');
+    const similar = similarNames(name, await repo.options(ctx.db), 3).filter((x) => x.status !== 'bloqueado');
     const hint = similar.length ? ` ¿Es ${orList(similar.map((x) => `«${x.name}»`))}?` : '';
     const message = `Proveedor: «${name}» no está dado de alta.${hint} Elígelo de la lista o, si es nuevo, dalo de alta.`;
     return fail('invalid', message, { fields: { supplier: message } });
@@ -138,7 +138,7 @@ export async function create(ctx, input, { quick = false } = {}) {
   const taken = await repo.nameTaken(ctx.db, d.name);
   if (taken) return fail('conflict', `Ya existe: ${taken}. Búscalo en la lista.`, { fields: { name: `Ya existe: ${taken}. Búscalo en la lista.` }, taken });
   if (!confirmed) {
-    const similar = similarSuppliers(d.name, await repo.options(ctx.db));
+    const similar = similarNames(d.name, await repo.options(ctx.db));
     if (similar.length) return fail('similar', 'Ya hay proveedores con un nombre parecido: comprueba que no es ninguno de ellos.', { similar });
   }
   const supplier = await repo.insert(ctx.db, d, ctx.user?.id ?? null);

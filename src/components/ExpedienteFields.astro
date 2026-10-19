@@ -1,8 +1,13 @@
 ---
-// Datos del evento y del cliente (solicitud nueva y «Editar datos»)
+// Datos del evento y del cliente (solicitud nueva y «Editar datos»).
+// El cliente se elige de la lista de clientes (EntityPicker; la página lleva EntityPickerKit kind="client").
+// fee: el campo del fee de ESTE expediente (sólo en «Editar datos» y con permiso económico de clientes).
 import Icon from './Icon.astro';
+import EntityPicker from './EntityPicker.astro';
+import { pctText } from '../lib/vat.js';
 
-const { v = {}, errors = {}, users = [], companies = [] } = Astro.props;
+const { v = {}, errors = {}, users = [], fee = false } = Astro.props;
+const feeValue = v.fee !== undefined ? v.fee : v.fee_bp !== null && v.fee_bp !== undefined ? pctText(v.fee_bp) : '';
 ---
 <section class="form-section">
   <h2><Icon name="calendar-days" /> El evento</h2>
@@ -13,8 +18,7 @@ const { v = {}, errors = {}, users = [], companies = [] } = Astro.props;
     </div>
     <div class:list={['field', { 'has-error': errors.company }]}>
       <label for="company">Empresa (cliente)</label>
-      <input id="company" name="company" type="text" required maxlength="120" value={v.company ?? ''} list="companies" placeholder="GLENMARK" autocomplete="off" />
-      <datalist id="companies">{companies.map((c) => <option value={c} />)}</datalist>
+      <EntityPicker kind="client" id="company" name="company" value={v.company} valueId={v.company_id ?? v.client_id} required placeholder="Busca el cliente" />
     </div>
   </div>
   <div class="row row-3">
@@ -44,6 +48,16 @@ const { v = {}, errors = {}, users = [], companies = [] } = Astro.props;
       </select>
     </div>
   </div>
+  {fee && (
+    <div class:list={['field', 'field-narrow', { 'has-error': errors.fee }]}>
+      <label for="fee">Fee de este expediente</label>
+      <div class="input-suffix">
+        <input id="fee" name="fee" type="text" inputmode="decimal" maxlength="6" value={feeValue} placeholder="10" />
+        <span>%</span>
+      </div>
+      <p class="hint">Se copió del cliente al pedir el expediente. Cambiarlo aquí sólo afecta a este expediente.</p>
+    </div>
+  )}
 </section>
 
 <section class="form-section">

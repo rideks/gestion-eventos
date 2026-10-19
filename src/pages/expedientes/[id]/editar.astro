@@ -4,9 +4,12 @@ import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import ExpedienteFields from '../../../components/ExpedienteFields.astro';
+import EntityPickerKit from '../../../components/EntityPickerKit.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
-import { getExpediente, suggestions, activeUsers, numberTaken } from '../../../lib/data.js';
-import { ExpedienteSchema, NumberSchema, validate, formToObject } from '../../../lib/validate.js';
+import { getExpediente, activeUsers, numberTaken } from '../../../lib/data.js';
+import { ExpedienteSchema, ExpedienteFeeSchema, NumberSchema, validate, formToObject } from '../../../lib/validate.js';
+import { serviceContext } from '../../../services/context.js';
+import * as clients from '../../../services/clients.js';
 import { nowIso } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG } from '../../../lib/actions.js';
 
@@ -19,6 +22,9 @@ if (isLocked(exp)) return Astro.redirect(`/expedientes/${id}`, 303);
 const me = Astro.locals.user;
 const admin = can(me, 'expediente.open');
 const managePo = can(me, 'po.manage');
+// El fee de este expediente sólo lo ve y lo cambia quien ve las condiciones de los clientes
+const feeEditable = can(me, 'clientes.economia');
+const ctx = serviceContext(Astro);
 let error = null;
 let errors = {};
 let v = { ...exp };
@@ -28,6 +34,12 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   v = { ...exp, ...input };
   const parsed = validate(ExpedienteSchema, input);
+  // El cliente, de la lista de clientes (no se crea al escribirlo)
+  const cl = parsed.ok ? await clients.resolveForExpediente(ctx, { id: input.company_id, name: input.company }) : null;
+  // Quien no ve el fee no lo cambia; pero si corrige el cliente, el expediente pasa a tener el del cliente nuevo
+  // (como al pedirlo)
+  const otherClient = cl?.ok && cl.value.id !== exp.client_id;
+  const fee = feeEditable ? validate(ExpedienteFeeSchema, input) : { ok: true, data: { fee: otherClient ? cl.value.fee_bp : exp.fee_bp } };
   // El número sólo lo cambia Administración, y sólo si el expediente ya lo tiene
   const n = admin && exp.number ? validate(NumberSchema, input) : { ok: true, data: { number: exp.number } };
   if (isLocked(exp)) {
@@ -35,6 +47,12 @@ if (Astro.request.method === 'POST') {
   } else if (!parsed.ok) {
     error = parsed.message;
     errors = parsed.errors;
+  } else if (!cl.ok) {
+    error = cl.message;
+    errors = cl.fields;
+  } else if (!fee.ok) {
+    error = fee.message;
+    errors = fee.errors;
   } else if (!n.ok) {
     error = n.message;
     errors = n.errors;
@@ -47,12 +65,14 @@ if (Astro.request.method === 'POST') {
     if (n.data.number !== exp.number) changes.push(`número ${exp.number} → ${n.data.number}`);
     if (d.name !== exp.name) changes.push('nombre');
     if (d.start_date !== exp.start_date || d.end_date !== exp.end_date) changes.push('fechas');
-    if (d.company !== exp.company) changes.push('empresa');
+    if (cl.value.id !== exp.client_id) changes.push(`cliente: ${cl.value.name}`);
+    // Sin los valores: la actividad del expediente la ve también quien no puede ver el fee
+    if (fee.data.fee !== exp.fee_bp) changes.push('fee');
     await db.batch([
       db.prepare(
-        `UPDATE expedientes SET number = ?, name = ?, company = ?, contact_name = ?, contact_email = ?, contact_phone = ?, destination = ?,
-                start_date = ?, end_date = ?, attendees = ?, notes = ?, manager_id = ?, updated_at = ? WHERE id = ?`,
-      ).bind(n.data.number, d.name, d.company, d.contact_name, d.contact_email, d.contact_phone, d.destination,
+        `UPDATE expedientes SET number = ?, name = ?, company = ?, client_id = ?, fee_bp = ?, contact_name = ?, contact_email = ?, contact_phone = ?,
+                destination = ?, start_date = ?, end_date = ?, attendees = ?, notes = ?, manager_id = ?, updated_at = ? WHERE id = ?`,
+      ).bind(n.data.number, d.name, cl.value.name, cl.value.id, fee.data.fee, d.contact_name, d.contact_email, d.contact_phone, d.destination,
         d.start_date, d.end_date, d.attendees, d.notes, d.manager_id, nowIso(), id),
       activityStmt(db, actor(Astro), id, 'expediente.update', `cambió los datos del evento${changes.length ? ` (${changes.join(', ')})` : ''}`),
     ]);
@@ -61,7 +81,7 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ companies }, users] = await Promise.all([suggestions(db), activeUsers(db)]);
+const [users, clientPicker] = await Promise.all([activeUsers(db), clients.pickerData(ctx)]);
 ---
 <App title="Editar datos" section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="resumen" current="Editar datos" />
@@ -83,10 +103,11 @@ const [{ companies }, users] = await Promise.all([suggestions(db), activeUsers(d
         </div>
       </section>
     )}
-    <ExpedienteFields v={v} errors={errors} users={users} companies={companies} />
+    <ExpedienteFields v={v} errors={errors} users={users} fee={feeEditable} />
     <div class="actions">
       <button class="btn btn-primary" type="submit" data-busy="Guardando…">Guardar cambios</button>
       <a class="btn btn-ghost" href={`/expedientes/${id}`}>Cancelar</a>
     </div>
   </form>
+  <EntityPickerKit kind="client" options={clientPicker.ok ? clientPicker.value.options : []} />
 </App>

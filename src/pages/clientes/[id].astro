@@ -1,0 +1,315 @@
+---
+// Ficha de un cliente: datos y contactos, antigüedad, sus expedientes (previstos, en curso y terminados),
+// ciudades, proveedores y hoteles con los que se ha trabajado para él. Con permiso económico: datos
+// fiscales, condiciones (fee vigente y el aplicado en cada expediente, acuerdo de pago) con su historial,
+// entidades de facturación y lo presupuestado; con el de cobros, además lo facturado y cobrado.
+// Cómo se calcula cada importe: src/lib/clients.js. Todo llega ya filtrado del servicio (src/services/clients.js).
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import Pill from '../../components/Pill.astro';
+import ClientFields from '../../components/ClientFields.astro';
+import { parseId, readForm, can } from '../../lib/app.js';
+import { CLIENT_STATUS, formToObject } from '../../lib/validate.js';
+import { feeLabel, stageOf, STAGES } from '../../lib/clients.js';
+import { expLabel, expedienteState, plural } from '../../lib/finance.js';
+import { eur } from '../../lib/money.js';
+import { formatDate, formatRange, formatStamp } from '../../lib/dates.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as clients from '../../services/clients.js';
+
+const ctx = serviceContext(Astro);
+const id = parseId(Astro.params.id);
+const self = `/clientes/${id}`;
+const seesSuppliers = can(Astro.locals.user, 'proveedores');
+let error = null;
+let errors = {};
+let input = null;
+let openEdit = Astro.url.searchParams.has('editar');
+let openEntity = null;
+
+if (id && Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  input = form ? formToObject(form) : {};
+  const entityId = parseId(input.entity_id);
+  const ACTIONS = {
+    save: () => clients.update(ctx, id, input),
+    merge: () => clients.merge(ctx, id, parseId(input.into)),
+    delete: () => clients.remove(ctx, id),
+    entity_add: () => clients.addEntity(ctx, id, input),
+    entity_save: () => clients.updateEntity(ctx, id, entityId, input),
+    entity_delete: () => clients.removeEntity(ctx, id, entityId),
+  };
+  const r = Object.hasOwn(ACTIONS, input.intent) ? await ACTIONS[input.intent]() : { ok: false, code: 'forbidden' };
+  if (r.ok) {
+    if (input.intent === 'merge') return Astro.redirect(`/clientes/${r.value.into.id}?ok=guardado&fusionado=${encodeURIComponent(r.value.from.name)}`, 303);
+    if (input.intent === 'delete') return Astro.redirect('/clientes?ok=borrado', 303);
+    return Astro.redirect(`${self}?ok=guardado${input.intent.startsWith('entity') ? '#entidades' : ''}`, 303);
+  }
+  const back = failure(Astro, r, self);
+  if (back) return back;
+  error = r.message;
+  errors = r.fields;
+  openEdit = input.intent === 'save';
+  openEntity = input.intent === 'entity_add' ? 'new' : input.intent === 'entity_save' ? entityId : null;
+}
+
+const f = id ? await clients.ficha(ctx, id) : { ok: false, code: 'not_found' };
+if (!f.ok) return failure(Astro, f, '/clientes');
+const { client: c, aliases, entities, expedientes, suppliers, contacts, seniority, volume: vol, history, economy, billing, editable, others } = f.value;
+const v = openEdit && input ? { ...c, ...input } : c;
+const entityValues = (e) => (openEntity === e.id && input ? { ...e, ...input } : e);
+const now = ctx.now;
+const year = Number(now.slice(0, 4));
+const merged = Astro.url.searchParams.get('fusionado');
+const pct = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)} %`;
+const hotels = suppliers.filter((s) => ['Hotel', 'Venue / espacio'].includes(s.type));
+const others2 = suppliers.filter((s) => !['Hotel', 'Venue / espacio'].includes(s.type));
+const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
+---
+<App title={c.name} section="clientes" error={error} fieldErrors={errors} notice={merged ? `Fusionado: los expedientes de «${merged}» ya están en esta ficha y su nombre queda como nombre anterior.` : null}>
+  <div class="crumbs">
+    <nav aria-label="Estás en">
+      <ol>
+        <li class="is-parent"><a href="/clientes" data-crumb-list><Icon name="arrow-left" size={16} class="crumb-arrow" />Clientes</a></li>
+        <li><span aria-current="page">{c.name}</span></li>
+      </ol>
+    </nav>
+    <a class="btn btn-ghost btn-sm return-link" href="/" data-return hidden><Icon name="corner-up-left" size={16} /> Volver a <span data-return-label></span></a>
+  </div>
+
+  <div class="page-top">
+    <div>
+      <h1>{c.name}</h1>
+      <p class="exp-meta">
+        {c.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[c.status]}</span>}
+        {c.city && <span><Icon name="map-pin" size={16} />{c.city}</span>}
+        <span><Icon name="folder" size={16} />{plural(vol.exps, 'expediente', 'expedientes')}</span>
+        {seniority && <span><Icon name="clock" size={16} />Cliente desde {formatDate(seniority.from)} · {seniority.label}{!seniority.verified && ' (primer evento registrado)'}</span>}
+      </p>
+    </div>
+    {editable && <a class="btn btn-ghost btn-sm" href={`${self}?editar#editar`}><Icon name="pencil" size={16} /> Editar ficha</a>}
+  </div>
+
+  {economy && (
+    <>
+      <h2 class="section-title">Relación económica</h2>
+      <div class="kpis">
+        <div class="kpi is-gold"><span>Presupuestado</span><b class="money">{eur(vol.budget)}</b><small>sin IVA · {plural(vol.exps, 'expediente', 'expedientes')}{vol.exps > 1 && ` · media ${eur(vol.average)}`}</small></div>
+        <div class="kpi"><span>En {year}</span><b class="money">{eur(vol.thisYear)}</b><small>eventos de {year} · sin IVA</small></div>
+        {billing ? (
+          <>
+            <div class="kpi is-ok"><span>Cobrado</span><b class="money">{eur(vol.collected)}</b><small>con IVA · facturado {eur(vol.invoiced)} sin IVA</small></div>
+            <div class:list={['kpi', { 'is-danger': vol.pending > 0 }]}><span>Pendiente de cobro</span><b class="money">{eur(vol.pending)}</b><small>con IVA · facturas emitidas</small></div>
+          </>
+        ) : (
+          <div class="kpi"><span>Fee vigente</span><b>{feeLabel(c.fee_bp) ?? '—'}</b><small>{vol.averageFeeBp !== null ? `aplicado de media: ${feeLabel(vol.averageFeeBp)}` : 'sin fee en sus expedientes'}</small></div>
+        )}
+      </div>
+      <p class="muted small">De sus expedientes no cancelados. Presupuestado: la versión vigente de cada presupuesto. {billing && 'Lo facturado no es beneficio y lo pendiente todavía no se ha cobrado.'}</p>
+    </>
+  )}
+
+  <div class="two-col mt">
+    <section class="card">
+      <h2>Datos</h2>
+      <dl class="kv">
+        <dt>Teléfono</dt><dd>{phoneHref ? <a href={phoneHref}>{c.phone}</a> : '—'}</dd>
+        <dt>Email</dt><dd>{c.email ? <a href={`mailto:${c.email}`}>{c.email}</a> : '—'}</dd>
+        <dt>Ciudad</dt><dd>{c.city ?? '—'}</dd>
+        <dt>Relación desde</dt><dd>{c.since_on ? formatDate(c.since_on) : vol.first ? `${formatDate(vol.first)} (primer evento registrado)` : '—'}</dd>
+        {aliases.length > 0 && <><dt>Nombres anteriores</dt><dd>{aliases.join(' · ')}</dd></>}
+        <dt>Alta</dt><dd>{formatDate(c.created_at.slice(0, 10))}{c.created_by_name && ` · ${c.created_by_name}`}</dd>
+        <dt>Comentarios</dt><dd class="pre">{c.notes ?? '—'}</dd>
+      </dl>
+      {contacts.length > 0 && (
+        <>
+          <h3 class="form-sub">Contactos en sus expedientes</h3>
+          <ul class="contact-list">
+            {contacts.map((p) => (
+              <li><strong>{p.name}</strong>{p.email && <> · <a href={`mailto:${p.email}`}>{p.email}</a></>}{p.phone && <> · {p.phone}</>}<span class="muted small"> · {formatDate(p.last)}</span></li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+    {economy ? (
+      <section class="card">
+        <h2>Condiciones y datos fiscales</h2>
+        <dl class="kv">
+          <dt>Fee vigente</dt><dd>{feeLabel(c.fee_bp) ?? '—'}{vol.averageFeeBp !== null && <span class="muted small"> · aplicado de media en sus expedientes: {feeLabel(vol.averageFeeBp)}</span>}</dd>
+          <dt>Acuerdo de pago</dt><dd class="pre">{c.payment_terms ?? '—'}</dd>
+          <dt>Nombre fiscal</dt><dd>{c.legal_name ?? '—'}</dd>
+          <dt>NIF</dt><dd>{c.tax_id ?? '—'}</dd>
+          <dt>Dirección fiscal</dt><dd>{c.fiscal_address ?? '—'}</dd>
+          <dt>Email de facturación</dt><dd>{c.billing_email ? <a href={`mailto:${c.billing_email}`}>{c.billing_email}</a> : '—'}</dd>
+        </dl>
+        <p class="muted small mt">El fee se copia en cada expediente nuevo; cada expediente conserva el que se le aplicó.</p>
+      </section>
+    ) : (
+      <section class="card">
+        <h2>Sus expedientes</h2>
+        <dl class="kv">
+          {Object.entries(STAGES).map(([k, label]) => <><dt>{label}</dt><dd>{vol.stages[k]}</dd></>)}
+        </dl>
+      </section>
+    )}
+  </div>
+
+  <h2 class="section-title">Expedientes ({expedientes.length}) <span class="muted small">· {Object.entries(STAGES).filter(([k]) => vol.stages[k]).map(([k, label]) => `${label.toLowerCase()}: ${vol.stages[k]}`).join(' · ')}</span></h2>
+  {expedientes.length ? (
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead>
+          <tr>
+            <th scope="col">Expediente</th><th scope="col">Estado</th><th scope="col">Fechas</th><th scope="col">Ciudad</th><th scope="col">Responsable</th>
+            {economy && <><th scope="col" class="num">Fee</th><th scope="col" class="num">Presupuesto</th></>}
+            {billing && <><th scope="col" class="num">Facturado</th><th scope="col" class="num">Pendiente</th></>}
+          </tr>
+        </thead>
+        <tbody>
+          {expedientes.map((e) => (
+            <tr class:list={{ 'is-planned': e.status === 'cancelado' }} data-stage={stageOf(e, now)}>
+              <td><a href={`/expedientes/${e.id}`}><strong>{expLabel(e)}</strong> · {e.name}</a></td>
+              <td><Pill state={expedienteState(e, now)} /></td>
+              <td>{e.start_date ? formatRange(e.start_date, e.end_date) : '—'}</td>
+              <td>{e.destination ?? '—'}</td>
+              <td>{e.manager_name ?? '—'}</td>
+              {economy && <><td class="num">{feeLabel(e.fee_bp) ?? '—'}</td><td class="num">{e.budget_base === null ? '—' : eur(e.budget_base)}</td></>}
+              {billing && <><td class="num">{eur(e.invoiced_base)}</td><td class:list={['num', { neg: e.pending_total > 0 }]}>{eur(e.pending_total)}</td></>}
+            </tr>
+          ))}
+        </tbody>
+        {economy && vol.exps > 0 && (
+          <tfoot><tr><td colspan="6">Total (sin cancelados)</td><td class="num">{eur(vol.budget)}</td>{billing && <><td class="num">{eur(vol.invoiced)}</td><td class="num">{eur(vol.pending)}</td></>}</tr></tfoot>
+        )}
+      </table>
+    </div>
+  ) : <p class="muted">Todavía no tiene expedientes.</p>}
+
+  <div class="two-col mt">
+    <section class="card">
+      <h2>Hoteles y espacios</h2>
+      {hotels.length ? (
+        <ul class="list compact-list">
+          {hotels.map((s) => <li>{seesSuppliers ? <a href={`/proveedores/${s.id}`}>{s.name}</a> : s.name} <span class="muted small">{[s.type, s.city, plural(s.exps, 'expediente', 'expedientes')].filter(Boolean).join(' · ')}{s.contracted !== undefined && ` · ${eur(s.contracted)} sin IVA`}</span></li>)}
+        </ul>
+      ) : <p class="muted">Ninguno todavía.</p>}
+      <h2 class="mt">Otros proveedores</h2>
+      {others2.length ? (
+        <ul class="list compact-list">
+          {others2.map((s) => <li>{seesSuppliers ? <a href={`/proveedores/${s.id}`}>{s.name}</a> : s.name} <span class="muted small">{[s.type, s.city, plural(s.exps, 'expediente', 'expedientes')].filter(Boolean).join(' · ')}{s.contracted !== undefined && ` · ${eur(s.contracted)} sin IVA`}</span></li>)}
+        </ul>
+      ) : <p class="muted">Ninguno todavía.</p>}
+    </section>
+    <section class="card">
+      {economy && vol.byYear.length > 0 && (
+        <>
+          <h2>Por año</h2>
+          <table class="dtable compact">
+            <thead><tr><th scope="col">Año</th><th scope="col" class="num">Exp.</th><th scope="col" class="num">Presupuestado</th><th scope="col" class="num">vs año anterior</th></tr></thead>
+            <tbody>{vol.byYear.map((y) => <tr><td>{y.key}</td><td class="num">{y.exps}</td><td class="num">{eur(y.budget)}</td><td class="num">{y.change === null ? '—' : pct(y.change)}</td></tr>)}</tbody>
+          </table>
+        </>
+      )}
+      <h2 class:list={{ mt: economy && vol.byYear.length > 0 }}>Por ciudad</h2>
+      {vol.byCity.length ? (
+        <table class="dtable compact">
+          <thead><tr><th scope="col">Ciudad</th><th scope="col" class="num">Exp.</th>{economy && <th scope="col" class="num">Presupuestado</th>}</tr></thead>
+          <tbody>{vol.byCity.map((x) => <tr><td>{x.key}</td><td class="num">{x.exps}</td>{economy && <td class="num">{eur(x.budget)}</td>}</tr>)}</tbody>
+        </table>
+      ) : <p class="muted">—</p>}
+    </section>
+  </div>
+
+  {economy && (
+    <section class="card mt" id="entidades">
+      <div class="sec-head">
+        <h2>Entidades a las que se factura ({entities.length})</h2>
+        <p>Además del propio cliente: filiales, concesionarios… Se proponen al hacer una factura.</p>
+      </div>
+      {entities.length > 0 && (
+        <ul class="entity-list">
+          {entities.map((e) => (
+            <li>
+              <div><strong>{e.legal_name}</strong> <span class="muted small">{[e.tax_id, e.fiscal_address, e.email].filter(Boolean).join(' · ')}</span></div>
+              {editable && (
+                <details class="inline-edit" open={openEntity === e.id}>
+                  <summary class="btn btn-ghost btn-sm"><Icon name="pencil" size={14} /> Cambiar</summary>
+                  <form method="post" class="entity-form">
+                    <input type="hidden" name="entity_id" value={e.id} />
+                    <input name="legal_name" type="text" maxlength="160" required value={entityValues(e).legal_name ?? ''} aria-label="Nombre fiscal" />
+                    <input name="tax_id" type="text" maxlength="15" value={entityValues(e).tax_id ?? ''} aria-label="NIF" placeholder="NIF" />
+                    <input name="fiscal_address" type="text" maxlength="300" value={entityValues(e).fiscal_address ?? ''} aria-label="Dirección fiscal" placeholder="Dirección fiscal" />
+                    <input name="email" type="email" maxlength="200" value={entityValues(e).email ?? ''} aria-label="Email de facturación" placeholder="Email de facturación" />
+                    <div class="actions-inline">
+                      <button class="btn btn-primary btn-sm" type="submit" name="intent" value="entity_save">Guardar</button>
+                      <button class="btn btn-danger btn-sm" type="submit" name="intent" value="entity_delete" formnovalidate data-confirm={`¿Quitar la entidad ${e.legal_name}? Las facturas ya hechas no cambian.`}>Quitar</button>
+                    </div>
+                  </form>
+                </details>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {editable && (
+        <details class="inline-edit mt" open={openEntity === 'new'}>
+          <summary class="btn btn-ghost btn-sm"><Icon name="plus" size={14} /> Añadir entidad</summary>
+          <form method="post" class="entity-form">
+            <input name="legal_name" type="text" maxlength="160" required aria-label="Nombre fiscal" placeholder="Nombre fiscal" value={openEntity === 'new' ? input?.legal_name ?? '' : ''} />
+            <input name="tax_id" type="text" maxlength="15" aria-label="NIF" placeholder="NIF" value={openEntity === 'new' ? input?.tax_id ?? '' : ''} />
+            <input name="fiscal_address" type="text" maxlength="300" aria-label="Dirección fiscal" placeholder="Dirección fiscal" value={openEntity === 'new' ? input?.fiscal_address ?? '' : ''} />
+            <input name="email" type="email" maxlength="200" aria-label="Email de facturación" placeholder="Email de facturación" value={openEntity === 'new' ? input?.email ?? '' : ''} />
+            <div class="actions-inline"><button class="btn btn-primary btn-sm" type="submit" name="intent" value="entity_add">Añadir</button></div>
+          </form>
+        </details>
+      )}
+    </section>
+  )}
+
+  {economy && (
+    <>
+      <h2 class="section-title">Historial de condiciones y datos</h2>
+      {history.length ? (
+        <ul class="history">
+          {history.map((h) => <li><span class="muted small">{formatStamp(h.at, { year: true })} · {h.user_name ?? '—'}</span> {h.summary}</li>)}
+        </ul>
+      ) : <p class="muted">Sin cambios registrados.</p>}
+    </>
+  )}
+
+  {editable && (
+    <>
+      <details class="add mt" id="editar" open={openEdit}>
+        <summary class="btn btn-primary"><Icon name="pencil" size={18} /> <span class="when-closed">Editar ficha</span><span class="when-open">Cerrar formulario</span></summary>
+        <form method="post" class="form-section">
+          <h2><Icon name="building" /> Ficha de {c.name}</h2>
+          <ClientFields v={v} errors={errors} economy={economy} full />
+          <p class="muted small">Si cambias el nombre, el anterior se guarda (también se encuentra por él) y sus expedientes pasan a mostrar el nuevo. Los cambios de fee, acuerdo de pago y datos fiscales quedan en el historial.</p>
+          <div><button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar ficha</button></div>
+        </form>
+      </details>
+
+      {others.length > 0 && (
+        <section class="card mt">
+          <h2>¿Está repetido?</h2>
+          <p class="muted small">Fusionarlo pasa sus expedientes, entidades e historial al otro cliente, completa los datos que le falten y guarda «{c.name}» como nombre anterior. No se puede deshacer.</p>
+          <form method="post" class="quick-form mt">
+            <label class="visually-hidden" for="into">Fusionar con</label>
+            <select id="into" name="into" required>
+              <option value="">Fusionar con…</option>
+              {others.map((o) => <option value={o.id}>{o.name}</option>)}
+            </select>
+            <button class="btn btn-danger btn-sm" type="submit" name="intent" value="merge" data-confirm={`¿Fusionar «${c.name}» con el cliente elegido? Sus expedientes pasarán a esa ficha y esta desaparecerá.`}>Fusionar</button>
+          </form>
+        </section>
+      )}
+
+      {!expedientes.length && (
+        <form method="post" class="mt">
+          <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar al cliente ${c.name}?`}><Icon name="trash-2" size={16} /> Borrar cliente</button>
+        </form>
+      )}
+    </>
+  )}
+</App>

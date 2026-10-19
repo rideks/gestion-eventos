@@ -11,7 +11,7 @@ import PaymentForm from '../../../components/PaymentForm.astro';
 import SupplierDocFields from '../../../components/SupplierDocFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
-import SupplierPickerKit from '../../../components/SupplierPickerKit.astro';
+import EntityPickerKit from '../../../components/EntityPickerKit.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance } from '../../../lib/data.js';
 import { PaymentSchema, SupplierDocSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
@@ -205,7 +205,7 @@ const suppliersHere = [...new Map(fin.payments.filter((p) => p.supplier_id).map(
       </details>
     </div>
   )}
-  {!locked && <SupplierPickerKit options={options} types={types} />}
+  {!locked && <EntityPickerKit kind="supplier" options={options} types={types} />}
 
   <div class:list={['group-title', { 'is-danger': s.overdue.length > 0 }]}>
     <h3>Por pagar ({pending.length})</h3>

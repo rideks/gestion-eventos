@@ -1,0 +1,87 @@
+---
+// Campos de la ficha de un cliente (alta en el directorio y editar la ficha).
+// economy: los datos fiscales, el acuerdo de pago y el fee sólo los ve y los cambia quien tiene ese permiso.
+import { CLIENT_STATUS } from '../lib/validate.js';
+import { pctText } from '../lib/vat.js';
+
+const { v = {}, errors = {}, economy = false, full = false } = Astro.props;
+const err = (k) => ({ 'has-error': errors[k] });
+const val = (k) => v[k] ?? '';
+// El fee se escribe en % (lo guardado está en puntos básicos)
+const fee = v.fee !== undefined ? v.fee : v.fee_bp !== null && v.fee_bp !== undefined ? pctText(v.fee_bp) : '';
+---
+<div class="row row-3">
+  <div class:list={['field', err('name')]}>
+    <label for="cl-name">Nombre del cliente</label>
+    <input id="cl-name" name="name" type="text" maxlength="120" required value={val('name')} placeholder="BMW Ibérica" />
+  </div>
+  <div class:list={['field', err('city')]}>
+    <label for="cl-city">Ciudad <span class="opt">(opcional)</span></label>
+    <input id="cl-city" name="city" type="text" maxlength="80" value={val('city')} placeholder="Madrid" />
+  </div>
+  <div class:list={['field', err('status')]}>
+    <label for="cl-status">Estado</label>
+    <select id="cl-status" name="status">
+      {Object.entries(CLIENT_STATUS).map(([k, label]) => <option value={k} selected={(v.status ?? 'activo') === k}>{label}</option>)}
+    </select>
+  </div>
+</div>
+<div class="row row-2">
+  <div class:list={['field', err('phone')]}>
+    <label for="cl-phone">Teléfono <span class="opt">(opcional)</span></label>
+    <input id="cl-phone" name="phone" type="tel" maxlength="20" value={val('phone')} />
+  </div>
+  <div class:list={['field', err('email')]}>
+    <label for="cl-email">Email <span class="opt">(opcional)</span></label>
+    <input id="cl-email" name="email" type="email" maxlength="200" value={val('email')} />
+  </div>
+</div>
+{economy && (
+  <>
+    <h3 class="form-sub">Datos fiscales y condiciones</h3>
+    <div class="row row-2">
+      <div class:list={['field', err('legal_name')]}>
+        <label for="cl-legal">Nombre fiscal <span class="opt">(razón social)</span></label>
+        <input id="cl-legal" name="legal_name" type="text" maxlength="160" value={val('legal_name')} placeholder="BMW Ibérica, S.A." />
+      </div>
+      <div class:list={['field', err('tax_id')]}>
+        <label for="cl-tax">NIF</label>
+        <input id="cl-tax" name="tax_id" type="text" maxlength="15" value={val('tax_id')} placeholder="A12345678" autocapitalize="characters" />
+      </div>
+    </div>
+    <div class="row row-2">
+      <div class:list={['field', err('fiscal_address')]}>
+        <label for="cl-address">Dirección fiscal</label>
+        <input id="cl-address" name="fiscal_address" type="text" maxlength="300" value={val('fiscal_address')} placeholder="Calle, número, código postal y ciudad" />
+      </div>
+      <div class:list={['field', err('billing_email')]}>
+        <label for="cl-billing">Email de facturación</label>
+        <input id="cl-billing" name="billing_email" type="email" maxlength="200" value={val('billing_email')} />
+      </div>
+    </div>
+    <div class="row row-2">
+      <div class:list={['field', 'field-narrow', err('fee')]}>
+        <label for="cl-fee">Fee o comisión</label>
+        <div class="input-suffix">
+          <input id="cl-fee" name="fee" type="text" inputmode="decimal" maxlength="6" value={fee} placeholder="10" />
+          <span>%</span>
+        </div>
+        <p class="hint">Se copia en cada expediente nuevo de este cliente. Cambiarlo no cambia el de los expedientes que ya tiene.</p>
+      </div>
+      <div class:list={['field', err('since_on')]}>
+        <label for="cl-since">Inicio de la relación <span class="opt">(si se sabe)</span></label>
+        <input id="cl-since" name="since_on" type="date" value={val('since_on')} />
+      </div>
+    </div>
+    <div class:list={['field', err('payment_terms')]}>
+      <label for="cl-payment">Acuerdo de pago</label>
+      <textarea id="cl-payment" name="payment_terms" rows="2" maxlength="1000" placeholder="50 % a la firma y el resto a 30 días de la factura">{val('payment_terms')}</textarea>
+    </div>
+  </>
+)}
+{full && (
+  <div class:list={['field', err('notes')]}>
+    <label for="cl-notes">Comentarios internos <span class="opt">(opcional)</span></label>
+    <textarea id="cl-notes" name="notes" rows="3" maxlength="2000">{val('notes')}</textarea>
+  </div>
+)}

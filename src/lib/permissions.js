@@ -35,6 +35,16 @@ export const AREAS = [
     ],
   },
   {
+    key: 'clientes',
+    label: 'Clientes',
+    permissions: [
+      { key: 'clientes', label: 'Ver el directorio y las fichas de clientes', help: 'Contacto, expedientes (previstos, en curso y terminados), ciudades, hoteles y proveedores con los que se ha trabajado (sin importes).' },
+      { key: 'clientes.create', label: 'Dar de alta clientes nuevos', help: 'Desde el directorio o al elegir el cliente de una solicitud. Antes se avisa si ya hay alguno con un nombre parecido.' },
+      { key: 'clientes.edit', label: 'Editar y fusionar clientes', help: 'Sus datos, las entidades a las que se factura, juntar los duplicados y borrarlos.' },
+      { key: 'clientes.economia', label: 'Ver los datos fiscales, las condiciones y el volumen de negocio', help: 'NIF, acuerdo de pago, fee (y el aplicado en cada expediente) y lo presupuestado. Lo facturado y cobrado, además, sólo con «Ver los cobros».' },
+    ],
+  },
+  {
     key: 'proveedores',
     label: 'Proveedores',
     permissions: [
@@ -73,6 +83,10 @@ export const REQUIRES = {
   cobros: 'expedientes',
   'invoice.issue': 'cobros',
   'po.manage': 'cobros',
+  clientes: 'expedientes',
+  'clientes.create': 'clientes',
+  'clientes.edit': 'clientes',
+  'clientes.economia': 'clientes',
   proveedores: 'expedientes',
   'proveedores.create': 'proveedores',
   'proveedores.edit': 'proveedores',
@@ -125,6 +139,7 @@ const SECTIONS = [
   [/^\/(expedientes|archivos|buscar)(\/|$)/, 'expedientes'],
   [/^\/pagos\/?$/, 'pagos'],
   [/^\/cobros\/?$/, 'cobros'],
+  [/^\/clientes(\/|$)/, 'clientes'],
   [/^\/proveedores\/(contratos|\d+\/contratos)(\/|$)/, 'contratos'],
   [/^\/proveedores(\/|$)/, 'proveedores'],
   [/^\/usuarios(\/|$)/, 'users'],

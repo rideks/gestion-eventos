@@ -2,10 +2,10 @@
 // Pagos previstos a proveedores (lo que realmente cuesta el evento): en la solicitud
 // y para añadir varios de golpe a un expediente ya abierto.
 // Funciona sin JavaScript (siempre hay filas vacías al final); con JavaScript se añaden y quitan filas.
-// Los tipos de IVA salen de Ajustes. El proveedor de cada fila se elige de la lista (SupplierPicker:
-// la página lleva SupplierPickerKit).
+// Los tipos de IVA salen de Ajustes. El proveedor de cada fila se elige de la lista (EntityPicker:
+// la página lleva EntityPickerKit).
 import Icon from './Icon.astro';
-import SupplierPicker from './SupplierPicker.astro';
+import EntityPicker from './EntityPicker.astro';
 import { amountInput } from '../lib/money.js';
 import { defaultRate } from '../lib/vat.js';
 
@@ -31,7 +31,7 @@ const val = (v) => (typeof v === 'number' ? amountInput(v) : v ?? '');
       <tbody data-rows>
         {all.map((r, i) => (
           <tr>
-            <td class="wide"><SupplierPicker name="fc_supplier" label="Proveedor" value={r.supplier} valueId={r.supplier_id} placeholder={i === 0 ? 'Busca el proveedor' : ''} /></td>
+            <td class="wide"><EntityPicker kind="supplier" name="fc_supplier" label="Proveedor" value={r.supplier} valueId={r.supplier_id} placeholder={i === 0 ? 'Busca el proveedor' : ''} /></td>
             <td class="wide"><input name="fc_concept" type="text" aria-label="Concepto" maxlength="160" value={r.concept ?? ''} placeholder={i === 0 ? '1er pago / anticipo' : ''} /></td>
             <td class="mid"><input name="fc_due_date" type="date" aria-label="Fecha límite" value={r.due_date ?? ''} /></td>
             <td class="amount"><input name="fc_total" type="text" inputmode="decimal" aria-label="Importe" value={val(r.total)} placeholder={i === 0 ? '21.400' : ''} autocomplete="off" /></td>

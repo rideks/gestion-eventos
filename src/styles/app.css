@@ -715,7 +715,7 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
 .supplier-chips a.pill:hover { color: var(--text); border-color: var(--line-2); }
 .type-list .btn { border: 0; background: none; min-height: 0; padding: 4px 6px; }
 
-/* Selector de proveedor (SupplierPicker): sólo los de la lista; «Dar de alta» con aviso de parecidos */
+/* Selector de proveedor o cliente (EntityPicker): sólo los de la lista; «Dar de alta» con aviso de parecidos */
 .picker { position: relative; }
 .picker-pop {
   position: absolute; z-index: 30; margin: 0; padding: 4px; list-style: none;
@@ -797,3 +797,16 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
   .contract-card { grid-template-columns: 1fr; }
   .cc-expiry { padding: 0 0 10px; border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* ── Clientes ───────────────────────────────────────────────────────────── */
+.contact-list, .compact-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.contact-list li { overflow-wrap: anywhere; }
+.entity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.entity-list > li { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 6px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.entity-list > li:first-child { border-top: 0; }
+.entity-list > li > div { min-width: 0; flex: 1 1 260px; overflow-wrap: anywhere; }
+.inline-edit > summary { list-style: none; }
+.inline-edit > summary::-webkit-details-marker { display: none; }
+.inline-edit[open] { flex-basis: 100%; }
+.entity-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 8px; }
+.entity-form .actions-inline { grid-column: 1 / -1; }

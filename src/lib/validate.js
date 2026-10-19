@@ -116,6 +116,53 @@ export const ContractSchema = z.object({
 
 export const RenewalSchema = z.object({ renewal: z.preprocess(blankToNull, z.enum(['pendiente', 'no']).nullable()) });
 
+// Porcentaje escrito como en el Excel ('10', '7,5', '12 %') → puntos básicos (10 % → 1000); vacío → null
+const optPercentBp = (label) => z.preprocess(
+  (v) => {
+    const c = blankToNull(v);
+    if (c === null) return null;
+    const n = Number(String(c).replace('%', '').replace(',', '.').trim());
+    return Number.isFinite(n) ? Math.round(n * 100) : NaN;
+  },
+  z.number({ error: `${label}: escríbelo como un porcentaje, por ejemplo 10 o 7,5` })
+    .min(0, `${label}: entre 0 y 100 %`).max(10000, `${label}: entre 0 y 100 %`).nullable(),
+);
+const taxId = z.preprocess((v) => (blankToNull(v) === null ? null : String(clean(v)).toUpperCase().replace(/[\s.]/g, '')),
+  z.string().regex(/^[A-Z0-9-]{5,15}$/, 'NIF: letras y números (p. ej. B12345678)').nullable());
+
+// ── Clientes ───────────────────────────────────────────────────────────────
+export const CLIENT_STATUS = { activo: 'Activo', inactivo: 'Inactivo' };
+
+export const ClientSchema = z.object({
+  name: reqText('Nombre del cliente', 2, 120),
+  status: z.enum(Object.keys(CLIENT_STATUS), { error: 'Elige el estado' }),
+  legal_name: optText('Nombre fiscal', 160),
+  tax_id: taxId,
+  fiscal_address: optText('Dirección fiscal', 300),
+  city: optText('Ciudad', 80),
+  phone: z.preprocess(blankToNull, z.string().regex(/^[+\d\s().-]{6,20}$/, 'Teléfono no válido').nullable()),
+  email: optEmail('Email'),
+  billing_email: optEmail('Email de facturación'),
+  payment_terms: optText('Acuerdo de pago', 1000),
+  fee: optPercentBp('Fee'),
+  since_on: optDate('Inicio de la relación'),
+  notes: optText('Comentarios internos', 2000),
+});
+
+// Alta rápida desde el selector de una solicitud: lo básico (el resto, en su ficha)
+export const ClientQuickSchema = z.object({ name: reqText('Nombre del cliente', 2, 120), city: optText('Ciudad', 80) });
+
+// Otra entidad a la que se factura (p. ej. un concesionario de BMW)
+export const ClientEntitySchema = z.object({
+  legal_name: reqText('Nombre fiscal', 2, 160),
+  tax_id: taxId,
+  fiscal_address: optText('Dirección fiscal', 300),
+  email: optEmail('Email de facturación'),
+});
+
+// Fee aplicado a un expediente (se copia del cliente al pedirlo; se puede ajustar en ese expediente)
+export const ExpedienteFeeSchema = z.object({ fee: optPercentBp('Fee del expediente') });
+
 export const RoleSchema = z.object({
   name: reqText('Nombre del rol', 2, 40),
   description: optText('Descripción', 160),

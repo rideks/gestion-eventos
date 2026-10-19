@@ -52,8 +52,11 @@ test('los repositorios no deciden permisos ni dependen de los servicios', () => 
   }
 });
 
-test('las páginas de Proveedores y Contratos sólo hablan con los servicios', () => {
-  for (const p of all.filter((f) => rel(f).startsWith('pages/proveedores/'))) {
+// Áreas ya en capas: sus páginas sólo usan servicios (cada área nueva se añade aquí)
+const LAYERED = ['pages/proveedores/', 'pages/clientes/'];
+
+test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes) sólo hablan con los servicios', () => {
+  for (const p of all.filter((f) => LAYERED.some((dir) => rel(f).startsWith(dir)))) {
     const code = read(p);
     assert.ok(!SQL.test(code) && !code.includes('env.DB') && !imports(code, '/repos/'), `${rel(p)}: usa src/services/`);
   }

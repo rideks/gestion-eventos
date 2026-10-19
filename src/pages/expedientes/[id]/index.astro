@@ -11,6 +11,7 @@ import { nextSteps, plural } from '../../../lib/finance.js';
 import { eur, pct } from '../../../lib/money.js';
 import { today, formatRange, formatStamp, nowIso } from '../../../lib/dates.js';
 import { isLocked } from '../../../lib/actions.js';
+import { feeLabel } from '../../../lib/clients.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
@@ -235,7 +236,8 @@ const kpiCount = 2 + (closed ? 1 : 0) + (cobros ? 1 : 0);
           {!isLocked(exp) && <a class="btn btn-ghost btn-sm" href={`/expedientes/${id}/editar`}><Icon name="pencil" size={16} /> Editar</a>}
         </div>
         <dl class="kv">
-          <dt>Empresa</dt><dd>{exp.company}</dd>
+          <dt>Empresa</dt><dd>{exp.client_id && can(me, 'clientes') ? <a href={`/clientes/${exp.client_id}`}>{exp.company}</a> : exp.company}</dd>
+          {can(me, 'clientes.economia') && <><dt>Fee</dt><dd>{feeLabel(exp.fee_bp) ?? '—'}</dd></>}
           <dt>Contacto</dt><dd>{exp.contact_name ?? '—'}</dd>
           {exp.contact_email && <><dt>Email</dt><dd><a href={`mailto:${exp.contact_email}`}>{exp.contact_email}</a></dd></>}
           {exp.contact_phone && <><dt>Teléfono</dt><dd><a href={`tel:${exp.contact_phone.replace(/[^\d+]/g, '')}`}>{exp.contact_phone}</a></dd></>}

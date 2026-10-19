@@ -1,6 +1,7 @@
-// Comparar nombres de proveedor: para buscar en el selector y para avisar, antes de dar de alta uno
-// nuevo, de los que ya existen con un nombre parecido («Barceló Valladolid», «Hotel Barcelo
-// Valladolid S.L.», «Barcelo Valadolid»…). Sin dependencias: se usa en el servidor y en el navegador.
+// Comparar nombres de proveedores y clientes: para buscar en los selectores y para avisar, antes de dar
+// de alta uno nuevo, de los que ya existen con un nombre parecido («Barceló Valladolid», «Hotel Barcelo
+// Valladolid S.L.», «Barcelo Valadolid»; «BMW», «BMW Ibérica S.A.»…). Sin dependencias: se usa en el
+// servidor y en el navegador.
 
 /** Minúsculas, sin acentos ni signos, espacios simples */
 export const fold = (text) => String(text ?? '')
@@ -9,10 +10,10 @@ export const fold = (text) => String(text ?? '')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim();
 
-// Palabras que no distinguen a un proveedor de otro (tipo de negocio, forma jurídica, artículos)
+// Palabras que no distinguen a uno de otro (tipo de negocio, forma jurídica, país, artículos)
 const GENERIC = new Set([
   'hotel', 'hoteles', 'hostal', 'apartamentos', 'aparthotel', 'restaurante', 'rest', 'catering',
-  'grupo', 'sl', 'slu', 'sa', 'sau', 'sll', 'scp', 'cb', 's', 'l', 'u', 'a',
+  'grupo', 'group', 'sl', 'slu', 'sa', 'sau', 'sll', 'scp', 'cb', 's', 'l', 'u', 'a', 'iberica', 'espana', 'spain',
   'el', 'la', 'los', 'las', 'de', 'del', 'y', 'e', 'en', 'the', 'and',
 ]);
 
@@ -62,10 +63,10 @@ export function nameSimilarity(a, b) {
 }
 
 /**
- * Proveedores con un nombre parecido a `name`, los más parecidos primero.
+ * Los que tienen un nombre parecido a `name`, los más parecidos primero.
  * candidates: [{ id, name, aliases?: string[] }] → [{ ...candidato, score, via? }] (via = el nombre anterior que se parece)
  */
-export function similarSuppliers(name, candidates, limit = 5) {
+export function similarNames(name, candidates, limit = 5) {
   const out = [];
   for (const c of candidates) {
     let best = { score: nameSimilarity(name, c.name), via: null };
@@ -78,7 +79,7 @@ export function similarSuppliers(name, candidates, limit = 5) {
   return out.sort((x, y) => y.score - x.score || x.name.localeCompare(y.name, 'es')).slice(0, limit);
 }
 
-/** ¿Encaja el proveedor con lo escrito en el buscador? (todas las palabras, en cualquier campo) */
+/** ¿Encaja con lo escrito en el buscador? (todas las palabras, en el nombre, nombres anteriores, tipo o ciudad) */
 export function matchesQuery(option, query) {
   const words = fold(query).split(' ').filter(Boolean);
   if (!words.length) return true;

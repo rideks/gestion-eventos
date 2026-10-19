@@ -1,6 +1,6 @@
 ---
-// Búsqueda en todo desde la cabecera: expedientes, pagos a proveedores (y el nº de sus facturas o
-// proformas), facturas al cliente y PO. Un número de expediente exacto (p. ej. 1287) lleva directamente a él.
+// Búsqueda en todo desde la cabecera: expedientes, clientes, proveedores, pagos a proveedores (y el nº de
+// sus facturas o proformas), facturas al cliente y PO. Un número de expediente exacto (p. ej. 1287) lleva directamente a él.
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
@@ -13,6 +13,8 @@ import { searchAll } from '../lib/data.js';
 import { can } from '../lib/app.js';
 import { expedienteState, expLabel, plural } from '../lib/finance.js';
 import { today, formatRange } from '../lib/dates.js';
+import { serviceContext } from '../services/context.js';
+import * as clients from '../services/clients.js';
 
 const db = env.DB;
 const now = today();
@@ -23,13 +25,15 @@ if (/^\d{1,6}$/.test(q)) {
 }
 const cobros = can(Astro.locals.user, 'cobros');
 const r = q.length >= 2 ? await searchAll(db, q, { cobros, suppliers: can(Astro.locals.user, 'proveedores') }) : null;
-const total = r ? r.expedientes.length + r.suppliers.length + r.payments.length + r.invoices.length + r.pos.length : 0;
+const found = r && can(Astro.locals.user, 'clientes') ? await clients.search(serviceContext(Astro), q) : null;
+const clientRows = found?.ok ? found.value : [];
+const total = r ? r.expedientes.length + clientRows.length + r.suppliers.length + r.payments.length + r.invoices.length + r.pos.length : 0;
 ---
 <App title={q ? `Buscar «${q}»` : 'Buscar'} section="" origin={q ? `Búsqueda «${q}»` : null}>
   <div class="page-top">
     <div>
       <h1>Buscar</h1>
-      <p>{cobros ? 'Expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO' : 'Expedientes, proveedores y nº de factura o proforma'}</p>
+      <p>{cobros ? 'Expedientes, clientes, proveedores, nº de factura o proforma, facturas al cliente y PO' : 'Expedientes, clientes, proveedores y nº de factura o proforma'}</p>
     </div>
   </div>
   <SearchBox action="/buscar" q={q} placeholder="Nº de expediente, cliente, proveedor, nº de factura o de PO" />
@@ -48,6 +52,22 @@ const total = r ? r.expedientes.length + r.suppliers.length + r.payments.length 
               <span class="item-title"><span class:list={['exp-num', { 'is-draft': !e.number }]}>{expLabel(e)}</span> {e.name}</span>
               <span class="item-meta"><span>{e.company}</span>{e.destination && <span>{e.destination}</span>}<span>{formatRange(e.start_date, e.end_date)}</span></span>
               <span class="item-flags"><Pill state={expedienteState(e, now)} /></span>
+            </div>
+            <Icon name="chevron-right" class="chev" />
+          </a></li>
+        ))}
+      </ul>
+    </section>
+  )}
+  {clientRows.length > 0 && (
+    <section>
+      <div class="sec-head"><h2><Icon name="building" /> Clientes ({clientRows.length})</h2></div>
+      <ul class="list">
+        {clientRows.map((x) => (
+          <li><a class="item" href={`/clientes/${x.id}`}>
+            <div class="item-body">
+              <span class="item-title">{x.name}</span>
+              <span class="item-meta">{x.city && <span>{x.city}</span>}<span>{plural(x.exps, 'expediente', 'expedientes')}</span></span>
             </div>
             <Icon name="chevron-right" class="chev" />
           </a></li>

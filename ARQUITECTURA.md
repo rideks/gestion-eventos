@@ -62,7 +62,16 @@ errors = r.fields;      // debajo de cada campo
    página, una API o una tarea programada.
 3. **Datos**: el servicio sólo devuelve lo que la persona puede ver. Por ejemplo, sin `proveedores.gasto`
    el directorio y la ficha llegan **sin importes ni condiciones económicas**: la página no puede enseñarlos
-   aunque se equivoque.
+   aunque se equivoque. Lo mismo en Clientes: sin `clientes.economia` no llegan ni los datos fiscales, ni el fee,
+   ni lo presupuestado; y sin `cobros`, tampoco lo facturado ni lo cobrado.
+
+## Piezas comunes
+
+| Pieza | Dónde | Para qué |
+|---|---|---|
+| **Selector de una lista** (cliente, proveedor…) | `src/components/EntityPicker.astro` (el campo) y `EntityPickerKit.astro` (la lista, la ventana de alta y el script; uno por tipo y página) | Elegir de la lista sin escribir a mano; si no está, «Dar de alta» con aviso de nombres parecidos. El alta va a `/<área>/alta`, que responde `{ ok, item }` o `{ ok: false, similar }`. Un tipo nuevo se añade en `KINDS` del kit. |
+| **Nombres parecidos** | `src/lib/name-match.js` | Sin tildes, mayúsculas, forma jurídica (S.L., S.A.…) ni palabras de relleno (hotel, group, España…) |
+| **Historial de cambios** | tabla `change_log`, `src/repos/changes.js` y `src/lib/changes.js` (`diffFields`) | Qué cambió en una ficha (antes y después), quién y cuándo, con un resumen ya redactado (`Fee: 8 % → 10 %`). Lo usan los clientes; un área nueva sólo añade su `entity`. |
 
 ## Pruebas
 
@@ -77,20 +86,23 @@ errors = r.fields;      // debajo de cada campo
 
 El CI (`.github/workflows/comprobaciones.yml`) pasa las pruebas, los tipos y la compilación en cada cambio.
 
-## Cómo añadir un área nueva (p. ej. Clientes)
+## Cómo añadir un área nueva
+
+Así se hizo Clientes (v24), y así se hará la siguiente (p. ej. Incidencias):
 
 1. **Migración** aditiva en `migrations/` (nunca reconstruir una tabla con referencias).
 2. **Permisos** en `src/lib/permissions.js` (catálogo, dependencias y `SECTIONS` de las rutas) y su reparto en la migración.
-3. **Reglas puras** en `src/lib/clients.js` (estados, cálculos) con su prueba.
+3. **Reglas puras** en `src/lib/clients.js` (estados, cálculos) con su prueba (`tests/clients.test.mjs`).
 4. **Repositorio** `src/repos/clients.js`: todo el SQL.
 5. **Servicio** `src/services/clients.js`: un caso de uso por acción, cada uno con su permiso; al leer, sólo los
    datos permitidos.
 6. **Pruebas del servicio** `tests/services.clients.test.mjs`: cada rol, cada error y lo que queda en la base.
-7. **Páginas** en `src/pages/clientes/`: sólo servicios (la prueba de arquitectura lo exige).
+7. **Páginas** en `src/pages/clientes/`: sólo servicios. Se añade la carpeta a `LAYERED` en
+   `tests/architecture.test.mjs`, que lo comprueba desde entonces.
 
 ## Lo que aún no está en capas
 
-Proveedores y Contratos ya están en capas. El resto (expedientes, pagos, cobros, facturas, usuarios,
+Proveedores, Contratos y Clientes ya están en capas. El resto (expedientes, pagos, cobros, facturas, usuarios,
 ajustes) todavía hace SQL en las páginas o en `src/lib`: está en las listas `LEGACY_*` de
 `tests/architecture.test.mjs`, que **sólo pueden encoger**. Orden propuesto, de más a menos riesgo:
 pagos (y facturas de proveedor) → cobros (facturas al cliente y PO) → expedientes → usuarios y ajustes.

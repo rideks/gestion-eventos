@@ -60,6 +60,29 @@ condiciones del anterior ya escritas y el anterior se conserva tal cual; **modif
 historial qué cambió (antes y después), quién y cuándo. El **contrato aplicado** a cada expediente es el que estaba
 en vigor en la fecha del evento, así que cambiar las condiciones actuales no reescribe los expedientes pasados.
 
+### Clientes: relación económica (cómo se calcula)
+
+Cada cliente tiene su **ficha** (nombre comercial, datos fiscales, contacto, acuerdo de pago, fee, inicio de la
+relación y comentarios) y **otras entidades** a las que se le factura (p. ej. los concesionarios de BMW, cada uno con
+su NIF). Las cifras **no se apuntan**: se calculan desde sus expedientes **no cancelados**.
+
+| Indicador | Qué suma | IVA |
+|---|---|---|
+| Presupuestado | La versión vigente del presupuesto de cada expediente: el volumen contratado | Sin IVA |
+| Facturado | Facturas al cliente emitidas o cobradas | Sin IVA |
+| Cobrado | Facturas cobradas: lo que ha entrado en el banco | Con IVA |
+| Pendiente de cobro | Facturas emitidas que aún no se han cobrado | Con IVA |
+| En el año / por año | Lo presupuestado en eventos de ese año (fecha de inicio), con el cambio respecto al anterior | Sin IVA |
+| Fee aplicado de media | El fee de sus expedientes, ponderado por el presupuesto de cada uno | — |
+| Antigüedad | Desde el **inicio de la relación** si se sabe; si no, desde su primer evento registrado | — |
+
+Lo facturado no es beneficio y lo pendiente todavía no se ha cobrado: se enseñan por separado, con su IVA indicado.
+
+**El fee** (comisión o margen pactado, en %) es el **vigente** del cliente y **se copia en cada expediente nuevo**.
+Cambiarlo en la ficha no cambia el de los expedientes ya pedidos (cada uno conserva el que se le aplicó, y se puede
+ajustar en «Editar datos» del expediente). Cada cambio del fee, del acuerdo de pago o de los datos fiscales queda en el
+**historial de la ficha**: antes y después, quién y cuándo (`Fee: 8 % → 10 %`).
+
 ### Quién hace qué (roles y permisos)
 
 Cada persona tiene **un rol** y cada rol, una lista de **permisos** (lista blanca: lo que no tiene marcado, no
@@ -87,11 +110,17 @@ Reparto inicial:
 | Ver las condiciones económicas y el gasto con cada proveedor | ✔ | ✔ | ✔ | | |
 | Ver los **contratos** de los proveedores (caducidades, condiciones, historial y documento) | ✔ | ✔ | ✔ | | |
 | Crear, renovar, modificar y borrar contratos; marcar la renovación | ✔ | ✔ | ✔ | | |
+| Ver el directorio y las fichas de **clientes** (contacto, expedientes, proveedores con los que se ha trabajado) | ✔ | ✔ | ✔ | ✔ | |
+| **Dar de alta** clientes nuevos (también desde la solicitud, con aviso de los que tienen un nombre parecido) | ✔ | ✔ | ✔ | ✔ | |
+| Editar, fusionar y borrar clientes | ✔ | ✔ | ✔ | | |
+| Ver y cambiar los **datos fiscales, el fee, el acuerdo de pago y lo presupuestado** de cada cliente (y sus entidades) | ✔ | ✔ | ✔ | | |
 | Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
 | Usuarios, roles y permisos | | | | | ✔ |
 
 - **Sin «Ver los cobros»** no se ve ninguna factura al cliente: tampoco en el **Cierre** ni en su **CSV**, que
   enseñan sólo el total de ventas y el beneficio (Eventos lo ve, porque es quien cuida que sea bueno).
+- En la ficha del cliente, **lo facturado, lo cobrado y lo pendiente** piden los dos permisos: el económico de
+  clientes y el de cobros.
 - **Dónde se comprueba:**
   - en el **servidor**, en tres capas: la sección (`src/middleware.js` con `sectionPermission()`: una ruta que no
     esté en la lista queda cerrada), cada acción (`can()`) y las consultas;
@@ -105,7 +134,8 @@ Reparto inicial:
   cobros vencidos, expedientes en marcha, celebrados por cerrar y actividad reciente), con los totales arriba
   (expedientes en curso, pagos en 7 días, pendiente de cobro y por facturar). A Eventos le sale arriba **«Te toca»**:
   las facturas que reclamar a proveedores (pagos ya hechos sin factura) de sus expedientes.
-- **Buscar** (cabecera): expedientes, proveedores, nº de factura o proforma, facturas al cliente y PO. Un número de
+- **Buscar** (cabecera): expedientes, clientes (también por NIF o por una de sus entidades), proveedores, nº de
+  factura o proforma, facturas al cliente y PO. Un número de
   expediente exacto (`1287`) abre directamente el expediente.
 - **Expedientes**: pestañas En curso · Por cerrar · Por abrir · Míos · Cerrados, y buscador.
 - **Expediente**: Resumen (venta, coste, beneficio al cerrar, cobrado, próximos pasos, datos y actividad) ·
@@ -154,6 +184,16 @@ Reparto inicial:
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
+- **Clientes**: directorio con buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
+  entidades), filtro de estado y orden por nombre, próximo o último evento, expedientes, altas recientes o lo
+  presupuestado; con permiso económico, el fee y lo presupuestado de cada uno (y, con cobros, lo facturado y lo
+  pendiente de cobro). **Ficha** de cada cliente: datos, antigüedad, personas de contacto de sus expedientes,
+  condiciones y datos fiscales, **relación económica** (ver arriba), sus expedientes (previstos, en curso,
+  terminados y cancelados), los **hoteles y proveedores** con los que se ha trabajado para él, por año y por ciudad,
+  sus **entidades de facturación** y el **historial** de condiciones y datos. En la **solicitud** y al editar un
+  expediente, el cliente **se elige de la lista** (no se escribe a mano); si es nuevo, «Dar de alta» con aviso de
+  los parecidos. Si aun así hay repetidos, se **fusionan** (expedientes, entidades e historial pasan al bueno y el
+  nombre queda como anterior). Un cliente con expedientes no se borra: se marca como inactivo.
 - **Proveedores**: directorio con buscador (nombre, ciudad, contacto o un nombre anterior), filtros por tipo y
   estado y orden por nombre, último evento, expedientes, **altas recientes** o lo contratado. **Ficha** de cada proveedor: tipo
   (ampliable), estado (activo, inactivo, no contratar), contacto, dirección, capacidad, condiciones económicas y de
@@ -200,7 +240,7 @@ Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-
 
 `npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
 (lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios);
-también los **servicios** de Proveedores y Contratos contra una base SQLite en memoria con las migraciones y los
+también los **servicios** de Proveedores, Contratos y Clientes contra una base SQLite en memoria con las migraciones y los
 datos de ejemplo (permisos de cada rol, datos que se devuelven, cambios en la base; necesita Node 22.13 o superior)
 y las **reglas de la arquitectura**. `npm run typecheck` comprueba los tipos de servicios y repositorios y
 `npm run check` hace las dos cosas. Cómo está organizado el código: [ARQUITECTURA.md](ARQUITECTURA.md).
@@ -216,6 +256,17 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 ```
 
 **Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Clientes (migración 0011)**: sólo añade tablas (`clients`, sus nombres anteriores, sus entidades y el historial
+común `change_log`) y dos columnas a `expedientes` (`client_id` y `fee_bp`); no se borra ni se recrea nada.
+- Cada nombre de empresa ya usado en los expedientes pasa a ser un cliente (sin distinguir mayúsculas ni espacios
+  sobrantes) y los expedientes quedan enlazados con él.
+- Los datos fiscales de la última factura emitida a su nombre pasan a la ficha; los de las demás entidades a las
+  que se ha facturado (por NIF), a sus entidades.
+- No se inventa ningún fee: queda vacío hasta que se apunte en la ficha.
+- Si un mismo cliente se escribió de dos formas distintas (`BMW Iberica` y `BMW Ibérica`), saldrán dos clientes:
+  se fusionan desde la ficha («¿Está repetido?»).
+- Ver, dar de alta y editar clientes y sus condiciones se reparte como en la tabla de permisos.
 
 **Contratos (migración 0010)**: sólo añade tablas (`supplier_contracts` y su historial) y los permisos de contratos
 para Jefes, Administración y Tesorería. Los documentos de los contratos se guardan en R2 en `prov/<proveedor>/`.
@@ -250,7 +301,7 @@ coge el siguiente).
   que no se hacen más lentas con los años de histórico.
 - El resumen de documentos de cada pago (facturas, proformas, pendientes de revisar) se calcula en la misma consulta
   de la lista, sin una consulta por fila.
-- Las sugerencias de clientes (autocompletar) se guardan 5 minutos en memoria; la lista de proveedores del selector se lee siempre de la base de datos (un alta se ve al momento).
+- Las sugerencias de «facturar a» de las PO se guardan 5 minutos en memoria; las listas de clientes y de proveedores de los selectores se leen siempre de la base de datos (un alta se ve al momento).
 - Para revisar los planes de las consultas: `EXPLAIN QUERY PLAN` sobre la base local (`.wrangler/state/v3/d1/…`).
 
 ## Seguridad
@@ -267,14 +318,15 @@ un sandbox). Se comprueba el tipo real de cada archivo por sus primeros bytes.
 src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
-  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts; result y context
-  repos/            El SQL de cada área: suppliers, contracts
+  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients; result y context
+  repos/            El SQL de cada área: suppliers, contracts, clients y changes (historial común de cambios)
   lib/              Reglas puras: money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
-                    suppliers (volumen de negocio), validate (formularios), permissions… y lo que aún no está en capas:
+                    suppliers (volumen de negocio), clients (relación económica, antigüedad), changes (qué cambió),
+                    name-match (nombres parecidos), validate (formularios), permissions… y lo que aún no está en capas:
                     data (consultas), actions (pagar/cobrar), invoicing (nº de factura y envío), auth, files (R2)…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)
-  components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios, selector de proveedor
-  pages/            Inicio, expedientes, bandejas de pagos y cobros, proveedores y contratos, usuarios, cuenta, acceso
+  components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios, selector de cliente o proveedor (EntityPicker)
+  pages/            Inicio, expedientes, bandejas de pagos y cobros, clientes, proveedores y contratos, usuarios, cuenta, acceso
 migrations/         Esquema de D1
 scripts/            invite.mjs (primera cuenta) y demo.sql (datos de ejemplo, sólo local)
 tests/              npm test (helpers/: base D1 en memoria y contexto de servicio para las pruebas)
@@ -287,7 +339,7 @@ Las capas y sus reglas (qué puede hacer cada una, cómo se prueban y cómo aña
 
 - **Envío real** de las facturas al cliente por email (ahora es simulado) y **plantilla** de la factura de contabilidad.
 - Avisos por **email** (solicitud nueva, factura pedida, pago que vence) además de la bandeja.
-- **Clientes** como fichas (CIF, entidades de facturación, fee, condiciones de pago) en vez de texto libre.
+- Al hacer una factura al cliente, **elegir la entidad** (el propio cliente o una de sus entidades) en vez de escribir los datos fiscales.
 - Leer el **Excel del presupuesto** para proponer el total y las líneas automáticamente.
 - Exportación a **.xlsx** con formato y fórmulas, y conexión con el programa de contabilidad.
 - Previsión de **tesorería** por semanas (entradas y salidas de todos los expedientes).

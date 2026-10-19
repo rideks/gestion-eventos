@@ -13,6 +13,7 @@
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
+DELETE FROM change_log; DELETE FROM client_entities; DELETE FROM client_aliases; DELETE FROM clients;
 DELETE FROM supplier_contract_changes; DELETE FROM supplier_contracts;
 DELETE FROM supplier_aliases; DELETE FROM suppliers; DELETE FROM supplier_types;
 INSERT INTO supplier_types (name, sort) VALUES
@@ -20,13 +21,13 @@ INSERT INTO supplier_types (name, sort) VALUES
   ('Formación', 60), ('Transporte', 70), ('Audiovisuales', 80), ('Otros', 90);
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
 DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
--- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009_proveedores.sql y 0010_contratos_proveedor.sql)
+-- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009, 0010 y 0011)
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.value FROM roles r, json_each(CASE r.key
-  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit"]'
-  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit"]'
-  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit"]'
-  WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create"]'
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia"]'
+  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia"]'
+  WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create","clientes","clientes.create"]'
   WHEN 'tecnico' THEN '["users"]'
 END) p;
 DELETE FROM vat_rates;
@@ -296,3 +297,36 @@ INSERT INTO supplier_contract_changes (contract_id, user_id, action, summary, at
   (9002, (SELECT id FROM users WHERE email = 'direccion@example.com'), 'cambio', 'Aviso: 30 días → 60 días', '2026-03-02T08:15:00Z'),
   (9005, (SELECT id FROM users WHERE email = 'tesoreria@example.com'), 'marca', 'Pendiente de renovación', strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-3 days')),
   (9008, (SELECT id FROM users WHERE email = 'tania@example.com'), 'marca', 'No se renueva', '2025-11-20T10:00:00Z');
+
+-- ── Clientes: salen de los expedientes; sus datos fiscales y condiciones, completos ─────────────────
+INSERT INTO clients (name, created_by, created_at, updated_at) SELECT TRIM(company), (SELECT id FROM users WHERE email = 'tania@example.com'),
+       '2026-01-10T09:00:00Z', '2026-01-10T09:00:00Z'
+  FROM expedientes WHERE TRIM(company) <> '' ORDER BY id DESC ON CONFLICT (name) DO NOTHING;
+UPDATE expedientes SET client_id = (SELECT c.id FROM clients c WHERE c.name = TRIM(expedientes.company));
+UPDATE clients SET legal_name = 'BMW Ibérica, S.A.', tax_id = 'A00000001', fiscal_address = 'Avenida de Ejemplo 1, 28000 Madrid',
+       billing_email = 'facturas.bmw@example.com', city = 'Madrid', phone = '+34 910 000 001', email = 'eventos.bmw@example.com',
+       payment_terms = '50 % a la firma del presupuesto y el resto a 30 días de la factura final.', fee_bp = 1000, since_on = '2023-03-01',
+       notes = 'Factura a sus concesionarios por separado (ver entidades). Pedir siempre la PO antes de facturar.'
+ WHERE name = 'BMW Ibérica';
+UPDATE clients SET legal_name = 'ELECNOR, S.A.', tax_id = 'A00000002', fiscal_address = 'Calle de Ejemplo 2, 28000 Madrid',
+       billing_email = 'facturas.elecnor@example.com', city = 'Madrid', payment_terms = 'Pago a 60 días fecha factura.', fee_bp = 750
+ WHERE name = 'ELECNOR';
+UPDATE clients SET legal_name = 'Roche Farma, S.A.', city = 'Madrid', payment_terms = '30 % de anticipo; el resto al terminar el evento.', fee_bp = 1200
+ WHERE name = 'ROCHE FARMA';
+UPDATE clients SET city = 'Barcelona' WHERE name = 'GLENMARK';
+-- El fee que se aplicó en cada expediente (el de BMW se negoció al 8 % antes de subirlo al 10 %)
+UPDATE expedientes SET fee_bp = 800 WHERE company = 'BMW Ibérica';
+UPDATE expedientes SET fee_bp = 750 WHERE company = 'ELECNOR';
+UPDATE expedientes SET fee_bp = 1200 WHERE company = 'ROCHE FARMA';
+-- Entidades a las que se factura (los concesionarios de BMW), con los datos de sus facturas
+INSERT INTO client_entities (client_id, legal_name, tax_id, fiscal_address, email)
+SELECT e.client_id, i.billed_to, i.billed_tax_id, i.billed_address, i.billed_email
+  FROM invoices i JOIN expedientes e ON e.id = i.expediente_id
+ WHERE i.billed_tax_id IS NOT NULL AND i.billed_tax_id <> COALESCE((SELECT c.tax_id FROM clients c WHERE c.id = e.client_id), '')
+ GROUP BY e.client_id, i.billed_tax_id
+ON CONFLICT DO NOTHING;
+INSERT INTO change_log (entity, entity_id, user_id, action, summary, at)
+SELECT 'client', c.id, c.created_by, 'alta', 'Alta del cliente (con los expedientes que ya había)', '2026-01-10T09:00:00Z' FROM clients c;
+INSERT INTO change_log (entity, entity_id, user_id, action, summary, changes, at)
+SELECT 'client', id, (SELECT id FROM users WHERE email = 'direccion@example.com'), 'condiciones', 'Fee: 8 % → 10 %',
+       '{"fee_bp":[800,1000]}', '2026-09-15T10:30:00Z' FROM clients WHERE name = 'BMW Ibérica';

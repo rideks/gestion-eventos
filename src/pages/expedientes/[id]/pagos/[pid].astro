@@ -13,7 +13,7 @@ import PaymentForm from '../../../../components/PaymentForm.astro';
 import SupplierDocFields from '../../../../components/SupplierDocFields.astro';
 import FileField from '../../../../components/FileField.astro';
 import Pill from '../../../../components/Pill.astro';
-import SupplierPickerKit from '../../../../components/SupplierPickerKit.astro';
+import EntityPickerKit from '../../../../components/EntityPickerKit.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
 import { getExpediente, PAYMENT_SELECT, PAYMENT_JOINS } from '../../../../lib/data.js';
 import { PaymentSchema, SupplierDocSchema, ConformSchema, validate, formToObject } from '../../../../lib/validate.js';
@@ -506,5 +506,5 @@ const flow = [
     )}
   </section>
 
-  {editable && <SupplierPickerKit options={options} types={types} />}
+  {editable && <EntityPickerKit kind="supplier" options={options} types={types} />}
 </App>

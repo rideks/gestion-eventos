@@ -1,0 +1,15 @@
+---
+// Campo para elegir un proveedor o un cliente de la lista de los dados de alta (no se escribe uno
+// cualquiera). Manda el nombre y su id (`<name>_id`). Lo hace funcionar EntityPickerKit con el mismo
+// `kind`, que va una vez en la página. Sin JavaScript queda un campo de texto con sugerencias y el
+// servidor sólo acepta el nombre exacto de uno de la lista.
+//   kind: 'supplier' | 'client'
+//   name: el campo del formulario (p. ej. 'supplier', 'fc_supplier' en las filas de pagos previstos, 'company')
+//   keepId: el que ya tiene guardado (se puede mantener aunque ahora no se pueda elegir, p. ej. «No contratar»)
+const { kind, id = undefined, name, value = '', valueId = null, keepId = null, required = false, label = undefined, placeholder = '' } = Astro.props;
+---
+<div class="picker" data-entity-picker data-keep-id={keepId ?? undefined}>
+  <input id={id} name={name} type="text" maxlength="120" value={value ?? ''} required={required} aria-label={label}
+    placeholder={placeholder} autocomplete="off" spellcheck="false" list={`${kind}-names`} data-picker-input data-picker-kind={kind} />
+  <input type="hidden" name={`${name}_id`} value={valueId ?? ''} data-picker-id />
+</div>

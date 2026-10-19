@@ -53,7 +53,9 @@ const parent = crumbs.length - 2;
     <Pill state={expedienteState(exp, now)} />
   </div>
   <p class="exp-meta">
-    <span><Icon name="building" size={16} /><strong>{exp.company}</strong></span>
+    <span><Icon name="building" size={16} />{exp.client_id && can(Astro.locals.user, 'clientes')
+      ? <a href={`/clientes/${exp.client_id}`} title="Ficha del cliente"><strong>{exp.company}</strong></a>
+      : <strong>{exp.company}</strong>}</span>
     {exp.destination && <span><Icon name="map-pin" size={16} />{exp.destination}</span>}
     {exp.start_date && <span><Icon name="calendar-days" size={16} />{formatRange(exp.start_date, exp.end_date)}</span>}
     {exp.manager_name && <span><Icon name="user-round" size={16} />{exp.manager_name}</span>}

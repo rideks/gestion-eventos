@@ -9,16 +9,17 @@ import ExpedienteFields from '../../components/ExpedienteFields.astro';
 import VatLines from '../../components/VatLines.astro';
 import FileField from '../../components/FileField.astro';
 import ForecastRows from '../../components/ForecastRows.astro';
-import SupplierPickerKit from '../../components/SupplierPickerKit.astro';
+import EntityPickerKit from '../../components/EntityPickerKit.astro';
 import { readForm, actor, can, activityStmt } from '../../lib/app.js';
 import { ExpedienteSchema, forecastRowSchema, NumberSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../lib/vat.js';
-import { suggestions, activeUsers, suggestNumber, numberTaken } from '../../lib/data.js';
+import { activeUsers, suggestNumber, numberTaken } from '../../lib/data.js';
 import { storeFile, getFile, UploadError } from '../../lib/files.js';
 import { eur } from '../../lib/money.js';
 import { nowIso } from '../../lib/dates.js';
 import { serviceContext } from '../../services/context.js';
 import * as suppliers from '../../services/suppliers.js';
+import * as clients from '../../services/clients.js';
 
 const db = env.DB;
 const me = Astro.locals.user;
@@ -36,6 +37,8 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   v = { ...input };
   const e = validate(ExpedienteSchema, input);
+  // El cliente tiene que estar dado de alta (se elige de la lista); su fee vigente se copia al expediente
+  const cl = e.ok ? await clients.resolveForExpediente(serviceContext(Astro), { id: input.company_id, name: input.company }) : null;
   const b = parseVatLines(form, rates);
   const fc = form ? parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] }) : { ok: true, rows: [] };
   // Los proveedores de la previsión tienen que estar dados de alta (se eligen de la lista)
@@ -53,6 +56,9 @@ if (Astro.request.method === 'POST') {
   if (!e.ok) {
     error = e.message;
     errors = e.errors;
+  } else if (!cl.ok) {
+    error = cl.message;
+    errors = cl.fields;
   } else if (!b.ok) {
     error = `Presupuesto · ${b.message}`;
     errors = { amount: b.message };
@@ -71,10 +77,10 @@ if (Astro.request.method === 'POST') {
     const number = n.data.number;
     const at = nowIso();
     const exp = await db.prepare(
-      `INSERT INTO expedientes (number, name, company, contact_name, contact_email, contact_phone, destination, start_date, end_date,
+      `INSERT INTO expedientes (number, name, company, client_id, fee_bp, contact_name, contact_email, contact_phone, destination, start_date, end_date,
                                 attendees, notes, status, manager_id, requested_by, requested_at, opened_by, opened_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-    ).bind(number, d.name, d.company, d.contact_name, d.contact_email, d.contact_phone, d.destination, d.start_date, d.end_date,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    ).bind(number, d.name, cl.value.name, cl.value.id, cl.value.fee_bp, d.contact_name, d.contact_email, d.contact_phone, d.destination, d.start_date, d.end_date,
       d.attendees, d.notes, number ? 'abierto' : 'solicitado', d.manager_id, me.id, at, number ? me.id : null, number ? at : null, at).first();
 
     try {
@@ -103,8 +109,8 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ companies }, users, suggested, picker] = await Promise.all([
-  suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null, suppliers.pickerData(serviceContext(Astro)),
+const [users, suggested, picker, clientPicker] = await Promise.all([
+  activeUsers(db), admin ? suggestNumber(db) : null, suppliers.pickerData(serviceContext(Astro)), clients.pickerData(serviceContext(Astro)),
 ]);
 const { options = [], types = [] } = picker.ok ? picker.value : {};
 ---
@@ -117,7 +123,7 @@ const { options = [], types = [] } = picker.ok ? picker.value : {};
   </div>
 
   <form method="post" enctype="multipart/form-data" class="form">
-    <ExpedienteFields v={v} errors={errors} users={users} companies={companies} />
+    <ExpedienteFields v={v} errors={errors} users={users} />
 
     <section class="form-section">
       <h2><Icon name="file-spreadsheet" /> Presupuesto aprobado</h2>
@@ -150,5 +156,6 @@ const { options = [], types = [] } = picker.ok ? picker.value : {};
       <a class="btn btn-ghost" href="/expedientes">Cancelar</a>
     </div>
   </form>
-  <SupplierPickerKit options={options} types={types} />
+  <EntityPickerKit kind="supplier" options={options} types={types} />
+  <EntityPickerKit kind="client" options={clientPicker.ok ? clientPicker.value.options : []} />
 </App>

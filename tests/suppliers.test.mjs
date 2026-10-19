@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanName, businessVolume } from '../src/lib/suppliers.js';
-import { fold, nameSimilarity, similarSuppliers, matchesQuery } from '../src/lib/supplier-match.js';
+import { fold, nameSimilarity, similarNames, matchesQuery } from '../src/lib/name-match.js';
 import { sectionPermission, normalizePermissions } from '../src/lib/permissions.js';
 
 test('cleanName: sin espacios sobrantes', () => {
@@ -69,17 +69,17 @@ test('nombres parecidos: el mismo escrito de otra forma, erratas y nombres incom
   assert.equal(nameSimilarity('Hotel', 'Hotel Plaza'), 0);
 });
 
-test('similarSuppliers: también por los nombres anteriores, los más parecidos primero', () => {
+test('similarNames: también por los nombres anteriores, los más parecidos primero', () => {
   const list = [
     { id: 1, name: 'Hotel Barceló Valladolid', aliases: [] },
     { id: 2, name: 'Barceló Málaga', aliases: [] },
     { id: 3, name: 'Autocares Pérez', aliases: ['Autocares Perez Hnos'] },
     { id: 4, name: 'Barcelo Valladolid Centro', aliases: [] },
   ];
-  assert.deepEqual(similarSuppliers('barcelo valladolid', list).map((x) => [x.id, x.score]), [[1, 3], [4, 1]]);
-  const viaAlias = similarSuppliers('autocares pérez hnos.', list);
+  assert.deepEqual(similarNames('barcelo valladolid', list).map((x) => [x.id, x.score]), [[1, 3], [4, 1]]);
+  const viaAlias = similarNames('autocares pérez hnos.', list);
   assert.deepEqual(viaAlias.map((x) => [x.id, x.via]), [[3, 'Autocares Perez Hnos']]);
-  assert.deepEqual(similarSuppliers('Restaurante El Paseo', list), []);
+  assert.deepEqual(similarNames('Restaurante El Paseo', list), []);
 });
 
 test('matchesQuery: busca sin acentos en nombre, nombres anteriores, tipo y ciudad', () => {

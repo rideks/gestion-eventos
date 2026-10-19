@@ -1,0 +1,410 @@
+---
+// Lo que necesitan los campos EntityPicker de un tipo (proveedores o clientes) en la página: la lista, el
+// desplegable y la ventana «Dar de alta». Va UNA vez por tipo y página, fuera de cualquier formulario
+// (en una misma página puede haber uno de proveedores y otro de clientes).
+// Al escribir se buscan por nombre, nombre anterior, tipo o ciudad (sin acentos ni mayúsculas).
+// Si no está y se puede dar de alta (su permiso .create), la ventana avisa de los que tienen un nombre
+// parecido antes de crearlo (lo comprueba el servidor en el alta de cada tipo).
+//   options: [{ id, name, status, type?, city?, aliases: [] }] · types: para elegir el tipo al dar de alta
+import Icon from './Icon.astro';
+import { can } from '../lib/app.js';
+
+const KINDS = {
+  supplier: { noun: 'proveedor', plural: 'proveedores', section: 'Proveedores', directory: '/proveedores', endpoint: '/proveedores/alta', permission: 'proveedores.create', prefix: 'sp', icon: 'briefcase', blocked: 'No contratar' },
+  client: { noun: 'cliente', plural: 'clientes', section: 'Clientes', directory: '/clientes', endpoint: '/clientes/alta', permission: 'clientes.create', prefix: 'cl', icon: 'building', blocked: null },
+};
+const { kind, options = [], types = [] } = Astro.props;
+const k = KINDS[kind];
+const canCreate = can(Astro.locals.user, k.permission);
+const p = k.prefix;
+---
+<div data-picker-kit={kind} data-options={JSON.stringify(options)} data-can-create={canCreate ? '1' : '0'} data-endpoint={k.endpoint}
+  data-noun={k.noun} data-plural={k.plural} data-section={k.section} data-directory={k.directory} data-blocked={k.blocked ?? ''} data-prefix={p} hidden>
+  <datalist id={`${kind}-names`}>{options.filter((o) => o.status !== 'bloqueado').map((o) => <option value={o.name} />)}</datalist>
+  <p class="visually-hidden" aria-live="polite" data-picker-status></p>
+</div>
+<ul class="picker-pop" role="listbox" id={`${kind}-listbox`} aria-label={k.section} data-picker-pop={kind} hidden></ul>
+
+{canCreate && (
+  <dialog class="confirm-dialog picker-dialog" aria-labelledby={`${p}-new-title`} data-picker-dialog={kind}>
+    <form data-picker-new novalidate>
+      <h2 id={`${p}-new-title`}><Icon name={k.icon} /> Dar de alta un {k.noun}</h2>
+      <p class="muted small">Sólo si no está en la lista. El resto de datos (contacto, condiciones…) se completan en su ficha.</p>
+      <div class="field">
+        <label for={`${p}-new-name`}>Nombre del {k.noun}</label>
+        <input id={`${p}-new-name`} name="name" type="text" maxlength="120" required autocomplete="off" />
+      </div>
+      <div class:list={['row', { 'row-2': types.length }]}>
+        {types.length > 0 && (
+          <div class="field">
+            <label for={`${p}-new-type`}>Tipo</label>
+            <select id={`${p}-new-type`} name="type_id">
+              <option value="">Sin tipo</option>
+              {types.map((t) => <option value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div class="field">
+          <label for={`${p}-new-city`}>Ciudad <span class="opt">(opcional)</span></label>
+          <input id={`${p}-new-city`} name="city" type="text" maxlength="80" autocomplete="off" />
+        </div>
+      </div>
+      <div class="picker-similar" data-picker-similar hidden>
+        <p><Icon name="triangle-alert" size={18} /> Ya hay {k.plural} con un nombre parecido. ¿Es alguno de estos?</p>
+        <ul data-picker-similar-list></ul>
+      </div>
+      <p class="field-error" role="alert" data-picker-error hidden></p>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" type="button" data-picker-cancel>Cancelar</button>
+        <button class="btn btn-primary" type="submit" data-picker-save>Dar de alta</button>
+      </div>
+    </form>
+  </dialog>
+)}
+
+<script>
+  import { fold, matchesQuery } from '../lib/name-match.js';
+
+  const clean = (s) => String(s ?? '').trim().replace(/\s+/g, ' ');
+  const meta = (o) => [o.type, o.city].filter(Boolean).join(' · ');
+  const span = (cls, text) => {
+    const el = document.createElement('span');
+    el.className = cls;
+    el.textContent = text;
+    return el;
+  };
+  const li = (cls, children) => {
+    const el = document.createElement('li');
+    el.className = cls;
+    el.append(...children);
+    return el;
+  };
+
+  // Un registro por tipo (proveedores, clientes) con su lista, su desplegable y su ventana de alta
+  const kits = new Map();
+  document.querySelectorAll('[data-picker-kit]').forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    const kind = el.dataset.pickerKit;
+    /** @type {{ id: number, name: string, status: string, type?: string|null, city?: string|null, aliases: string[] }[]} */
+    const options = JSON.parse(el.dataset.options || '[]');
+    const pop = document.querySelector(`[data-picker-pop="${kind}"]`);
+    const dialog = document.querySelector(`dialog[data-picker-dialog="${kind}"]`);
+    if (pop) document.body.append(pop);
+    if (dialog) document.body.append(dialog);
+    kits.set(kind, {
+      kind, options, pop, dialog,
+      byId: new Map(options.map((o) => [String(o.id), o])),
+      canCreate: el.dataset.canCreate === '1',
+      endpoint: el.dataset.endpoint, noun: el.dataset.noun, plural: el.dataset.plural, section: el.dataset.section,
+      directory: el.dataset.directory, blocked: el.dataset.blocked || null, prefix: el.dataset.prefix,
+      status: el.querySelector('[data-picker-status]'),
+      openNew: () => {},
+    });
+  });
+
+  const isPicker = (t) => t instanceof HTMLInputElement && t.hasAttribute('data-picker-input') && kits.has(t.dataset.pickerKind);
+  const kitOf = (input) => kits.get(input.dataset.pickerKind);
+  const hiddenOf = (input) => input.closest('[data-entity-picker]')?.querySelector('[data-picker-id]');
+  const keepIdOf = (input) => input.closest('[data-entity-picker]')?.dataset.keepId;
+  const add = (kit, o) => {
+    if (kit.byId.has(String(o.id))) return kit.byId.get(String(o.id));
+    const full = { aliases: [], ...o };
+    kit.options.push(full);
+    kit.byId.set(String(o.id), full);
+    return full;
+  };
+  // El mismo nombre (o uno anterior) escrito con otros acentos o mayúsculas
+  const exact = (kit, text) => {
+    const f = fold(text);
+    const hits = kit.options.filter((o) => fold(o.name) === f || o.aliases.some((a) => fold(a) === f));
+    return hits.length === 1 ? hits[0] : null;
+  };
+  const blockedFor = (kit, o, input) => kit.blocked && o.status === 'bloqueado' && keepIdOf(input) !== String(o.id);
+
+  /** Comprueba el campo: uno de la lista y que se pueda elegir (o ninguno, si está vacío) */
+  const check = (input) => {
+    const kit = kitOf(input);
+    const hidden = hiddenOf(input);
+    if (!kit || !(hidden instanceof HTMLInputElement)) return null;
+    const text = clean(input.value);
+    let o = kit.byId.get(hidden.value) ?? null;
+    if (o && o.name !== text) o = null;
+    if (!o && text) o = exact(kit, text);
+    hidden.value = o ? String(o.id) : '';
+    let message = '';
+    if (text && !o) message = `«${text}» no está en la lista de ${kit.plural}: elígelo de la lista${kit.canCreate ? ' o dalo de alta' : ''}.`;
+    else if (o && blockedFor(kit, o, input)) message = `${o.name} está marcado como «${kit.blocked}»: elige otro.`;
+    input.setCustomValidity(message);
+    return o;
+  };
+  const choose = (input, o) => {
+    input.value = o.name;
+    check(input);
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  let active = null;
+  let cursor = -1;
+  const popOf = (input) => (input ? kitOf(input)?.pop : null);
+  const items = () => [...(popOf(active)?.querySelectorAll('li[role="option"]:not([aria-disabled="true"])') ?? [])];
+  const close = () => {
+    const pop = popOf(active);
+    if (pop) pop.hidden = true;
+    cursor = -1;
+    if (active) {
+      active.setAttribute('aria-expanded', 'false');
+      active.removeAttribute('aria-activedescendant');
+    }
+  };
+  // Hasta dónde puede bajar la lista (en el móvil, sin meterse debajo de la barra inferior)
+  const bottomLimit = () => {
+    const bar = document.querySelector('.a-tabbar');
+    const top = bar instanceof HTMLElement && getComputedStyle(bar).display !== 'none' ? bar.getBoundingClientRect().top : window.innerHeight;
+    return Math.min(top, window.innerHeight) - 8;
+  };
+  const place = () => {
+    const pop = popOf(active);
+    if (!active || !pop || pop.hidden) return;
+    const r = active.getBoundingClientRect();
+    const width = Math.min(Math.max(r.width, 300), window.innerWidth - 16);
+    pop.style.width = `${width}px`;
+    pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + window.scrollX}px`;
+    pop.style.top = `${r.bottom + window.scrollY + 4}px`;
+    pop.style.maxHeight = `${Math.max(120, Math.min(320, bottomLimit() - r.bottom - 4))}px`;
+  };
+  const render = (input) => {
+    const kit = kitOf(input);
+    const pop = kit.pop;
+    const q = clean(input.value);
+    const f = fold(q);
+    const hits = kit.options.filter((o) => matchesQuery(o, q))
+      .sort((a, b) => Number(fold(b.name).startsWith(f)) - Number(fold(a.name).startsWith(f)))
+      .slice(0, 50);
+    pop.replaceChildren();
+    hits.forEach((o, i) => {
+      const parts = [span('picker-name', o.name)];
+      const alias = f && !fold(o.name).includes(f) ? o.aliases.find((a) => fold(a).includes(f)) : null;
+      const extra = [meta(o), alias && `antes «${alias}»`].filter(Boolean).join(' · ');
+      if (extra) parts.push(span('picker-meta', extra));
+      if (o.status === 'bloqueado' && kit.blocked) parts.push(span('pill pill-danger', kit.blocked));
+      else if (o.status !== 'activo') parts.push(span('pill pill-muted', 'Inactivo'));
+      const el = li('', parts);
+      el.id = `${kit.prefix}-opt-${i}`;
+      el.setAttribute('role', 'option');
+      el.dataset.id = String(o.id);
+      if (blockedFor(kit, o, input)) el.setAttribute('aria-disabled', 'true');
+      pop.append(el);
+    });
+    if (q && !exact(kit, q)) {
+      if (kit.canCreate) {
+        const el = li('picker-create', [span('', `+ Dar de alta «${q}»`), span('picker-meta', hits.length ? 'Sólo si no es ninguno de los de arriba' : 'No está en la lista')]);
+        el.setAttribute('role', 'option');
+        el.id = `${kit.prefix}-opt-new`;
+        el.dataset.create = '1';
+        pop.append(el);
+      } else {
+        pop.append(li('picker-empty', [span('', hits.length
+          ? `Si no es ninguno de estos, pide que lo den de alta en ${kit.section}.`
+          : `«${q}» no está en la lista. Pide que lo den de alta en ${kit.section}.`)]));
+      }
+    } else if (!hits.length) {
+      pop.append(li('picker-empty', [span('', `Todavía no hay ${kit.plural} dados de alta.`)]));
+    }
+    cursor = -1;
+    const opening = pop.hidden;
+    pop.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    // Si el campo está muy abajo, se sube para que se vea la lista
+    if (opening && bottomLimit() - input.getBoundingClientRect().bottom < 200) input.scrollIntoView({ block: 'center' });
+    place();
+  };
+  const move = (step) => {
+    const list = items();
+    if (!list.length || !active) return;
+    list[cursor]?.removeAttribute('aria-selected');
+    cursor = (cursor + step + list.length) % list.length;
+    list[cursor].setAttribute('aria-selected', 'true');
+    list[cursor].scrollIntoView({ block: 'nearest' });
+    active.setAttribute('aria-activedescendant', list[cursor].id);
+  };
+  const pick = (el) => {
+    const input = active;
+    if (!input) return;
+    const kit = kitOf(input);
+    close();
+    if (el.dataset.create) kit.openNew(input, clean(input.value));
+    else if (kit.byId.has(el.dataset.id)) choose(input, kit.byId.get(el.dataset.id));
+  };
+  const enhance = (input) => {
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', `${input.dataset.pickerKind}-listbox`);
+    // Sin JavaScript sirve el datalist; con él, el desplegable propio
+    input.removeAttribute('list');
+  };
+
+  document.querySelectorAll('[data-picker-input]').forEach((i) => {
+    if (!isPicker(i)) return;
+    enhance(i);
+    i.setAttribute('aria-expanded', 'false');
+    check(i);
+  });
+  // Delegado en el documento: también vale para las filas que se añaden después (pagos previstos)
+  document.addEventListener('focusin', (e) => {
+    if (!isPicker(e.target)) return;
+    enhance(e.target);
+    if (active !== e.target) close();
+    active = e.target;
+  });
+  document.addEventListener('input', (e) => {
+    if (!isPicker(e.target)) return;
+    active = e.target;
+    check(e.target);
+    if (clean(e.target.value)) render(e.target);
+    else close();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!isPicker(e.target)) return;
+    active = e.target;
+    const pop = popOf(active);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (pop.hidden) render(e.target);
+      move(e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Enter' && !pop.hidden && cursor >= 0) {
+      e.preventDefault();
+      pick(items()[cursor]);
+    } else if (e.key === 'Escape' && !pop.hidden) {
+      e.preventDefault();
+      close();
+    }
+  });
+  document.addEventListener('focusout', (e) => {
+    if (!isPicker(e.target)) return;
+    const o = check(e.target);
+    // Escrito igual que uno de la lista (otros acentos o mayúsculas, o un nombre anterior): su nombre
+    if (o && e.target.value !== o.name) choose(e.target, o);
+    close();
+  });
+  window.addEventListener('scroll', place, true);
+  window.addEventListener('resize', close);
+
+  for (const kit of kits.values()) {
+    const { pop, dialog } = kit;
+    if (!pop) continue;
+    // Que el clic en la lista no quite el foco del campo antes de elegir
+    pop.addEventListener('pointerdown', (e) => e.preventDefault());
+    pop.addEventListener('click', (e) => {
+      const el = e.target instanceof Element ? e.target.closest('li[role="option"]') : null;
+      if (el instanceof HTMLElement && el.getAttribute('aria-disabled') !== 'true') pick(el);
+    });
+
+    // ── Dar de alta ──────────────────────────────────────────────────────────────
+    if (!(dialog instanceof HTMLDialogElement)) {
+      kit.openNew = () => window.open(`${kit.directory}?nuevo`, '_blank');
+      continue;
+    }
+    const form = dialog.querySelector('[data-picker-new]');
+    const similar = dialog.querySelector('[data-picker-similar]');
+    const similarList = dialog.querySelector('[data-picker-similar-list]');
+    const error = dialog.querySelector('[data-picker-error]');
+    const save = dialog.querySelector('[data-picker-save]');
+    let target = null;
+    let confirmed = false;
+    const resetSimilar = () => {
+      confirmed = false;
+      similar.hidden = true;
+      error.hidden = true;
+      save.textContent = 'Dar de alta';
+    };
+    kit.openNew = (input, name) => {
+      target = input;
+      if (typeof dialog.showModal !== 'function') {
+        window.open(`${kit.directory}?nuevo`, '_blank');
+        return;
+      }
+      form.reset();
+      form.elements.namedItem('name').value = name;
+      resetSimilar();
+      dialog.showModal();
+      (form.elements.namedItem('type_id') ?? form.elements.namedItem('city')).focus();
+    };
+    const done = (o) => {
+      const item = add(kit, o);
+      dialog.close();
+      if (target) {
+        choose(target, item);
+        target.focus();
+      }
+      if (kit.status) kit.status.textContent = `${kit.noun[0].toUpperCase()}${kit.noun.slice(1)} elegido: ${item.name}`;
+    };
+    const fail = (text) => {
+      error.textContent = text;
+      error.hidden = false;
+    };
+    // Al cambiar el nombre se vuelve a comprobar si se parece a alguno
+    form.elements.namedItem('name').addEventListener('input', resetSimilar);
+    dialog.querySelector('[data-picker-cancel]').addEventListener('click', () => dialog.close());
+    similarList.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest('[data-use]') : null;
+      const o = btn ? kit.byId.get(btn.getAttribute('data-use')) : null;
+      if (o) done(o);
+    });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = clean(form.elements.namedItem('name').value);
+      if (name.length < 2) {
+        fail(`Nombre del ${kit.noun}: mínimo 2 caracteres`);
+        return;
+      }
+      const same = exact(kit, name);
+      if (same) {
+        done(same);
+        return;
+      }
+      const body = new FormData(form);
+      if (confirmed) body.set('confirm', '1');
+      save.disabled = true;
+      error.hidden = true;
+      try {
+        const res = await fetch(kit.endpoint, { method: 'POST', body, headers: { accept: 'application/json' } });
+        const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
+        if (data?.ok) {
+          done(data.item);
+        } else if (data?.similar) {
+          similarList.replaceChildren(...data.similar.map((o) => {
+            const item = document.createElement('li');
+            const text = document.createElement('span');
+            const strong = document.createElement('strong');
+            strong.textContent = o.name;
+            text.append(strong);
+            const extra = [o.type, o.city, o.via && `antes «${o.via}»`].filter(Boolean).join(' · ');
+            if (extra) text.append(span('picker-meta', ` ${extra}`));
+            item.append(text);
+            if (o.status === 'bloqueado' && kit.blocked) {
+              item.append(span('pill pill-danger', kit.blocked));
+            } else {
+              add(kit, { ...o, aliases: o.via ? [o.via] : [] });
+              const use = document.createElement('button');
+              use.type = 'button';
+              use.className = 'btn btn-ghost btn-sm';
+              use.dataset.use = String(o.id);
+              use.textContent = 'Es este';
+              item.append(use);
+            }
+            return item;
+          }));
+          similar.hidden = false;
+          confirmed = true;
+          save.textContent = 'No, es otro: darlo de alta';
+        } else {
+          fail(data?.error ?? 'No se ha podido dar de alta. Vuelve a intentarlo.');
+        }
+      } catch {
+        fail('Sin conexión. Vuelve a intentarlo.');
+      } finally {
+        save.disabled = false;
+      }
+    });
+  }
+</script>

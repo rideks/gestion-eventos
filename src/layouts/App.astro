@@ -34,6 +34,7 @@ const nav = [
   ...(work ? [{ key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: canOpen ? counts.requests : 0, tone: 'warn' }] : []),
   ...(can(user, 'pagos') ? [{ key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' }] : []),
   ...(can(user, 'cobros') ? [{ key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: counts.to_issue, tone: 'warn' }] : []),
+  ...(can(user, 'clientes') ? [{ key: 'clientes', href: '/clientes', label: 'Clientes', icon: 'building' }] : []),
   ...(can(user, 'proveedores') ? [{ key: 'proveedores', href: '/proveedores', label: 'Proveedores', icon: 'briefcase', badge: can(user, 'contratos') ? counts.contracts_due : 0, tone: 'warn' }] : []),
   ...(work ? [{ key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true }] : []),
   ...(can(user, 'users') ? [{ key: 'usuarios', href: '/usuarios', label: 'Usuarios y permisos', icon: 'user-plus', sep: !work }] : []),
