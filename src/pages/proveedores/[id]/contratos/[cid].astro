@@ -1,0 +1,254 @@
+---
+// Un contrato de un proveedor: la caducidad bien a la vista (fecha, días que faltan, aviso), sus
+// condiciones, el documento, la cadena de renovaciones, los expedientes en los que se aplicó (los del
+// proveedor con el evento dentro de sus fechas) y el historial de cambios.
+// Con contratos.edit: modificar (queda en el historial), renovar, marcar la renovación, documento y borrar.
+import { env } from 'cloudflare:workers';
+import App from '../../../../layouts/App.astro';
+import Icon from '../../../../components/Icon.astro';
+import Pill from '../../../../components/Pill.astro';
+import ContractFields from '../../../../components/ContractFields.astro';
+import FileField from '../../../../components/FileField.astro';
+import { parseId, readForm, actor, can, logActivity } from '../../../../lib/app.js';
+import { ContractSchema, RenewalSchema, validate, formToObject } from '../../../../lib/validate.js';
+import { contractDetail, supplierContracts, contractOn, contractDiff, changeStmt, RENEWAL, CONTRACT_FIELDS } from '../../../../lib/contracts.js';
+import { supplierFicha } from '../../../../lib/suppliers.js';
+import { getFile, storeFile, deleteFiles, fileUrl, UploadError } from '../../../../lib/files.js';
+import { expLabel } from '../../../../lib/finance.js';
+import { eur } from '../../../../lib/money.js';
+import { today, addDays, formatDate, formatDateLong, formatRange, formatStamp } from '../../../../lib/dates.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const cid = parseId(Astro.params.cid);
+const me = Astro.locals.user;
+const now = today();
+const editable = can(me, 'contratos.edit');
+const money = can(me, 'proveedores.gasto');
+const detail = id && cid ? await contractDetail(db, cid, now) : null;
+if (!detail || detail.contract.supplier_id !== id) return Astro.rewrite('/404');
+
+let error = null;
+let errors = {};
+let v = detail.contract;
+let openEdit = Astro.url.searchParams.has('editar');
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const who = actor(Astro);
+  const c = detail.contract;
+  const self = `/proveedores/${id}/contratos/${cid}`;
+  if (!editable) return Astro.redirect(`${self}?aviso=permiso`, 303);
+  try {
+    if (input.intent === 'save') {
+      openEdit = true;
+      v = { ...c, ...input };
+      const parsed = validate(ContractSchema, input);
+      if (!parsed.ok) {
+        error = parsed.message;
+        errors = parsed.errors;
+      } else {
+        const d = parsed.data;
+        const diff = contractDiff(c, d);
+        if (!diff.summary) return Astro.redirect(self, 303);
+        await db.batch([
+          db.prepare(
+            `UPDATE supplier_contracts SET title = ?, signed_on = ?, starts_on = ?, ends_on = ?, conditions = ?, rates = ?, discounts = ?,
+                    credit_terms = ?, payment_terms = ?, other_terms = ?, notes = ?, alert_days = ?,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+          ).bind(d.title, d.signed_on, d.starts_on, d.ends_on, d.conditions, d.rates, d.discounts, d.credit_terms,
+            d.payment_terms, d.other_terms, d.notes, d.alert_days, cid),
+          changeStmt(db, cid, me.id, 'cambio', diff.summary, diff.changes),
+        ]);
+        await logActivity(db, who, null, 'contract.update', `modificó el contrato «${d.title}» de ${c.supplier_name}: ${diff.summary}`);
+        return Astro.redirect(`${self}?ok=guardado`, 303);
+      }
+    } else if (input.intent === 'renewal') {
+      const parsed = validate(RenewalSchema, input);
+      if (!parsed.ok || c.renewed_by) {
+        error = c.renewed_by ? 'Este contrato ya está renovado.' : parsed.message;
+      } else {
+        const r = parsed.data.renewal;
+        const text = r ? RENEWAL[r] : 'Sin decidir la renovación';
+        await db.batch([
+          db.prepare("UPDATE supplier_contracts SET renewal = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?").bind(r, cid),
+          changeStmt(db, cid, me.id, 'marca', text),
+        ]);
+        await logActivity(db, who, null, 'contract.renewal', `marcó el contrato «${c.title}» de ${c.supplier_name}: ${text.toLowerCase()}`);
+        return Astro.redirect(`${self}?ok=guardado`, 303);
+      }
+    } else if (input.intent === 'file') {
+      const file = form ? getFile(form, 'file') : null;
+      if (!file) {
+        error = 'Elige el documento del contrato.';
+        errors = { file: error };
+      } else {
+        const fileId = await storeFile({ db, bucket: env.DOCS, file, folder: `prov/${id}`, userId: me.id });
+        await db.batch([
+          db.prepare('UPDATE supplier_contracts SET file_id = ? WHERE id = ?').bind(fileId, cid),
+          changeStmt(db, cid, me.id, 'documento', `${c.file_id ? 'Sustituyó el documento' : 'Subió el documento'}: ${file.name}`),
+        ]);
+        if (c.file_id) await deleteFiles(db, env.DOCS, [c.file_id]);
+        return Astro.redirect(`${self}?ok=documento`, 303);
+      }
+    } else if (input.intent === 'delete') {
+      if (c.renewed_by) {
+        error = 'Tiene una renovación: no se puede borrar (es el historial de la renovación).';
+      } else {
+        await db.batch([
+          db.prepare('DELETE FROM supplier_contracts WHERE id = ?').bind(cid),
+          // El contrato al que renovaba vuelve a estar sin renovar: que quede en su historial
+          ...(c.replaces_id ? [changeStmt(db, c.replaces_id, me.id, 'renovado', `Se borró su renovación «${c.title}»: vuelve a estar sin renovar`)] : []),
+        ]);
+        if (c.file_id) await deleteFiles(db, env.DOCS, [c.file_id]);
+        await logActivity(db, who, null, 'contract.delete', `borró el contrato «${c.title}» de ${c.supplier_name}`);
+        return Astro.redirect(`/proveedores/${id}?ok=borrado#contratos`, 303);
+      }
+    } else {
+      error = 'Esa acción no está permitida.';
+    }
+  } catch (err) {
+    if (!(err instanceof UploadError)) throw err;
+    error = err.message;
+    errors = { file: err.message };
+  }
+  Astro.response.status = 400;
+}
+
+const c = detail.contract;
+const st = c.state;
+// Expedientes del proveedor en los que se aplicó este contrato (el que estaba en vigor en la fecha del evento)
+const [ficha, siblings] = await Promise.all([supplierFicha(db, id), supplierContracts(db, id, now)]);
+const applied = ficha.expedientes.filter((e) => contractOn(siblings, e.start_date)?.id === cid);
+const alertFrom = c.ends_on && c.alert_days ? addDays(c.ends_on, -c.alert_days) : null;
+const fileHref = fileUrl(c);
+const TERMS = ['rates', 'discounts', 'payment_terms', 'credit_terms', 'conditions', 'other_terms', 'notes'].filter((k) => c[k]);
+const canRenew = editable && !c.renewed_by && ['por_caducar', 'pendiente', 'caducado', 'vigente'].includes(st.key);
+---
+<App title={`${c.title} · ${c.supplier_name}`} section="proveedores" error={error} fieldErrors={errors}>
+  <div class="crumbs">
+    <nav aria-label="Estás en">
+      <ol>
+        <li><a href="/proveedores">Proveedores</a></li>
+        <li class="is-parent"><a href={`/proveedores/${id}#contratos`}><Icon name="arrow-left" size={16} class="crumb-arrow" />{c.supplier_name}</a></li>
+        <li><span aria-current="page">{c.title}</span></li>
+      </ol>
+    </nav>
+    <a class="btn btn-ghost btn-sm return-link" href="/" data-return hidden><Icon name="corner-up-left" size={16} /> Volver a <span data-return-label></span></a>
+  </div>
+
+  <div class="page-top">
+    <div>
+      <h1>{c.title}</h1>
+      <p class="exp-meta">
+        <a href={`/proveedores/${id}`}><Icon name="briefcase" size={16} />{c.supplier_name}</a>
+        <Pill state={st} />
+        {c.renewal && st.key !== 'pendiente' && !c.renewed_by && <span class:list={['pill', c.renewal === 'no' ? 'pill-muted' : 'pill-warn']}>{RENEWAL[c.renewal]}</span>}
+        {c.signed_on && <span><Icon name="file-text" size={16} />Firmado el {formatDate(c.signed_on)}</span>}
+      </p>
+    </div>
+    {canRenew && <a class="btn btn-primary" href={`/proveedores/${id}/contratos/nuevo?renueva=${cid}`}><Icon name="rotate-ccw" size={18} /> Renovar</a>}
+  </div>
+
+  <section class:list={['contract-expiry', `is-${st.tone}`]} aria-label="Caducidad">
+    <div class="ce-main">
+      <span class="ce-label">{c.ends_on ? (st.days !== null && st.days < 0 ? 'Caducó el' : 'Caduca el') : 'Vigencia'}</span>
+      <b class="ce-date">{c.ends_on ? formatDateLong(c.ends_on) : 'Indefinido'}</b>
+      <span class="ce-days">{st.text}</span>
+    </div>
+    <dl class="ce-facts">
+      <div><dt>Periodo</dt><dd>{formatDate(c.starts_on)} – {c.ends_on ? formatDate(c.ends_on) : 'sin fin'}</dd></div>
+      <div><dt>Aviso</dt><dd>{c.alert_days ? `${c.alert_days} días antes${alertFrom ? ` (desde el ${formatDate(alertFrom)})` : ''}` : 'Sin aviso'}</dd></div>
+      <div><dt>Renovación</dt><dd>{c.renewed_by
+        ? <a href={`/proveedores/${id}/contratos/${c.renewed_by}`}>Renovado: «{c.renewed_title}» desde el {formatDate(c.renewed_starts_on)}</a>
+        : c.renewal ? RENEWAL[c.renewal] : 'Sin decidir'}</dd></div>
+    </dl>
+    {editable && !c.renewed_by && (
+      <form method="post" class="ce-actions">
+        <input type="hidden" name="intent" value="renewal" />
+        {c.renewal !== 'pendiente' && <button class="btn btn-ghost btn-sm" type="submit" name="renewal" value="pendiente"><Icon name="clock" size={16} /> Pendiente de renovación</button>}
+        {c.renewal !== 'no' && <button class="btn btn-ghost btn-sm" type="submit" name="renewal" value="no" data-confirm="¿Marcar que este contrato no se renueva? Deja de avisar cuando caduque.">No se renueva</button>}
+        {c.renewal && <button class="btn btn-ghost btn-sm" type="submit" name="renewal" value="">Quitar la marca</button>}
+      </form>
+    )}
+  </section>
+
+  <div class="two-col mt">
+    <section class="card">
+      <h2>Condiciones</h2>
+      {TERMS.length ? (
+        <dl class="kv">
+          {TERMS.map((k) => <><dt>{CONTRACT_FIELDS[k]}</dt><dd class="pre">{c[k]}</dd></>)}
+        </dl>
+      ) : <p class="muted">Sin condiciones escritas. {editable && 'Añádelas con «Modificar contrato».'}</p>}
+    </section>
+    <div class="stack">
+      <section class="card">
+        <h2>Documento</h2>
+        {fileHref ? <p class="file-current"><Icon name="paperclip" size={16} /><a href={fileHref} target="_blank" rel="noopener">{c.file_name}</a></p> : <p class="muted">Sin documento.</p>}
+        {editable && (
+          <form method="post" enctype="multipart/form-data" class="mt">
+            <FileField label={fileHref ? 'Sustituir el documento' : 'Subir el documento'} optional={false} error={errors.file} />
+            <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="file" data-busy="Subiendo…"><Icon name="upload" size={16} /> Subir</button>
+          </form>
+        )}
+      </section>
+      {(c.replaces_id || c.renewed_by) && (
+        <section class="card">
+          <h2>Renovaciones</h2>
+          <ul class="chain">
+            {c.replaces_id && <li><span class="muted small">Renueva a</span> <a href={`/proveedores/${id}/contratos/${c.replaces_id}`}>«{c.replaces_title}»</a> <span class="muted small">{formatDate(c.replaces_starts_on)} – {c.replaces_ends_on ? formatDate(c.replaces_ends_on) : 'sin fin'}</span></li>}
+            <li><strong>Este contrato</strong> <span class="muted small">{formatDate(c.starts_on)} – {c.ends_on ? formatDate(c.ends_on) : 'sin fin'}</span></li>
+            {c.renewed_by && <li><span class="muted small">Renovado por</span> <a href={`/proveedores/${id}/contratos/${c.renewed_by}`}>«{c.renewed_title}»</a> <span class="muted small">desde el {formatDate(c.renewed_starts_on)}</span></li>}
+          </ul>
+        </section>
+      )}
+    </div>
+  </div>
+
+  <h2 class="section-title">Expedientes en los que se aplicó ({applied.length})</h2>
+  {applied.length ? (
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th scope="col">Expediente</th><th scope="col">Cliente</th><th scope="col">Fechas</th>{money && <th scope="col" class="num">Contratado</th>}</tr></thead>
+        <tbody>
+          {applied.map((e) => (
+            <tr class:list={{ 'is-planned': e.status === 'cancelado' }}>
+              <td><a href={`/expedientes/${e.id}/pagos`}><strong>{expLabel(e)}</strong> · {e.name}</a></td>
+              <td>{e.company}</td>
+              <td>{formatRange(e.start_date, e.end_date)}</td>
+              {money && <td class="num">{eur(e.contracted)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : <p class="muted">Ningún expediente de {c.supplier_name} tiene el evento entre estas fechas.</p>}
+
+  <h2 class="section-title">Historial</h2>
+  <ul class="history">
+    {detail.history.map((h) => (
+      <li><span class="muted small">{formatStamp(h.at, { year: true })} · {h.user_name ?? '—'}</span> {h.summary}</li>
+    ))}
+  </ul>
+
+  {editable && (
+    <>
+      <details class="add mt" id="editar" open={openEdit}>
+        <summary class="btn btn-primary"><Icon name="pencil" size={18} /> <span class="when-closed">Modificar contrato</span><span class="when-open">Cerrar sin guardar</span></summary>
+        <form method="post" class="form-section">
+          <h2><Icon name="file-text" /> {c.title}</h2>
+          <p class="muted small">Para corregir o completar datos: cada cambio queda en el historial. Si se han negociado condiciones nuevas a partir de una fecha, mejor «Renovar»: así este contrato se conserva tal cual.</p>
+          <ContractFields v={v} errors={errors} />
+          <div><button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar cambios</button></div>
+        </form>
+      </details>
+      {!c.renewed_by && (
+        <form method="post" class="mt">
+          <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar el contrato «${c.title}»? Se borra con su documento y su historial.`} data-confirm-ok="Borrar contrato"><Icon name="trash-2" size={16} /> Borrar contrato</button>
+        </form>
+      )}
+    </>
+  )}
+</App>

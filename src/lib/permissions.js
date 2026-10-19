@@ -42,6 +42,8 @@ export const AREAS = [
       { key: 'proveedores.create', label: 'Dar de alta proveedores nuevos', help: 'Desde el directorio o al elegir el proveedor de un pago. Antes de crearlo se avisa si ya hay alguno con un nombre parecido.' },
       { key: 'proveedores.edit', label: 'Editar y fusionar proveedores', help: 'Cambiar sus datos, juntar los duplicados, borrarlos y gestionar los tipos de proveedor.' },
       { key: 'proveedores.gasto', label: 'Ver las condiciones económicas y el gasto', help: 'Tarifas, condiciones de pago y cuánto se ha contratado, facturado y pagado con cada uno.' },
+      { key: 'contratos', label: 'Ver los contratos de los proveedores', help: 'Condiciones, tarifas, descuentos, caducidad y avisos; también los contratos anteriores y su historial.' },
+      { key: 'contratos.edit', label: 'Crear, renovar y modificar contratos', help: 'Cada cambio queda en el historial del contrato; al renovar, el anterior se conserva.' },
     ],
   },
   {
@@ -75,6 +77,8 @@ export const REQUIRES = {
   'proveedores.create': 'proveedores',
   'proveedores.edit': 'proveedores',
   'proveedores.gasto': 'proveedores',
+  contratos: 'proveedores',
+  'contratos.edit': 'contratos',
 };
 
 /**
@@ -121,6 +125,7 @@ const SECTIONS = [
   [/^\/(expedientes|archivos|buscar)(\/|$)/, 'expedientes'],
   [/^\/pagos\/?$/, 'pagos'],
   [/^\/cobros\/?$/, 'cobros'],
+  [/^\/proveedores\/(contratos|\d+\/contratos)(\/|$)/, 'contratos'],
   [/^\/proveedores(\/|$)/, 'proveedores'],
   [/^\/usuarios(\/|$)/, 'users'],
   [/^\/ajustes\/?$/, 'settings'],

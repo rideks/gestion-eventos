@@ -1,4 +1,4 @@
-// Documento de un expediente (factura, PO, presupuesto). Sólo con sesión (lo comprueba el middleware)
+// Documento de un expediente (factura, PO, presupuesto) o de un proveedor (contrato). Sólo con sesión (lo comprueba el middleware)
 // y nunca en caché compartida. PDF y fotos se abren en el navegador; Excel y Word se descargan.
 import { env } from 'cloudflare:workers';
 import { isInline } from '../../../lib/files.js';
@@ -12,11 +12,13 @@ export async function GET({ params, locals }) {
   if (!Number.isInteger(id) || id <= 0) return notFound();
   const row = await env.DB.prepare(
     `SELECT f.key, f.name, f.mime,
-            EXISTS (SELECT 1 FROM invoices i WHERE i.file_id = f.id) OR EXISTS (SELECT 1 FROM purchase_orders po WHERE po.file_id = f.id) AS billing
+            EXISTS (SELECT 1 FROM invoices i WHERE i.file_id = f.id) OR EXISTS (SELECT 1 FROM purchase_orders po WHERE po.file_id = f.id) AS billing,
+            EXISTS (SELECT 1 FROM supplier_contracts c WHERE c.file_id = f.id) AS contract
        FROM files f WHERE f.id = ?`,
   ).bind(id).first();
-  // Los documentos de cobros (facturas al cliente y PO) sólo los ve quien puede ver los cobros
-  if (!row || (row.billing && !can(locals.user, 'cobros'))) return notFound();
+  // Los documentos de cobros (facturas al cliente y PO) sólo los ve quien puede ver los cobros,
+  // y los contratos de proveedor, quien puede ver los contratos
+  if (!row || (row.billing && !can(locals.user, 'cobros')) || (row.contract && !can(locals.user, 'contratos'))) return notFound();
   const object = await env.DOCS.get(row.key);
   if (!object) return notFound();
 

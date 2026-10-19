@@ -2,23 +2,29 @@
 // Ficha de un proveedor: datos y condiciones, volumen de negocio (con quién, cuánto y cuándo) y el
 // historial de expedientes en los que ha trabajado. Cómo se calcula cada importe: src/lib/suppliers.js.
 // Los importes y las condiciones económicas sólo con permiso de gasto; editar y fusionar, con el de edición.
+// Los contratos (con su caducidad bien a la vista) y el contrato aplicado en cada expediente, con el de contratos.
 import { env } from 'cloudflare:workers';
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
+import Pill from '../../components/Pill.astro';
 import SupplierFields from '../../components/SupplierFields.astro';
 import { parseId, readForm, actor, can, logActivity } from '../../lib/app.js';
 import { SupplierSchema, SUPPLIER_STATUS, validate, formToObject } from '../../lib/validate.js';
 import { supplierFicha, supplierTypes, businessVolume, nameTaken, renameStmts, mergeStmts, cleanName } from '../../lib/suppliers.js';
+import { supplierContracts, contractOn, RENEWAL } from '../../lib/contracts.js';
 import { expLabel } from '../../lib/finance.js';
 import { eur } from '../../lib/money.js';
-import { today, formatDate, formatRange } from '../../lib/dates.js';
+import { today, formatDate, formatDateLong, formatRange } from '../../lib/dates.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
 const me = Astro.locals.user;
 const money = can(me, 'proveedores.gasto');
 const editable = can(me, 'proveedores.edit');
-const year = Number(today().slice(0, 4));
+const seesContracts = can(me, 'contratos');
+const editsContracts = can(me, 'contratos.edit');
+const now = today();
+const year = Number(now.slice(0, 4));
 let ficha = id ? await supplierFicha(db, id) : null;
 if (!ficha) return Astro.rewrite('/404');
 
@@ -71,8 +77,11 @@ if (Astro.request.method === 'POST') {
       return Astro.redirect(`/proveedores/${into.id}?ok=guardado&fusionado=${encodeURIComponent(s.name)}`, 303);
     }
   } else if (input.intent === 'delete') {
+    const { n: contractCount } = await db.prepare('SELECT COUNT(*) AS n FROM supplier_contracts WHERE supplier_id = ?').bind(id).first();
     if (ficha.expedientes.length) {
       error = 'Tiene pagos en expedientes: no se puede borrar. Si está repetido, fusiónalo con el bueno; si ya no se trabaja con él, márcalo como inactivo.';
+    } else if (contractCount) {
+      error = 'Tiene contratos: no se puede borrar. Si está repetido, fusiónalo con el bueno (los contratos pasan con él); si ya no se trabaja con él, márcalo como inactivo.';
     } else {
       await db.prepare('DELETE FROM suppliers WHERE id = ?').bind(id).run();
       await logActivity(db, who, null, 'supplier.delete', `borró al proveedor ${s.name}`);
@@ -84,10 +93,17 @@ if (Astro.request.method === 'POST') {
 
 const s = ficha.supplier;
 const vol = businessVolume(ficha.expedientes, year);
-const [types, others] = await Promise.all([
+const [types, others, contracts] = await Promise.all([
   editable ? supplierTypes(db) : [],
   editable ? db.prepare('SELECT id, name FROM suppliers WHERE id <> ? ORDER BY name COLLATE NOCASE').bind(id).all().then((r) => r.results) : [],
+  seesContracts ? supplierContracts(db, id, now) : [],
 ]);
+// En la ficha, arriba: los que están en vigor, los que empiezan más adelante y los caducados sin renovar
+const HISTORY = ['renovado', 'finalizado'];
+const current = contracts.filter((c) => !HISTORY.includes(c.state.key));
+const past = contracts.filter((c) => HISTORY.includes(c.state.key));
+const contractHref = (c) => `/proveedores/${id}/contratos/${c.id}`;
+const firstLine = (text) => (text ?? '').split('\n').find((l) => l.trim()) ?? '';
 const merged = Astro.url.searchParams.get('fusionado');
 const pct = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)} %`;
 const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
@@ -115,6 +131,58 @@ const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
     </div>
     {editable && <a class="btn btn-ghost btn-sm" href={`/proveedores/${id}?editar#editar`}><Icon name="pencil" size={16} /> Editar ficha</a>}
   </div>
+
+  {seesContracts && (
+    <section class="contracts-block" id="contratos">
+      <div class="sec-head">
+        <h2 class="section-title"><Icon name="file-text" /> Contratos</h2>
+        {editsContracts && <a class="btn btn-ghost btn-sm" href={`/proveedores/${id}/contratos/nuevo`}><Icon name="plus" size={16} /> Nuevo contrato</a>}
+      </div>
+      {current.length ? (
+        <div class="contract-cards">
+          {current.map((c) => (
+            <article class:list={['contract-card', `is-${c.state.tone}`]}>
+              <div class="cc-expiry">
+                <span class="ce-label">{c.ends_on ? (c.state.days !== null && c.state.days < 0 ? 'Caducó el' : 'Caduca el') : 'Vigencia'}</span>
+                <b class="ce-date">{c.ends_on ? formatDateLong(c.ends_on) : 'Indefinido'}</b>
+                <span class="ce-days">{c.state.text}</span>
+              </div>
+              <div class="cc-body">
+                <h3><a href={contractHref(c)}>{c.title}</a> <Pill state={c.state} />{c.renewal === 'no' && <span class="pill pill-muted">{RENEWAL.no}</span>}</h3>
+                <p class="muted small">{formatDate(c.starts_on)} – {c.ends_on ? formatDate(c.ends_on) : 'sin fin'}{c.alert_days ? ` · aviso ${c.alert_days} días antes` : ' · sin aviso'}</p>
+                <dl class="kv compact">
+                  {c.rates && <><dt>Tarifas</dt><dd>{firstLine(c.rates)}</dd></>}
+                  {c.discounts && <><dt>Descuentos</dt><dd>{firstLine(c.discounts)}</dd></>}
+                  {c.payment_terms && <><dt>Pago</dt><dd>{firstLine(c.payment_terms)}</dd></>}
+                  {c.credit_terms && <><dt>Crédito</dt><dd>{firstLine(c.credit_terms)}</dd></>}
+                </dl>
+                <div class="actions-inline">
+                  <a class="btn btn-ghost btn-sm" href={contractHref(c)}>Ver contrato</a>
+                  {editsContracts && c.state.attention && <a class="btn btn-primary btn-sm" href={`/proveedores/${id}/contratos/nuevo?renueva=${c.id}`}><Icon name="rotate-ccw" size={16} /> Renovar</a>}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : <p class="muted">{contracts.length ? 'Ningún contrato en vigor.' : 'Sin contratos registrados.'}</p>}
+      {past.length > 0 && (
+        <details class="past-contracts">
+          <summary>Contratos anteriores ({past.length})</summary>
+          <ul class="list">
+            {past.map((c) => (
+              <li><a class="item" href={contractHref(c)}>
+                <div class="item-body">
+                  <span class="item-title">{c.title} <Pill state={c.state} /></span>
+                  <span class="item-meta"><span>{formatDate(c.starts_on)} – {c.ends_on ? formatDate(c.ends_on) : 'sin fin'}</span>{c.rates && <span>{firstLine(c.rates)}</span>}</span>
+                </div>
+                <Icon name="chevron-right" class="chev" />
+              </a></li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  )}
 
   {money && (
     <>
@@ -160,6 +228,7 @@ const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
         <thead>
           <tr>
             <th scope="col">Expediente</th><th scope="col">Cliente</th><th scope="col">Ciudad</th><th scope="col">Fechas</th><th scope="col">Servicios</th>
+            {seesContracts && <th scope="col">Contrato aplicado</th>}
             {money && <><th scope="col" class="num">Contratado</th><th scope="col" class="num">Pagado</th><th scope="col" class="num">Pendiente</th></>}
           </tr>
         </thead>
@@ -171,12 +240,13 @@ const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
               <td>{e.destination ?? '—'}</td>
               <td>{e.start_date ? formatRange(e.start_date, e.end_date) : '—'}</td>
               <td>{e.concepts ? e.concepts.split(',').join(' · ') : '—'}</td>
+              {seesContracts && <td>{(() => { const k = contractOn(contracts, e.start_date); return k ? <a href={contractHref(k)}>{k.title}</a> : <span class="muted">—</span>; })()}</td>}
               {money && <><td class="num">{eur(e.contracted)}</td><td class="num">{eur(e.paid)}</td><td class:list={['num', { neg: e.pending > 0 }]}>{eur(e.pending)}</td></>}
             </tr>
           ))}
         </tbody>
         {money && vol.exps > 0 && (
-          <tfoot><tr><td colspan="5">Total (sin cancelados)</td><td class="num">{eur(vol.contracted)}</td><td class="num">{eur(vol.paid)}</td><td class="num">{eur(vol.pending)}</td></tr></tfoot>
+          <tfoot><tr><td colspan={seesContracts ? 6 : 5}>Total (sin cancelados)</td><td class="num">{eur(vol.contracted)}</td><td class="num">{eur(vol.paid)}</td><td class="num">{eur(vol.pending)}</td></tr></tfoot>
         )}
       </table>
     </div>
@@ -231,7 +301,7 @@ const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
       {others.length > 0 && (
         <section class="card mt">
           <h2>¿Está repetido?</h2>
-          <p class="muted small">Fusionarlo pasa sus pagos y documentos al otro proveedor, completa los datos que le falten y guarda «{s.name}» como nombre anterior. No se puede deshacer.</p>
+          <p class="muted small">Fusionarlo pasa sus pagos, documentos y contratos al otro proveedor, completa los datos que le falten y guarda «{s.name}» como nombre anterior. No se puede deshacer.</p>
           <form method="post" class="quick-form mt">
             <label class="visually-hidden" for="into">Fusionar con</label>
             <select id="into" name="into" required>
@@ -243,7 +313,7 @@ const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
         </section>
       )}
 
-      {!ficha.expedientes.length && (
+      {!ficha.expedientes.length && !contracts.length && (
         <form method="post" class="mt">
           <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar al proveedor ${s.name}?`}><Icon name="trash-2" size={16} /> Borrar proveedor</button>
         </form>

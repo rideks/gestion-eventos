@@ -243,7 +243,7 @@ export function renameStmts(db, id, oldName, newName) {
 const FILLABLE = ['type_id', 'city', 'address', 'contact_name', 'phone', 'email', 'max_capacity', 'since_on', 'economic_terms', 'payment_terms', 'notes'];
 
 /**
- * Sentencias para fusionar `from` en `into`: sus pagos y documentos pasan a `into`, su nombre (y sus
+ * Sentencias para fusionar `from` en `into`: sus pagos, documentos y contratos pasan a `into`, su nombre (y sus
  * nombres anteriores) quedan como alias de `into`, los datos que le falten a `into` se completan con
  * los de `from`, y `from` desaparece.
  */
@@ -252,6 +252,7 @@ export function mergeStmts(db, from, into) {
     db.prepare('UPDATE payments SET supplier_id = ?, supplier = ? WHERE supplier_id = ?').bind(into.id, into.name, from.id),
     db.prepare('UPDATE supplier_invoices SET supplier_id = ?, supplier = ? WHERE supplier_id = ?').bind(into.id, into.name, from.id),
     db.prepare('UPDATE supplier_aliases SET supplier_id = ? WHERE supplier_id = ?').bind(into.id, from.id),
+    db.prepare('UPDATE supplier_contracts SET supplier_id = ? WHERE supplier_id = ?').bind(into.id, from.id),
     db.prepare('INSERT INTO supplier_aliases (alias, supplier_id) VALUES (?, ?) ON CONFLICT (alias) DO UPDATE SET supplier_id = excluded.supplier_id').bind(from.name, into.id),
     db.prepare(`UPDATE suppliers SET ${FILLABLE.map((f) => `${f} = COALESCE(${f}, (SELECT x.${f} FROM suppliers x WHERE x.id = ?1))`).join(', ')},
                        updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?2`).bind(from.id, into.id),

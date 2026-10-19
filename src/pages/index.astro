@@ -12,12 +12,13 @@ import ReviewItem from '../components/ReviewItem.astro';
 import { actor, readForm, can } from '../lib/app.js';
 import { pendingPayments, paidWithoutInvoice, openInvoices, posWithBalance, invoicesToReview, toInvoiceByExpediente, LIST_COLUMNS } from '../lib/data.js';
 import { conformInvoice } from '../lib/supplier.js';
+import { contractsDue } from '../lib/contracts.js';
 import { markPaid, markCollected } from '../lib/actions.js';
 import { getFile } from '../lib/files.js';
 import { ConformSchema, validate, formToObject } from '../lib/validate.js';
 import { expedienteState, expLabel, plural, leftToInvoice, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
-import { today, addDays, formatRange, formatStamp, formatDateLong } from '../lib/dates.js';
+import { today, addDays, formatDate, formatRange, formatStamp, formatDateLong } from '../lib/dates.js';
 
 const db = env.DB;
 const me = Astro.locals.user;
@@ -52,7 +53,8 @@ const reviewer = can(me, 'supplier.review');
 const cobros = can(me, 'cobros');
 // Oficina (abre expedientes o lleva los cobros): ve todo lo abierto. Eventos: lo suyo y «Te toca».
 const office = admin || cobros;
-const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice, billing] = await Promise.all([
+const seesContracts = can(me, 'contratos');
+const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice, billing, dueContracts] = await Promise.all([
   reviewer ? invoicesToReview(db) : [],
   pendingPayments(db, '', { until: soon }),
   cobros ? openInvoices(db) : [],
@@ -75,6 +77,7 @@ const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: op
   db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
   office ? [] : paidWithoutInvoice(db),
   cobros ? toInvoiceByExpediente(db) : [],
+  seesContracts ? contractsDue(db, now) : [],
 ]);
 // «Te toca» (Eventos): lo que depende de quien lleva el expediente
 const mine = (rows) => rows.filter((r) => r.exp_manager_id === me.id);
@@ -124,6 +127,27 @@ const firstName = me.name.split(' ')[0];
           <p class="muted small">Pagos ya hechos de los que falta la factura: pídela y súbela en el pago.</p>
           <ul class="list">{chase.slice(0, 5).map((p) => <PaymentItem p={p} now={now} showExp />)}</ul>
           {chase.length > 5 && <p class="muted small mt"><a href="/pagos#sin-factura">Ver los {chase.length}</a></p>}
+        </section>
+      )}
+      {dueContracts.length > 0 && (
+        <section class="card card-alert">
+          <div class="sec-head">
+            <h2><Icon name="file-text" /> Contratos que requieren atención ({dueContracts.length})</h2>
+            <a class="btn btn-ghost btn-sm" href="/proveedores/contratos?ver=atencion">Ver todos</a>
+          </div>
+          <p class="muted small">Próximos a caducar (según el aviso de cada uno), pendientes de renovación o caducados sin renovar.</p>
+          <ul class="list">
+            {dueContracts.slice(0, 5).map((c) => (
+              <li><a class="item" href={`/proveedores/${c.supplier_id}/contratos/${c.id}`}>
+                <div class="item-body">
+                  <span class="item-title">{c.supplier_name} <span class="muted">· {c.title}</span></span>
+                  <span class="item-meta"><span>{c.ends_on ? `Fin: ${formatDate(c.ends_on)}` : 'Sin fecha de fin'}</span><span>{c.state.text}</span></span>
+                  <span class="item-flags"><Pill state={c.state} /></span>
+                </div>
+                <Icon name="chevron-right" class="chev" />
+              </a></li>
+            ))}
+          </ul>
         </section>
       )}
       {reviewer && ready.length > 0 && (

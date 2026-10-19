@@ -70,12 +70,12 @@ export function dueText(due, now = today()) {
   return `venció hace ${-d} días`;
 }
 
-/** ISO UTC de la actividad (2026-10-13T10:00:00Z) → '13 oct, 12:00' en Madrid */
-export function formatStamp(iso) {
+/** ISO UTC de la actividad (2026-10-13T10:00:00Z) → '13 oct, 12:00' en Madrid ({ year: true }: '13 oct 2026, 12:00') */
+export function formatStamp(iso, { year = false } = {}) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return new Intl.DateTimeFormat('es-ES', {
-    timeZone: TZ, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    timeZone: TZ, day: 'numeric', month: 'short', ...(year ? { year: 'numeric' } : {}), hour: '2-digit', minute: '2-digit',
   }).format(d).replace('.', '');
 }
 

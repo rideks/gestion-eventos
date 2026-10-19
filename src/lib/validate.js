@@ -96,6 +96,26 @@ export const SupplierQuickSchema = SupplierSchema.pick({ name: true, type_id: tr
 
 export const SupplierTypeSchema = z.object({ type_name: reqText('Tipo de proveedor', 2, 40) });
 
+// Contrato o acuerdo con un proveedor. alert_days: avisar esos días antes de que caduque (vacío: sin aviso)
+export const ContractSchema = z.object({
+  title: reqText('Nombre del contrato', 2, 120),
+  signed_on: optDate('Fecha de firma'),
+  starts_on: reqDate('Fecha de inicio'),
+  ends_on: optDate('Fecha de fin'),
+  conditions: optText('Condiciones', 4000),
+  rates: optText('Tarifas', 4000),
+  discounts: optText('Descuentos y condiciones especiales', 2000),
+  credit_terms: optText('Condiciones de crédito', 2000),
+  payment_terms: optText('Condiciones de pago', 2000),
+  other_terms: optText('Otros acuerdos', 2000),
+  notes: optText('Comentarios', 2000),
+  alert_days: optInt('Aviso', 1, 730),
+}).refine((d) => !d.ends_on || d.ends_on >= d.starts_on, { path: ['ends_on'], message: 'Fecha de fin: no puede ser anterior al inicio' })
+  // Sin fecha de fin no hay nada de lo que avisar
+  .transform((d) => (d.ends_on ? d : { ...d, alert_days: null }));
+
+export const RenewalSchema = z.object({ renewal: z.preprocess(blankToNull, z.enum(['pendiente', 'no']).nullable()) });
+
 export const RoleSchema = z.object({
   name: reqText('Nombre del rol', 2, 40),
   description: optText('Descripción', 160),

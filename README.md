@@ -39,6 +39,27 @@ suman (una factura puede cubrir varios pagos).
 | En el año | Lo contratado en eventos de ese año (fecha de inicio del expediente) |
 | Expedientes / media | En cuántos expedientes aparece y lo contratado de media por expediente |
 
+### Contratos con proveedores (estados y avisos)
+
+Cada proveedor puede tener **varios contratos o acuerdos**, vigentes e históricos, con sus fechas (firma, inicio,
+fin), tarifas, descuentos, condiciones de pago y de crédito, otros acuerdos, comentarios y el documento firmado.
+El estado **no se apunta**: se calcula cada día por fechas.
+
+| Estado | Cuándo |
+|---|---|
+| Vigente | En vigor (con fecha de fin o indefinido) |
+| Próximo a caducar | Faltan menos días que los del **aviso de ese contrato** (cada uno tiene el suyo; vacío = sin aviso) |
+| Pendiente de renovación | Marcado a mano: hay que negociar la renovación |
+| Caducado | Terminó y no se ha renovado ni se ha decidido no renovarlo |
+| Renovado / Finalizado | Historial: terminó y tiene su renovación / se decidió no renovarlo |
+| Aún no vigente | Firmado, pero empieza más adelante |
+
+Próximo a caducar, pendiente de renovación y caducado **requieren atención**: salen en el
+inicio, con un contador en «Proveedores» del menú y en «Contratos». **Renovar** crea un contrato nuevo con las
+condiciones del anterior ya escritas y el anterior se conserva tal cual; **modificar** un contrato deja en su
+historial qué cambió (antes y después), quién y cuándo. El **contrato aplicado** a cada expediente es el que estaba
+en vigor en la fecha del evento, así que cambiar las condiciones actuales no reescribe los expedientes pasados.
+
 ### Quién hace qué (roles y permisos)
 
 Cada persona tiene **un rol** y cada rol, una lista de **permisos** (lista blanca: lo que no tiene marcado, no
@@ -64,6 +85,8 @@ Reparto inicial:
 | **Dar de alta** proveedores nuevos (con aviso de los que tienen un nombre parecido) | ✔ | ✔ | ✔ | ✔ | |
 | Editar, fusionar y borrar proveedores (y sus tipos) | ✔ | ✔ | ✔ | | |
 | Ver las condiciones económicas y el gasto con cada proveedor | ✔ | ✔ | ✔ | | |
+| Ver los **contratos** de los proveedores (caducidades, condiciones, historial y documento) | ✔ | ✔ | ✔ | | |
+| Crear, renovar, modificar y borrar contratos; marcar la renovación | ✔ | ✔ | ✔ | | |
 | Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
 | Usuarios, roles y permisos | | | | | ✔ |
 
@@ -139,6 +162,12 @@ Reparto inicial:
   por ciudad. Un proveedor se da de alta con «Nuevo proveedor» o desde el selector de un pago, siempre con el aviso
   de nombres parecidos; si aun así hay repetidos, se **fusionan** (pagos y documentos pasan al bueno y el nombre
   queda como anterior, así que también se encuentra por él). Desde la pestaña Pagos de cada expediente y desde la ficha de pago se llega a la ficha del proveedor.
+- **Contratos** (con permiso de contratos): en la ficha del proveedor, arriba y destacados, los contratos en vigor
+  con la **fecha de caducidad, los días que faltan, el estado** y los términos principales (tarifas, descuentos,
+  pago, crédito), «Renovar» si requieren atención y los anteriores aparte; en el historial de expedientes, el
+  **contrato aplicado** a cada uno. Cada contrato tiene su página (caducidad, aviso, condiciones, documento,
+  renovaciones, expedientes en los que se aplicó, historial de cambios, «Pendiente de renovación» / «No se renueva»).
+  **Proveedores → Contratos**: todas las caducidades, primero lo que requiere atención.
 - **Usuarios y permisos** (sólo Técnico): personas (invitación por enlace, sin registro abierto; rol; activar o
   desactivar), roles (crear, permisos por áreas, quién tiene cada uno, tabla de quién puede hacer qué) y el
   registro de cambios. **Mi cuenta** para todos.
@@ -183,6 +212,9 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 ```
 
 **Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Contratos (migración 0010)**: sólo añade tablas (`supplier_contracts` y su historial) y los permisos de contratos
+para Jefes, Administración y Tesorería. Los documentos de los contratos se guardan en R2 en `prov/<proveedor>/`.
 
 **Al pasar a roles y permisos (migración 0008)** no se pierde nada:
 - las cuentas de Administración pasan al rol Administración y las de Eventos, al rol Eventos;
@@ -245,7 +277,7 @@ tests/              npm test
 
 - **Envío real** de las facturas al cliente por email (ahora es simulado) y **plantilla** de la factura de contabilidad.
 - Avisos por **email** (solicitud nueva, factura pedida, pago que vence) además de la bandeja.
-- **Proveedores y clientes** como fichas (CIF, datos bancarios, condiciones de pago) en vez de texto libre.
+- **Clientes** como fichas (CIF, entidades de facturación, fee, condiciones de pago) en vez de texto libre.
 - Leer el **Excel del presupuesto** para proponer el total y las líneas automáticamente.
 - Exportación a **.xlsx** con formato y fórmulas, y conexión con el programa de contabilidad.
 - Previsión de **tesorería** por semanas (entradas y salidas de todos los expedientes).

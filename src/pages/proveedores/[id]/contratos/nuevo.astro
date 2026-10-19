@@ -1,0 +1,101 @@
+---
+// Contrato nuevo con un proveedor, o la renovación de uno (?renueva=<id>): la renovación es un contrato
+// nuevo que empieza donde acaba el anterior, con sus condiciones ya escritas para cambiar lo que haga falta.
+// El anterior se conserva tal cual (historial). Hace falta el permiso contratos.edit.
+import { env } from 'cloudflare:workers';
+import App from '../../../../layouts/App.astro';
+import Icon from '../../../../components/Icon.astro';
+import ContractFields from '../../../../components/ContractFields.astro';
+import { parseId, readForm, actor, can, logActivity } from '../../../../lib/app.js';
+import { ContractSchema, validate, formToObject } from '../../../../lib/validate.js';
+import { changeStmt, renewalDraft } from '../../../../lib/contracts.js';
+import { getFile, storeFile, UploadError } from '../../../../lib/files.js';
+import { addDays, formatDate } from '../../../../lib/dates.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const me = Astro.locals.user;
+const renewsId = parseId(Astro.url.searchParams.get('renueva'));
+const [s, prev] = id ? await Promise.all([
+  db.prepare('SELECT id, name FROM suppliers WHERE id = ?').bind(id).first(),
+  renewsId ? db.prepare(`SELECT c.*, (SELECT r.id FROM supplier_contracts r WHERE r.replaces_id = c.id) AS renewed_by
+                           FROM supplier_contracts c WHERE c.id = ? AND c.supplier_id = ?`).bind(renewsId, id).first() : null,
+]) : [];
+if (!s || (renewsId && !prev)) return Astro.rewrite('/404');
+if (!can(me, 'contratos.edit')) return Astro.redirect(`/proveedores/${id}?aviso=permiso`, 303);
+if (prev?.renewed_by) return Astro.redirect(`/proveedores/${id}/contratos/${prev.renewed_by}`, 303);
+
+let error = null;
+let errors = {};
+let v = prev ? renewalDraft(prev, addDays) : { alert_days: 60 };
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  v = input;
+  const parsed = validate(ContractSchema, input);
+  if (!parsed.ok) {
+    error = parsed.message;
+    errors = parsed.errors;
+  } else {
+    const d = parsed.data;
+    try {
+      const file = form ? getFile(form, 'file') : null;
+      const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, folder: `prov/${id}`, userId: me.id }) : null;
+      const row = await db.prepare(
+        `INSERT INTO supplier_contracts (supplier_id, title, signed_on, starts_on, ends_on, conditions, rates, discounts, credit_terms,
+                                         payment_terms, other_terms, notes, alert_days, replaces_id, file_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      ).bind(id, d.title, d.signed_on, d.starts_on, d.ends_on, d.conditions, d.rates, d.discounts, d.credit_terms,
+        d.payment_terms, d.other_terms, d.notes, d.alert_days, prev?.id ?? null, fileId, me.id).first();
+      const period = `${formatDate(d.starts_on)}${d.ends_on ? ` – ${formatDate(d.ends_on)}` : ' (indefinido)'}`;
+      await db.batch(prev ? [
+        changeStmt(db, row.id, me.id, 'renovacion', `Renovación de «${prev.title}» · ${period}`),
+        changeStmt(db, prev.id, me.id, 'renovado', `Renovado por «${d.title}» · ${period}`),
+        // La decisión sobre la renovación ya está tomada
+        db.prepare('UPDATE supplier_contracts SET renewal = NULL WHERE id = ?').bind(prev.id),
+      ] : [
+        changeStmt(db, row.id, me.id, 'alta', `Alta del contrato · ${period}${fileId ? ' · con documento' : ''}`),
+      ]);
+      await logActivity(db, actor(Astro), null, prev ? 'contract.renew' : 'contract.create',
+        `${prev ? 'renovó' : 'dio de alta'} el contrato «${d.title}» de ${s.name} (${period})`);
+      return Astro.redirect(`/proveedores/${id}/contratos/${row.id}?ok=${prev ? 'renovado' : 'creado'}`, 303);
+    } catch (err) {
+      if (!(err instanceof UploadError)) throw err;
+      error = err.message;
+      errors = { file: err.message };
+    }
+  }
+  Astro.response.status = 400;
+}
+const title = prev ? `Renovar «${prev.title}»` : 'Contrato nuevo';
+---
+<App title={`${title} · ${s.name}`} section="proveedores" error={error} fieldErrors={errors}>
+  <div class="crumbs">
+    <nav aria-label="Estás en">
+      <ol>
+        <li><a href="/proveedores">Proveedores</a></li>
+        <li class="is-parent"><a href={`/proveedores/${id}#contratos`}><Icon name="arrow-left" size={16} class="crumb-arrow" />{s.name}</a></li>
+        <li><span aria-current="page">{title}</span></li>
+      </ol>
+    </nav>
+  </div>
+
+  <div class="page-top">
+    <div>
+      <h1>{title}</h1>
+      <p>{prev
+        ? `Un contrato nuevo de ${s.name} con las condiciones del anterior ya escritas: cambia lo que se haya negociado. «${prev.title}» se conserva como estaba.`
+        : `Contrato o acuerdo comercial con ${s.name}.`}</p>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="form-section">
+    <h2><Icon name="file-text" /> {prev ? 'Condiciones de la renovación' : 'Datos del contrato'}</h2>
+    <ContractFields v={v} errors={errors} withFile />
+    <div class="actions-inline">
+      <button class="btn btn-primary" type="submit" data-busy="Guardando…"><Icon name="check" size={18} /> {prev ? 'Guardar la renovación' : 'Guardar contrato'}</button>
+      <a class="btn btn-ghost" href={prev ? `/proveedores/${id}/contratos/${prev.id}` : `/proveedores/${id}#contratos`}>Cancelar</a>
+    </div>
+  </form>
+</App>

@@ -13,18 +13,19 @@
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
+DELETE FROM supplier_contract_changes; DELETE FROM supplier_contracts;
 DELETE FROM supplier_aliases; DELETE FROM suppliers; DELETE FROM supplier_types;
 INSERT INTO supplier_types (name, sort) VALUES
   ('Hotel', 10), ('Venue / espacio', 20), ('Restaurante', 30), ('Catering', 40), ('Actividades', 50),
   ('Formación', 60), ('Transporte', 70), ('Audiovisuales', 80), ('Otros', 90);
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
 DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
--- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más el de 0009_proveedores.sql)
+-- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009_proveedores.sql y 0010_contratos_proveedor.sql)
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.value FROM roles r, json_each(CASE r.key
-  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto"]'
-  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto"]'
-  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto"]'
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit"]'
+  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit"]'
   WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create"]'
   WHEN 'tecnico' THEN '["users"]'
 END) p;
@@ -229,3 +230,69 @@ UPDATE suppliers SET city = 'Madrid' WHERE name IN ('Hotel 1881 Madrid', 'Cateri
 UPDATE suppliers SET city = 'Marbella' WHERE name IN ('Hotel Puente Romano', 'DMC Marbella');
 UPDATE suppliers SET city = 'Sevilla' WHERE name = 'Autocares Sevilla';
 UPDATE suppliers SET city = 'Valladolid' WHERE name = 'La Parrilla de San Lorenzo';
+
+-- ── Contratos de proveedor (fechas relativas a hoy: así siempre hay uno de cada estado) ────────────
+-- Barceló: el de 2024 se renovó (historial) y el actual está dentro de su aviso de 60 días
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, discounts, payment_terms, credit_terms, conditions, alert_days, created_by, created_at)
+SELECT 9001, id, 'Tarifa de grupos 2024', '2024-01-20', '2024-02-01', '2025-01-31',
+       'Habitación doble 105 € · sala plenaria 1.050 €/día', '8 % a partir de 40 habitaciones', '50 % a la confirmación, resto 7 días antes',
+       NULL, NULL, 60, (SELECT id FROM users WHERE email = 'tania@example.com'), '2024-01-20T10:00:00Z'
+  FROM suppliers WHERE name = 'Hotel Barceló Valladolid';
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, discounts, payment_terms, credit_terms, conditions, notes, alert_days, replaces_id, created_by, created_at)
+SELECT 9002, id, 'Acuerdo de grupos 2025-2026', '2025-01-15', '2025-02-01', date('now', '+45 days'),
+       'Habitación doble 118 € (uso individual 102 €)
+Sala plenaria 1.200 €/día · salas de trabajo 350 €/día
+Menú de grupo 38 € + IVA',
+       '10 % a partir de 50 habitaciones · 1 gratuidad cada 25 habitaciones de pago',
+       '50 % a la confirmación y el resto 7 días antes del evento',
+       'Crédito a 30 días fecha factura hasta 20.000 €',
+       'Cancelación sin gastos hasta 30 días antes; después, 50 % del alojamiento contratado.',
+       'Negociar la renovación con el volumen de 2026 (concesionarios BMW).',
+       60, 9001, (SELECT id FROM users WHERE email = 'tania@example.com'), '2025-01-15T09:30:00Z'
+  FROM suppliers WHERE name = 'Hotel Barceló Valladolid';
+-- Alfonso XIII: vigente hasta 2027, con aviso de 90 días
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, discounts, payment_terms, alert_days, created_by, created_at)
+SELECT 9003, id, 'Convenio congresos Sevilla', '2025-12-10', '2026-01-01', '2027-12-31',
+       'Habitación doble 165 € · salón Real 3.400 €/día', '12 % sobre alojamiento en congresos de más de 150 personas',
+       'Proforma del 1er pago antes de 15 días de la firma; 2º pago antes del evento', 90,
+       (SELECT id FROM users WHERE email = 'direccion@example.com'), '2025-12-10T12:00:00Z'
+  FROM suppliers WHERE name = 'Hotel Alfonso XIII';
+-- Catering Lazo: caducó hace 10 días y nadie lo ha renovado (el evento de noviembre queda fuera)
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, payment_terms, alert_days, created_by, created_at)
+SELECT 9004, id, 'Acuerdo catering Madrid 2026', '2025-12-20', '2026-01-01', date('now', '-10 days'),
+       'Coffee break 9,50 € · cóctel 32 € · cena de gala 68 € por persona', 'Pago a 15 días fecha factura', 30,
+       (SELECT id FROM users WHERE email = 'tania@example.com'), '2025-12-20T11:00:00Z'
+  FROM suppliers WHERE name = 'Catering Lazo';
+-- Fluge: marcado como pendiente de renovación (se está negociando)
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, discounts, alert_days, renewal, created_by, created_at)
+SELECT 9005, id, 'Tarifa audiovisuales', '2025-05-20', '2025-06-01', date('now', '+150 days'),
+       'Técnico 280 €/jornada · pantalla LED 6x3 1.900 €/día', '15 % en eventos de más de 3 días', 60, 'pendiente',
+       (SELECT id FROM users WHERE email = 'tesoreria@example.com'), '2025-05-20T16:00:00Z'
+  FROM suppliers WHERE name = 'Fluge Audiovisuales';
+-- Puente Romano: acuerdo marco sin fecha de fin
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, conditions, created_by, created_at)
+SELECT 9006, id, 'Acuerdo marco Marbella', '2026-02-15', '2026-03-01', NULL,
+       'Tarifa neta de grupos: 15 % sobre la tarifa pública', 'Revisión anual de tarifas en enero.',
+       (SELECT id FROM users WHERE email = 'direccion@example.com'), '2026-02-15T10:00:00Z'
+  FROM suppliers WHERE name = 'Hotel Puente Romano';
+-- DMC Marbella: firmado, empieza el año que viene
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, alert_days, created_by, created_at)
+SELECT 9007, id, 'Programa de actividades 2027', date('now', '-5 days'), date('now', 'start of year', '+1 year'), date('now', 'start of year', '+2 years', '-1 day'),
+       'Actividad de team building 45 €/persona · guías 220 €/jornada', 45,
+       (SELECT id FROM users WHERE email = 'direccion@example.com'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 days')
+  FROM suppliers WHERE name = 'DMC Marbella';
+-- Autocares Sevilla: terminó y se decidió no renovarlo
+INSERT INTO supplier_contracts (id, supplier_id, title, signed_on, starts_on, ends_on, rates, alert_days, renewal, created_by, created_at)
+SELECT 9008, id, 'Tarifa traslados 2025', '2024-12-15', '2025-01-01', '2025-12-31',
+       'Autocar 55 plazas 480 €/día · traslado aeropuerto 190 €', 30, 'no',
+       (SELECT id FROM users WHERE email = 'tania@example.com'), '2024-12-15T10:00:00Z'
+  FROM suppliers WHERE name = 'Autocares Sevilla';
+
+INSERT INTO supplier_contract_changes (contract_id, user_id, action, summary, at)
+SELECT c.id, c.created_by, 'alta', 'Alta del contrato', c.created_at FROM supplier_contracts c WHERE c.replaces_id IS NULL;
+INSERT INTO supplier_contract_changes (contract_id, user_id, action, summary, at) VALUES
+  (9002, (SELECT id FROM users WHERE email = 'tania@example.com'), 'renovacion', 'Renovación de «Tarifa de grupos 2024»', '2025-01-15T09:30:00Z'),
+  (9001, (SELECT id FROM users WHERE email = 'tania@example.com'), 'renovado', 'Renovado por «Acuerdo de grupos 2025-2026»', '2025-01-15T09:30:00Z'),
+  (9002, (SELECT id FROM users WHERE email = 'direccion@example.com'), 'cambio', 'Aviso: 30 días → 60 días', '2026-03-02T08:15:00Z'),
+  (9005, (SELECT id FROM users WHERE email = 'tesoreria@example.com'), 'marca', 'Pendiente de renovación', strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-3 days')),
+  (9008, (SELECT id FROM users WHERE email = 'tania@example.com'), 'marca', 'No se renueva', '2025-11-20T10:00:00Z');

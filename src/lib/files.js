@@ -66,7 +66,8 @@ export function getFile(form, name) {
  * Comprueba el fichero, lo sube a R2 y crea su fila en `files`.
  * @returns {Promise<number>} id del documento
  */
-export async function storeFile({ db, bucket, file, expedienteId, userId }) {
+// folder: carpeta en R2 si el documento no es de un expediente (p. ej. el contrato de un proveedor: `prov/12`)
+export async function storeFile({ db, bucket, file, expedienteId = null, userId, folder = null }) {
   const name = cleanName(file.name);
   const ext = extensionOf(name);
   const type = TYPES[ext];
@@ -76,7 +77,7 @@ export async function storeFile({ db, bucket, file, expedienteId, userId }) {
   if (signatureOf(bytes) !== type.sig) {
     throw new UploadError(`«${name}» no parece un ${ext.toUpperCase()} válido. Vuelve a exportarlo o súbelo en PDF.`);
   }
-  const key = `exp/${expedienteId}/${randomToken(16)}.${ext}`;
+  const key = `${folder ?? `exp/${expedienteId}`}/${randomToken(16)}.${ext}`;
   await bucket.put(key, bytes, { httpMetadata: { contentType: type.mime } });
   try {
     const row = await db.prepare(

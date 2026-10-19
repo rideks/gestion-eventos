@@ -73,6 +73,8 @@ export const FLASH = {
   quitada: 'Documento quitado del pago',
   proforma: 'Proforma subida',
   justificante: 'Justificante subido',
+  documento: 'Documento subido',
+  renovado: 'Renovación guardada: el contrato anterior se conserva en el historial',
   deshecho: 'El pago vuelve a estar por pagar: corrígelo y márcalo pagado de nuevo',
   po_cerrada: 'PO cerrada: lo que quedaba sin facturar ya no cuenta como pendiente',
   po_reabierta: 'PO reabierta',

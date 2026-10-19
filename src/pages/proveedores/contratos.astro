@@ -1,0 +1,101 @@
+---
+// Caducidades: todos los contratos de proveedores con su estado, primero lo que requiere atención
+// (próximos a caducar según el aviso de cada uno, pendientes de renovación y caducados sin renovar).
+import { env } from 'cloudflare:workers';
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import Pill from '../../components/Pill.astro';
+import { allContracts } from '../../lib/contracts.js';
+import { today, formatDate } from '../../lib/dates.js';
+import { plural } from '../../lib/finance.js';
+
+const db = env.DB;
+const now = today();
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const all = await allContracts(db, now, q);
+const VIEWS = {
+  atencion: { label: 'Requieren atención', test: (c) => c.state.attention },
+  vigentes: { label: 'En vigor', test: (c) => ['vigente', 'por_caducar', 'pendiente'].includes(c.state.key) },
+  futuros: { label: 'Aún no vigentes', test: (c) => c.state.key === 'futuro' },
+  historial: { label: 'Historial', test: (c) => ['renovado', 'finalizado'].includes(c.state.key) },
+  todos: { label: 'Todos', test: () => true },
+};
+const count = (k) => all.filter(VIEWS[k].test).length;
+const asked = Astro.url.searchParams.get('ver') ?? '';
+const view = Object.hasOwn(VIEWS, asked) ? asked : count('atencion') ? 'atencion' : 'todos';
+const rows = all.filter(VIEWS[view].test);
+const due = all.filter((c) => c.state.attention);
+const n = (key) => due.filter((c) => c.state.key === key).length;
+---
+<App title="Contratos de proveedores" section="proveedores" origin="Contratos">
+  <div class="crumbs">
+    <nav aria-label="Estás en">
+      <ol>
+        <li class="is-parent"><a href="/proveedores"><Icon name="arrow-left" size={16} class="crumb-arrow" />Proveedores</a></li>
+        <li><span aria-current="page">Contratos</span></li>
+      </ol>
+    </nav>
+  </div>
+
+  <div class="page-top">
+    <div>
+      <h1>Contratos</h1>
+      <p>Cuándo caduca cada contrato con los proveedores y qué hay que renovar. Cada contrato avisa con los días que tenga configurados.</p>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <a class:list={['kpi', { 'is-danger': n('caducado') > 0 }]} href="?ver=atencion"><span>Caducados sin renovar</span><b>{n('caducado')}</b><small>{n('caducado') ? 'hay que renovarlos o marcar que no' : 'ninguno'}</small></a>
+    <a class:list={['kpi', { 'is-gold': n('por_caducar') > 0 }]} href="?ver=atencion"><span>Próximos a caducar</span><b>{n('por_caducar')}</b><small>dentro de su aviso</small></a>
+    <a class="kpi" href="?ver=atencion"><span>Pendientes de renovación</span><b>{n('pendiente')}</b><small>marcados para negociar</small></a>
+    <a class="kpi" href="?ver=vigentes"><span>En vigor</span><b>{count('vigentes')}</b><small>{plural(all.length, 'contrato', 'contratos')} en total</small></a>
+  </div>
+
+  <form method="get" class="quick-form" role="search">
+    <input type="hidden" name="ver" value={view} />
+    <label class="visually-hidden" for="q">Buscar contrato</label>
+    <input id="q" name="q" type="search" value={q} placeholder="Proveedor, contrato o ciudad" />
+    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+    {q && <a class="btn btn-ghost btn-sm" href={`?ver=${view}`}>Quitar búsqueda</a>}
+  </form>
+
+  <nav class="x-tabs mt" aria-label="Ver contratos">
+    {Object.entries(VIEWS).map(([k, x]) => (
+      <a href={`?ver=${k}${q ? `&q=${encodeURIComponent(q)}` : ''}`} aria-current={k === view ? 'page' : undefined}>
+        {x.label}{count(k) > 0 && <small class:list={{ 'is-alert': k === 'atencion' }}>{count(k)}</small>}
+      </a>
+    ))}
+  </nav>
+
+  {rows.length ? (
+    <div class="table-scroll mt">
+      <table class="dtable contracts">
+        <thead>
+          <tr>
+            <th scope="col">Proveedor</th>
+            <th scope="col">Contrato</th>
+            <th scope="col">Inicio</th>
+            <th scope="col">Fin</th>
+            <th scope="col">Estado</th>
+            <th scope="col">Aviso</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr class:list={{ 'is-planned': !c.state.attention && c.state.key !== 'vigente' }}>
+              <td><a href={`/proveedores/${c.supplier_id}#contratos`}><strong>{c.supplier_name}</strong></a>{(c.supplier_type || c.supplier_city) && <div class="muted small">{[c.supplier_type, c.supplier_city].filter(Boolean).join(' · ')}</div>}</td>
+              <td><a href={`/proveedores/${c.supplier_id}/contratos/${c.id}`}>{c.title}</a></td>
+              <td>{formatDate(c.starts_on)}</td>
+              <td>{c.ends_on ? formatDate(c.ends_on) : 'Indefinido'}</td>
+              <td><Pill state={c.state} /><div class:list={["small", { neg: c.state.key === "caducado" }]}>{c.state.text}</div></td>
+              <td>{c.alert_days ? `${c.alert_days} días` : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <div class="empty mt"><p>{q ? 'Ningún contrato con esa búsqueda.' : view === 'atencion' ? 'Ningún contrato requiere atención.' : 'No hay contratos aquí.'}</p></div>
+  )}
+  <p class="muted small mt">Los contratos se dan de alta desde la ficha de cada proveedor.</p>
+</App>

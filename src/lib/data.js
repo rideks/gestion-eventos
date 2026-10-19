@@ -1,6 +1,7 @@
 // Consultas a la base de datos que comparten varias páginas.
 import { summarize, nextNumber, SOON_DAYS } from './finance.js';
 import { addDays } from './dates.js';
+import { contractDue } from './contracts.js';
 
 // Documentos del proveedor de un pago (facturas y proformas; uno puede cubrir varios pagos)
 const DOCS_OF = (where) => `FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id WHERE pd.payment_id = p.id AND ${where}`;
@@ -117,20 +118,22 @@ const READY_TO_CONFORM = `EXISTS (SELECT 1 FROM payment_documents pd WHERE pd.do
                    WHERE pd.document_id = si.id AND p.status != 'pagado')`;
 
 /**
- * Contadores de la navegación: solicitudes por abrir, pagos urgentes, facturas por emitir y facturas
- * de proveedor por conformar (sólo las que ya se pueden: con el pago hecho).
+ * Contadores de la navegación: solicitudes por abrir, pagos urgentes, facturas por emitir, facturas
+ * de proveedor por conformar (sólo las que ya se pueden: con el pago hecho) y contratos de proveedor
+ * que requieren atención (próximos a caducar, pendientes de renovación o caducados).
  */
 export function navCounts(db, now) {
   return db.prepare(
     `SELECT (SELECT COUNT(*) FROM expedientes WHERE status = 'solicitado') AS requests,
+            (SELECT COUNT(*) FROM supplier_contracts c WHERE ${contractDue('?2')}) AS contracts_due,
             (SELECT COUNT(*) FROM supplier_invoices si JOIN expedientes e ON e.id = si.expediente_id
               WHERE si.kind = 'factura' AND si.review = 'pendiente' AND e.status != 'cancelado'
                 AND ${READY_TO_CONFORM}) AS to_review,
             (SELECT COUNT(*) FROM payments p JOIN expedientes e ON e.id = p.expediente_id
-              WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND p.due_date <= ?) AS urgent,
+              WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND p.due_date <= ?1) AS urgent,
             (SELECT COUNT(*) FROM invoices i JOIN expedientes e ON e.id = i.expediente_id
               WHERE i.status = 'por_emitir' AND e.status != 'cancelado') AS to_issue`,
-  ).bind(addDays(now, SOON_DAYS)).first();
+  ).bind(addDays(now, SOON_DAYS), now).first();
 }
 
 /** Columnas resumen para los listados de expedientes */

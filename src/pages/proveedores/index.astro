@@ -6,10 +6,12 @@
 import { env } from 'cloudflare:workers';
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
+import Pill from '../../components/Pill.astro';
 import SupplierFields from '../../components/SupplierFields.astro';
 import { readForm, actor, can, logActivity } from '../../lib/app.js';
 import { SupplierSchema, SupplierTypeSchema, SUPPLIER_STATUS, validate, formToObject } from '../../lib/validate.js';
 import { supplierList, supplierTypes, createSupplier, cleanName } from '../../lib/suppliers.js';
+import { allContracts } from '../../lib/contracts.js';
 import { eur } from '../../lib/money.js';
 import { today, formatDate } from '../../lib/dates.js';
 
@@ -18,7 +20,9 @@ const me = Astro.locals.user;
 const money = can(me, 'proveedores.gasto');
 const creatable = can(me, 'proveedores.create');
 const editable = can(me, 'proveedores.edit');
-const year = Number(today().slice(0, 4));
+const seesContracts = can(me, 'contratos');
+const now = today();
+const year = Number(now.slice(0, 4));
 let error = null;
 let errors = {};
 let v = { status: 'activo' };
@@ -75,7 +79,13 @@ const typeId = Number(Astro.url.searchParams.get('tipo')) || null;
 const status = Object.hasOwn(SUPPLIER_STATUS, Astro.url.searchParams.get('estado') ?? '') ? Astro.url.searchParams.get('estado') : '';
 const ORDERS = { name: 'Nombre', uso: 'Último evento', expedientes: 'Más expedientes', altas: 'Altas recientes', ...(money ? { year: `Contratado en ${year}`, gasto: 'Contratado en total' } : {}) };
 const order = Object.hasOwn(ORDERS, Astro.url.searchParams.get('orden') ?? '') ? Astro.url.searchParams.get('orden') : 'name';
-const [rows, types] = await Promise.all([supplierList(db, { q, typeId, status, year, order }), supplierTypes(db)]);
+const [rows, types, contracts] = await Promise.all([
+  supplierList(db, { q, typeId, status, year, order }), supplierTypes(db), seesContracts ? allContracts(db, now) : [],
+]);
+// El contrato que más importa de cada proveedor (vienen ordenados: primero lo que requiere atención, luego lo vigente)
+const contractOf = new Map();
+for (const c of contracts) if (!contractOf.has(c.supplier_id)) contractOf.set(c.supplier_id, c);
+const due = contracts.filter((c) => c.state.attention).length;
 const filtered = q || typeId || status;
 const total = rows.reduce((a, r) => a + r.contracted, 0);
 const totalYear = rows.reduce((a, r) => a + r.this_year, 0);
@@ -86,7 +96,16 @@ const totalYear = rows.reduce((a, r) => a + r.this_year, 0);
       <h1>Proveedores</h1>
       <p>Hoteles, venues, restaurantes y el resto: con quién trabajamos{money && ' y cuánto contratamos'}</p>
     </div>
+    {seesContracts && <a class="btn btn-ghost" href="/proveedores/contratos"><Icon name="file-text" size={18} /> Contratos</a>}
   </div>
+
+  {seesContracts && due > 0 && (
+    <a class="banner-link" href="/proveedores/contratos?ver=atencion">
+      <Icon name="triangle-alert" />
+      <span><strong>{due} {due === 1 ? 'contrato requiere' : 'contratos requieren'} atención</strong> · próximos a caducar, pendientes de renovación o caducados sin renovar</span>
+      <Icon name="chevron-right" class="chev" />
+    </a>
+  )}
 
   {creatable && (
     <details class="add" open={openNew}>
@@ -150,6 +169,7 @@ const totalYear = rows.reduce((a, r) => a + r.this_year, 0);
             <th scope="col">Ciudad</th>
             <th scope="col" class="num">Expedientes</th>
             <th scope="col">Último evento</th>
+            {seesContracts && <th scope="col">Contrato</th>}
             {order === 'altas' && <th scope="col">Alta</th>}
             {money && <th scope="col" class="num">{year}</th>}
             {money && <th scope="col" class="num">Total</th>}
@@ -166,6 +186,7 @@ const totalYear = rows.reduce((a, r) => a + r.this_year, 0);
               <td>{r.city ?? '—'}</td>
               <td class="num">{r.exps}</td>
               <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>
+              {seesContracts && <td>{(() => { const c = contractOf.get(r.id); return c ? <a class="contract-cell" href={`/proveedores/${r.id}/contratos/${c.id}`}><Pill state={c.state} /><span class="small muted">{c.state.text}</span></a> : <span class="muted">—</span>; })()}</td>}
               {order === 'altas' && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
               {money && <td class="num money">{eur(r.this_year)}</td>}
               {money && <td class="num money">{eur(r.contracted)}</td>}

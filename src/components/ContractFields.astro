@@ -1,0 +1,70 @@
+---
+// Campos de un contrato con un proveedor (alta, renovación y cambios).
+// El aviso es de cada contrato: cuántos días antes de que caduque tiene que salir en «requiere atención».
+import FileField from './FileField.astro';
+
+const { v = {}, errors = {}, withFile = false } = Astro.props;
+const err = (k) => ({ 'has-error': errors[k] });
+const val = (k) => v[k] ?? '';
+---
+<div class:list={['field', err('title')]}>
+  <label for="ct-title">Nombre del contrato o acuerdo</label>
+  <input id="ct-title" name="title" type="text" maxlength="120" required value={val('title')} placeholder="Tarifa de grupos 2026, Acuerdo marco…" />
+</div>
+<div class="row row-3">
+  <div class:list={['field', err('signed_on')]}>
+    <label for="ct-signed">Firma <span class="opt">(o creación)</span></label>
+    <input id="ct-signed" name="signed_on" type="date" value={val('signed_on')} />
+  </div>
+  <div class:list={['field', err('starts_on')]}>
+    <label for="ct-starts">Inicio</label>
+    <input id="ct-starts" name="starts_on" type="date" required value={val('starts_on')} />
+  </div>
+  <div class:list={['field', err('ends_on')]}>
+    <label for="ct-ends">Fin o caducidad <span class="opt">(vacío: indefinido)</span></label>
+    <input id="ct-ends" name="ends_on" type="date" value={val('ends_on')} />
+  </div>
+</div>
+<div class:list={['field', 'field-narrow', err('alert_days')]}>
+  <label for="ct-alert">Avisar antes de que caduque</label>
+  <div class="input-suffix">
+    <input id="ct-alert" name="alert_days" type="number" min="1" max="730" inputmode="numeric" value={val('alert_days')} placeholder="60" />
+    <span>días antes</span>
+  </div>
+  <p class="hint">Cada contrato tiene el suyo (p. ej. 90 días si la renovación se negocia con tiempo). Vacío: sin aviso. Si no tiene fecha de fin, no avisa.</p>
+</div>
+<div class="row row-2">
+  <div class:list={['field', err('rates')]}>
+    <label for="ct-rates">Tarifas acordadas</label>
+    <textarea id="ct-rates" name="rates" rows="4" maxlength="4000" placeholder="Doble uso individual 95 € + IVA; sala plenaria 1.200 €/día…">{val('rates')}</textarea>
+  </div>
+  <div class:list={['field', err('discounts')]}>
+    <label for="ct-discounts">Descuentos y condiciones especiales</label>
+    <textarea id="ct-discounts" name="discounts" rows="4" maxlength="2000" placeholder="10 % a partir de 50 habitaciones; 1 gratuidad cada 25…">{val('discounts')}</textarea>
+  </div>
+</div>
+<div class="row row-2">
+  <div class:list={['field', err('payment_terms')]}>
+    <label for="ct-payment">Condiciones de pago</label>
+    <textarea id="ct-payment" name="payment_terms" rows="3" maxlength="2000" placeholder="30 % a la firma, resto 7 días antes del evento">{val('payment_terms')}</textarea>
+  </div>
+  <div class:list={['field', err('credit_terms')]}>
+    <label for="ct-credit">Condiciones de crédito</label>
+    <textarea id="ct-credit" name="credit_terms" rows="3" maxlength="2000" placeholder="Crédito a 30 días fecha factura hasta 20.000 €">{val('credit_terms')}</textarea>
+  </div>
+</div>
+<div class:list={['field', err('conditions')]}>
+  <label for="ct-conditions">Condiciones del contrato <span class="opt">(cancelación, mínimos, exclusividad…)</span></label>
+  <textarea id="ct-conditions" name="conditions" rows="3" maxlength="4000">{val('conditions')}</textarea>
+</div>
+<div class="row row-2">
+  <div class:list={['field', err('other_terms')]}>
+    <label for="ct-other">Otros acuerdos comerciales <span class="opt">(opcional)</span></label>
+    <textarea id="ct-other" name="other_terms" rows="3" maxlength="2000">{val('other_terms')}</textarea>
+  </div>
+  <div class:list={['field', err('notes')]}>
+    <label for="ct-notes">Comentarios y observaciones <span class="opt">(opcional)</span></label>
+    <textarea id="ct-notes" name="notes" rows="3" maxlength="2000">{val('notes')}</textarea>
+  </div>
+</div>
+{withFile && <FileField label="Documento del contrato" hint="El PDF firmado (o una foto). Se puede subir después." error={errors.file} />}
