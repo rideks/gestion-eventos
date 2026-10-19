@@ -53,7 +53,7 @@ test('los repositorios no deciden permisos ni dependen de los servicios', () => 
 });
 
 // Áreas ya en capas: sus páginas sólo usan servicios (cada área nueva se añade aquí)
-const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/'];
+const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/', 'pages/preferencias/'];
 
 test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes, Pagos, Business Travel) sólo hablan con los servicios', () => {
   for (const p of all.filter((f) => LAYERED.some((dir) => rel(f).startsWith(dir)))) {

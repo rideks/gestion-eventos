@@ -5,47 +5,64 @@
 
 /** @typedef {import('../services/types').Db} Db */
 
+import { likeTerm } from './payments.js';
+import { orderBy } from '../lib/table.js';
+
 const LIVE = "e.status <> 'cancelado'";
 const BUDGET = '(SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1)';
 const INVOICED = "(SELECT COALESCE(SUM(i.base_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status IN ('emitida', 'cobrada'))";
 const COLLECTED = "(SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status = 'cobrada')";
 const PENDING = "(SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status = 'emitida')";
-const ORDER = {
-  name: 'c.name COLLATE NOCASE',
-  uso: 'last_date IS NULL, last_date DESC, c.name COLLATE NOCASE',
-  proximo: 'next_date IS NULL, next_date, c.name COLLATE NOCASE',
-  expedientes: 'exps DESC, c.name COLLATE NOCASE',
-  altas: 'c.created_at DESC, c.id DESC',
-  volumen: 'budget DESC, c.name COLLATE NOCASE',
-  year: 'this_year DESC, budget DESC, c.name COLLATE NOCASE',
+// Columna de la tabla (src/lib/tables.js) → expresión para ordenar (sobre la consulta agrupada)
+const SORT = {
+  name: 'name COLLATE NOCASE', tipo: 'kind', ciudad: 'city COLLATE NOCASE', nif: 'tax_id', email: 'email COLLATE NOCASE',
+  expedientes: 'exps', viajes: 'bookings', proximo: 'next_date', uso: 'last_date', fee: 'fee_bp', volumen: 'budget',
+  year: 'this_year', facturado: 'invoiced', pendiente: 'pending', altas: 'created_at',
 };
 
 /**
- * Directorio con sus expedientes y su volumen (presupuestado, facturado y pendiente de cobro)
+ * Directorio con sus expedientes y su volumen (presupuestado, facturado y pendiente de cobro), por páginas.
+ * Devuelve la página pedida, cuántos hay en total con esos filtros y la suma de sus importes (de todos, no sólo
+ * de la página).
  * @param {Db} db
- * @param {{ q?: string, status?: string, order?: string, year: number, now: string }} filters
+ * @param {{ q?: string, status?: string, kind?: string, city?: string, sort?: string, dir?: 'asc' | 'desc', year: number, now: string,
+ *           limit?: number, offset?: number }} filters
+ * @returns {Promise<{ rows: any[], total: number, sums: { budget: number, this_year: number, invoiced: number, pending: number } }>}
  */
-export function list(db, { q = '', status = '', order = 'name', year, now }) {
-  return db.prepare(
-    `SELECT c.id, c.name, c.status, c.kind, c.title, c.city, c.fee_bp, c.created_at,
-            COUNT(CASE WHEN ${LIVE} THEN e.id END) AS exps,
-            MAX(CASE WHEN ${LIVE} AND e.start_date <= ?5 THEN e.start_date END) AS last_date,
-            MIN(CASE WHEN ${LIVE} AND e.start_date > ?5 THEN e.start_date END) AS next_date,
-            COALESCE(SUM(CASE WHEN ${LIVE} THEN ${BUDGET} END), 0) AS budget,
-            COALESCE(SUM(CASE WHEN ${LIVE} AND substr(e.start_date, 1, 4) = ?2 THEN ${BUDGET} END), 0) AS this_year,
-            COALESCE(SUM(CASE WHEN ${LIVE} THEN ${INVOICED} END), 0) AS invoiced,
-            COALESCE(SUM(CASE WHEN ${LIVE} THEN ${PENDING} END), 0) AS pending
-       FROM clients c
-       LEFT JOIN expedientes e ON e.client_id = c.id
-      WHERE (?1 = '%%' OR c.name LIKE ?1 OR c.legal_name LIKE ?1 OR c.tax_id LIKE ?1 OR c.city LIKE ?1
-             OR EXISTS (SELECT 1 FROM client_aliases a WHERE a.client_id = c.id AND a.alias LIKE ?1)
-             OR EXISTS (SELECT 1 FROM client_entities x WHERE x.client_id = c.id AND (x.legal_name LIKE ?1 OR x.tax_id LIKE ?1)))
-        AND (?3 = '' OR c.status = ?3)
-      GROUP BY c.id
-      ORDER BY ${ORDER[order] ?? ORDER.name}
-      LIMIT ?4`,
-  ).bind(`%${q}%`, String(year), status, 500, now).all().then((r) => r.results);
+export async function list(db, { q = '', status = '', kind = '', city = '', sort = 'name', dir = 'asc', year, now, limit = 25, offset = 0 }) {
+  const base = `
+    SELECT c.id, c.name, c.status, c.kind, c.title, c.city, c.tax_id, c.email, c.phone, c.fee_bp, c.created_at,
+           COUNT(CASE WHEN ${LIVE} THEN e.id END) AS exps,
+           (SELECT COUNT(*) FROM bt_bookings bb WHERE bb.client_id = c.id AND bb.status <> 'cancelada') AS bookings,
+           MAX(CASE WHEN ${LIVE} AND e.start_date <= ?5 THEN e.start_date END) AS last_date,
+           MIN(CASE WHEN ${LIVE} AND e.start_date > ?5 THEN e.start_date END) AS next_date,
+           COALESCE(SUM(CASE WHEN ${LIVE} THEN ${BUDGET} END), 0) AS budget,
+           COALESCE(SUM(CASE WHEN ${LIVE} AND substr(e.start_date, 1, 4) = ?2 THEN ${BUDGET} END), 0) AS this_year,
+           COALESCE(SUM(CASE WHEN ${LIVE} THEN ${INVOICED} END), 0) AS invoiced,
+           COALESCE(SUM(CASE WHEN ${LIVE} THEN ${PENDING} END), 0) AS pending
+      FROM clients c
+      LEFT JOIN expedientes e ON e.client_id = c.id
+     WHERE (?1 = '%%' OR c.name LIKE ?1 OR c.legal_name LIKE ?1 OR c.tax_id LIKE ?1 OR c.city LIKE ?1 OR c.email LIKE ?1
+            OR EXISTS (SELECT 1 FROM client_aliases a WHERE a.client_id = c.id AND a.alias LIKE ?1)
+            OR EXISTS (SELECT 1 FROM client_entities x WHERE x.client_id = c.id AND (x.legal_name LIKE ?1 OR x.tax_id LIKE ?1)))
+       AND (?3 = '' OR c.status = ?3)
+       AND (?6 = '' OR c.kind = ?6)
+       AND (?7 = '' OR c.city = ?7 COLLATE NOCASE)
+     GROUP BY c.id`;
+  const args = [likeTerm(q), String(year), status, 0, now, kind, city];
+  const [count, page] = await db.batch([
+    db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(budget), 0) AS budget, COALESCE(SUM(this_year), 0) AS this_year,
+                       COALESCE(SUM(invoiced), 0) AS invoiced, COALESCE(SUM(pending), 0) AS pending FROM (${base})`).bind(...args),
+    db.prepare(`SELECT * FROM (${base}) ORDER BY ${orderBy(SORT, sort, dir, 'name', 'id')} LIMIT ?8 OFFSET ?9`).bind(...args, limit, offset),
+  ]);
+  const { n, ...sums } = count.results[0];
+  return { rows: page.results, total: n, sums };
 }
+
+/** Las ciudades de los clientes (para el filtro) @param {Db} db */
+export const cities = (db) => db.prepare(
+  "SELECT DISTINCT city FROM clients WHERE city IS NOT NULL AND TRIM(city) <> '' ORDER BY city COLLATE NOCASE LIMIT 300",
+).all().then((r) => r.results.map((x) => x.city));
 
 /** @param {Db} db @param {number} id */
 export const byId = (db, id) => db.prepare('SELECT id, name, status, fee_bp, payment_terms FROM clients WHERE id = ?').bind(id).first();

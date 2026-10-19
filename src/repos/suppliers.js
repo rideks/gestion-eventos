@@ -3,44 +3,57 @@
 // Sin permisos ni reglas: eso lo decide el servicio (src/services/suppliers.js).
 // Las funciones que acaban en Stmt devuelven sentencias para juntarlas en un db.batch (atómico).
 
+import { likeTerm } from './payments.js';
+import { orderBy } from '../lib/table.js';
+
 // ── Consultas ──────────────────────────────────────────────────────────────
 const LIVE = "e.status <> 'cancelado'";
 const HAS_INVOICE = `EXISTS (SELECT 1 FROM payment_documents pd JOIN supplier_invoices si ON si.id = pd.document_id
                              WHERE pd.payment_id = p.id AND si.kind = 'factura')`;
-const ORDER = {
-  name: 's.name COLLATE NOCASE',
-  gasto: 'contracted DESC, s.name COLLATE NOCASE',
-  year: 'this_year DESC, contracted DESC, s.name COLLATE NOCASE',
-  uso: 'last_date IS NULL, last_date DESC, s.name COLLATE NOCASE',
-  expedientes: 'exps DESC, s.name COLLATE NOCASE',
-  altas: 's.created_at DESC, s.id DESC',
+// Columna de la tabla (src/lib/tables.js) → expresión para ordenar (sobre la consulta agrupada)
+const SORT = {
+  name: 'name COLLATE NOCASE', tipo: 'type COLLATE NOCASE', ciudad: 'city COLLATE NOCASE', contacto: 'contact_name COLLATE NOCASE',
+  email: 'email COLLATE NOCASE', expedientes: 'exps', uso: 'last_date', altas: 'created_at', year: 'this_year', gasto: 'contracted',
 };
 
 /**
- * Directorio con sus usos y lo contratado (total y en el año dado)
+ * Directorio con sus usos y lo contratado (total y en el año dado), por páginas: la página pedida, cuántos hay con
+ * esos filtros y la suma de lo contratado de todos ellos.
  * @param {import('../services/types').Db} db
- * @param {{ q?: string, typeId?: number|null, status?: string, year: number, order?: string }} filters
+ * @param {{ q?: string, typeId?: number|null, status?: string, city?: string, year: number, sort?: string, dir?: 'asc' | 'desc',
+ *           limit?: number, offset?: number }} filters
+ * @returns {Promise<{ rows: any[], total: number, sums: { contracted: number, this_year: number } }>}
  */
-export function list(db, { q = '', typeId = null, status = '', year, order = 'name' }) {
-  return db.prepare(
-    `SELECT s.id, s.name, s.status, s.city, s.contact_name, s.created_at, t.name AS type,
-            COUNT(DISTINCT CASE WHEN ${LIVE} THEN p.expediente_id END) AS exps,
-            MAX(CASE WHEN ${LIVE} THEN e.start_date END) AS last_date,
-            COALESCE(SUM(CASE WHEN ${LIVE} AND p.base_cents > 0 THEN p.base_cents END), 0) AS contracted,
-            COALESCE(SUM(CASE WHEN ${LIVE} AND p.base_cents > 0 AND substr(e.start_date, 1, 4) = ?2 THEN p.base_cents END), 0) AS this_year
-       FROM suppliers s
-       LEFT JOIN supplier_types t ON t.id = s.type_id
-       LEFT JOIN payments p ON p.supplier_id = s.id
-       LEFT JOIN expedientes e ON e.id = p.expediente_id
-      WHERE (?1 = '%%' OR s.name LIKE ?1 OR s.city LIKE ?1 OR s.contact_name LIKE ?1
-             OR EXISTS (SELECT 1 FROM supplier_aliases a WHERE a.supplier_id = s.id AND a.alias LIKE ?1))
-        AND (?3 IS NULL OR s.type_id = ?3)
-        AND (?4 = '' OR s.status = ?4)
-      GROUP BY s.id
-      ORDER BY ${ORDER[order] ?? ORDER.name}
-      LIMIT 500`,
-  ).bind(`%${q}%`, String(year), typeId, status).all().then((r) => r.results);
+export async function list(db, { q = '', typeId = null, status = '', city = '', year, sort = 'name', dir = 'asc', limit = 25, offset = 0 }) {
+  const base = `
+    SELECT s.id, s.name, s.status, s.city, s.contact_name, s.phone, s.email, s.created_at, t.name AS type,
+           COUNT(DISTINCT CASE WHEN ${LIVE} THEN p.expediente_id END) AS exps,
+           MAX(CASE WHEN ${LIVE} THEN e.start_date END) AS last_date,
+           COALESCE(SUM(CASE WHEN ${LIVE} AND p.base_cents > 0 THEN p.base_cents END), 0) AS contracted,
+           COALESCE(SUM(CASE WHEN ${LIVE} AND p.base_cents > 0 AND substr(e.start_date, 1, 4) = ?2 THEN p.base_cents END), 0) AS this_year
+      FROM suppliers s
+      LEFT JOIN supplier_types t ON t.id = s.type_id
+      LEFT JOIN payments p ON p.supplier_id = s.id
+      LEFT JOIN expedientes e ON e.id = p.expediente_id
+     WHERE (?1 = '%%' OR s.name LIKE ?1 OR s.city LIKE ?1 OR s.contact_name LIKE ?1 OR s.email LIKE ?1
+            OR EXISTS (SELECT 1 FROM supplier_aliases a WHERE a.supplier_id = s.id AND a.alias LIKE ?1))
+       AND (?3 IS NULL OR s.type_id = ?3)
+       AND (?4 = '' OR s.status = ?4)
+       AND (?5 = '' OR s.city = ?5 COLLATE NOCASE)
+     GROUP BY s.id`;
+  const args = [likeTerm(q), String(year), typeId, status, city];
+  const [count, page] = await db.batch([
+    db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(contracted), 0) AS contracted, COALESCE(SUM(this_year), 0) AS this_year FROM (${base})`).bind(...args),
+    db.prepare(`SELECT * FROM (${base}) ORDER BY ${orderBy(SORT, sort, dir, 'name', 'id')} LIMIT ?6 OFFSET ?7`).bind(...args, limit, offset),
+  ]);
+  const { n, ...sums } = count.results[0];
+  return { rows: page.results, total: n, sums };
 }
+
+/** Las ciudades de los proveedores (para el filtro) @param {import('../services/types').Db} db */
+export const cities = (db) => db.prepare(
+  "SELECT DISTINCT city FROM suppliers WHERE city IS NOT NULL AND TRIM(city) <> '' ORDER BY city COLLATE NOCASE LIMIT 300",
+).all().then((r) => r.results.map((x) => x.city));
 
 /** Tipos con cuántos proveedores tiene cada uno */
 export function types(db) {

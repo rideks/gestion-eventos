@@ -73,6 +73,7 @@ errors = r.fields;      // debajo de cada campo
 | **Nombres parecidos** | `src/lib/name-match.js` | Sin tildes, mayúsculas, forma jurídica (S.L., S.A.…) ni palabras de relleno (hotel, group, España…) |
 | **Archivos** | `src/services/files.js` (guardar y borrar: R2 + tabla `files`), `src/repos/files.js` (su SQL) y `src/lib/files.js` (lo puro: tipos admitidos, comprobar los primeros bytes, nombres, enlaces) | Todos los documentos (facturas y proformas de proveedor, justificantes, PO, presupuestos, contratos). `storeFile` lanza `UploadError` si el archivo no vale; el servicio lo convierte en un error del campo. |
 | **Historial de cambios** | tabla `change_log`, `src/repos/changes.js` y `src/lib/changes.js` (`diffFields`) | Qué cambió en una ficha (antes y después), quién y cuándo, con un resumen ya redactado (`Fee: 8 % → 10 %`). Lo usan los clientes; un área nueva sólo añade su `entity`. |
+| **Tablas de listado** | `src/lib/tables.js` (cada tabla: columnas, cuáles se ven por defecto, cuáles piden permiso, por cuáles se ordena y sus filtros), `src/lib/table.js` (el motor: `tableState` lee la dirección y las preferencias, `pageInfo`, `hrefWith`, `orderBy` para el SQL, `sortRows` para lo que se ordena en memoria), los componentes `TableTools`, `SortTh` y `Pager`, y `src/services/prefs.js` + tabla `user_prefs` (las columnas y filas por página de cada persona, que se guardan en `/preferencias/tabla`) | Clientes, Proveedores, Contratos y Business Travel. El servicio de cada área recibe `q`, sus filtros, `order`/`dir` y `limit`/`offset` y devuelve `{ rows, total, sums }`: el total y las sumas son de todo lo filtrado. Sólo se ordena por columnas que el rol puede ver (el servicio vuelve al orden por defecto si no). |
 
 ## Pruebas
 
@@ -100,6 +101,9 @@ Así se hizo Clientes (v24), y así se hará la siguiente (p. ej. Incidencias):
 6. **Pruebas del servicio** `tests/services.clients.test.mjs`: cada rol, cada error y lo que queda en la base.
 7. **Páginas** en `src/pages/clientes/`: sólo servicios. Se añade la carpeta a `LAYERED` en
    `tests/architecture.test.mjs`, que lo comprueba desde entonces.
+8. Si tiene un listado: su tabla en `src/lib/tables.js`, el `list` del repositorio con `LIMIT`/`OFFSET`, el total y las
+   sumas en el mismo `batch` y `orderBy` con su lista de columnas, y la página con `TableTools`, `SortTh` y `Pager`
+   (como `src/pages/clientes/index.astro`).
 
 ## Lo que aún no está en capas
 

@@ -1,0 +1,22 @@
+---
+// Debajo de una tabla de listado: «26–50 de 143 clientes» y las páginas (con huecos: 1 … 4 5 6 … 12).
+import Icon from './Icon.astro';
+import { hrefWith } from '../lib/table.js';
+
+const { info, url, noun = ['fila', 'filas'] } = Astro.props;
+const go = (p) => hrefWith(url, { pagina: p });
+---
+<nav class="pager" aria-label="Páginas">
+  <span class="pager-count">
+    {info.total ? <>{info.from}–{info.to} de <b>{info.total}</b> {info.total === 1 ? noun[0] : noun[1]}</> : <>0 {noun[1]}</>}
+  </span>
+  {info.last > 1 && (
+    <span class="pager-pages">
+      {info.prev ? <a class="btn btn-ghost btn-sm" href={go(info.prev)} rel="prev"><Icon name="chevron-left" size={16} /> Anterior</a> : <span class="btn btn-ghost btn-sm is-disabled" aria-disabled="true"><Icon name="chevron-left" size={16} /> Anterior</span>}
+      {info.items.map((p) => (p === '…'
+        ? <span class="pager-gap">…</span>
+        : p === info.page ? <span class="pager-page is-current" aria-current="page">{p}</span> : <a class="pager-page" href={go(p)}>{p}</a>))}
+      {info.next ? <a class="btn btn-ghost btn-sm" href={go(info.next)} rel="next">Siguiente <Icon name="chevron-right" size={16} /></a> : <span class="btn btn-ghost btn-sm is-disabled" aria-disabled="true">Siguiente <Icon name="chevron-right" size={16} /></span>}
+    </span>
+  )}
+</nav>

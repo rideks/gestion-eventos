@@ -7,6 +7,11 @@ import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
 import SupplierFields from '../../components/SupplierFields.astro';
+import TableTools from '../../components/TableTools.astro';
+import SortTh from '../../components/SortTh.astro';
+import Pager from '../../components/Pager.astro';
+import { TABLES } from '../../lib/tables.js';
+import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
 import { readForm, can, parseId } from '../../lib/app.js';
 import { SUPPLIER_STATUS, formToObject } from '../../lib/validate.js';
 import { cleanName } from '../../lib/suppliers.js';
@@ -15,6 +20,7 @@ import { formatDate } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as suppliers from '../../services/suppliers.js';
 import * as contracts from '../../services/contracts.js';
+import * as prefs from '../../services/prefs.js';
 
 const ctx = serviceContext(Astro);
 const me = Astro.locals.user;
@@ -50,21 +56,30 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const params = Astro.url.searchParams;
-const q = (params.get('q') ?? '').trim().slice(0, 80);
-const typeId = parseId(params.get('tipo'));
-const dir = await suppliers.directory(ctx, { q, typeId, status: params.get('estado') ?? '', order: params.get('orden') ?? 'name' });
+// La tabla: buscador, filtros, orden, página y las columnas que ha elegido cada persona
+const def = TABLES.proveedores;
+const state = tableState(def, Astro.url.searchParams, { prefs: await prefs.forTable(ctx, 'proveedores'), can: (p) => can(me, p) });
+const dir = await suppliers.directory(ctx, {
+  q: state.q, typeId: parseId(state.filters.tipo), status: state.filters.estado ?? '', city: state.filters.ciudad ?? '',
+  order: state.sort, dir: state.dir, limit: state.per, offset: state.offset,
+});
 if (!dir.ok) return failure(Astro, dir, '/');
-const { rows, types, orders: ORDERS, order, status, year, money } = dir.value;
-const contractList = seesContracts ? await contracts.list(ctx) : null;
+const { rows, total, sums, types, cities, year, money } = dir.value;
+const info = pageInfo(total, state);
+if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
+const has = (k) => shows(state, k);
+const contractList = seesContracts && has('contrato') ? await contracts.list(ctx) : seesContracts ? await contracts.due(ctx) : null;
 const allContracts = contractList?.ok ? contractList.value : [];
 // El contrato que más importa de cada proveedor (vienen ordenados: primero lo que requiere atención, luego lo vigente)
 const contractOf = new Map();
 for (const c of allContracts) if (!contractOf.has(c.supplier_id)) contractOf.set(c.supplier_id, c);
 const due = allContracts.filter((c) => c.state.attention).length;
-const filtered = q || typeId || status;
-const total = money ? rows.reduce((a, r) => a + r.contracted, 0) : 0;
-const totalYear = money ? rows.reduce((a, r) => a + r.this_year, 0) : 0;
+const filtered = isFiltered(state);
+const filters = [
+  { ...def.filters[0], options: types.map((t) => [t.id, t.name]) },
+  { ...def.filters[1], options: Object.entries(SUPPLIER_STATUS) },
+  { ...def.filters[2], options: cities.map((c) => [c, c]) },
+];
 ---
 <App title="Proveedores" section="proveedores" error={error} fieldErrors={errors} origin="Proveedores">
   <div class="page-top">
@@ -109,30 +124,11 @@ const totalYear = money ? rows.reduce((a, r) => a + r.this_year, 0) : 0;
     </details>
   )}
 
-  <form method="get" class="quick-form supplier-filters" role="search">
-    <label class="visually-hidden" for="q">Buscar proveedor</label>
-    <input id="q" name="q" type="search" value={q} placeholder="Nombre, ciudad o contacto" />
-    <label class="visually-hidden" for="tipo">Tipo</label>
-    <select id="tipo" name="tipo">
-      <option value="">Todos los tipos</option>
-      {types.map((t) => <option value={t.id} selected={typeId === t.id}>{t.name}</option>)}
-    </select>
-    <label class="visually-hidden" for="estado">Estado</label>
-    <select id="estado" name="estado">
-      <option value="">Todos los estados</option>
-      {Object.entries(SUPPLIER_STATUS).map(([k, label]) => <option value={k} selected={status === k}>{label}</option>)}
-    </select>
-    <label class="visually-hidden" for="orden">Ordenar por</label>
-    <select id="orden" name="orden">
-      {Object.entries(ORDERS).map(([k, label]) => <option value={k} selected={order === k}>{label}</option>)}
-    </select>
-    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
-    {filtered && <a class="btn btn-ghost btn-sm" href="/proveedores">Quitar filtros</a>}
-  </form>
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} />
 
   <p class="muted mt">
-    {rows.length} {rows.length === 1 ? 'proveedor' : 'proveedores'}
-    {money && rows.length > 0 && <> · contratado en {year}: <b class="money">{eur(totalYear)}</b> · en total: <b class="money">{eur(total)}</b> <span class="small">(sin IVA, eventos no cancelados)</span></>}
+    {total} {total === 1 ? 'proveedor' : 'proveedores'}{filtered && ' con esos filtros'}
+    {money && total > 0 && <> · contratado en {year}: <b class="money">{eur(sums.this_year)}</b> · en total: <b class="money">{eur(sums.contracted)}</b> <span class="small">(sin IVA, eventos no cancelados)</span></>}
   </p>
 
   {rows.length ? (
@@ -140,15 +136,7 @@ const totalYear = money ? rows.reduce((a, r) => a + r.this_year, 0) : 0;
       <table class="dtable suppliers">
         <thead>
           <tr>
-            <th scope="col">Proveedor</th>
-            <th scope="col">Tipo</th>
-            <th scope="col">Ciudad</th>
-            <th scope="col" class="num">Expedientes</th>
-            <th scope="col">Último evento</th>
-            {seesContracts && <th scope="col">Contrato</th>}
-            {order === 'altas' && <th scope="col">Alta</th>}
-            {money && <th scope="col" class="num">{year}</th>}
-            {money && <th scope="col" class="num">Total</th>}
+            {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
           </tr>
         </thead>
         <tbody>
@@ -158,14 +146,17 @@ const totalYear = money ? rows.reduce((a, r) => a + r.this_year, 0) : 0;
                 <a href={`/proveedores/${r.id}`}><strong>{r.name}</strong></a>
                 {r.status !== 'activo' && <span class:list={['pill', r.status === 'bloqueado' ? 'pill-danger' : 'pill-muted']}>{SUPPLIER_STATUS[r.status]}</span>}
               </td>
-              <td>{r.type ?? '—'}</td>
-              <td>{r.city ?? '—'}</td>
-              <td class="num">{r.exps}</td>
-              <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>
-              {seesContracts && <td>{(() => { const c = contractOf.get(r.id); return c ? <a class="contract-cell" href={`/proveedores/${r.id}/contratos/${c.id}`}><Pill state={c.state} /><span class="small muted">{c.state.text}</span></a> : <span class="muted">—</span>; })()}</td>}
-              {order === 'altas' && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
-              {money && <td class="num money">{eur(r.this_year)}</td>}
-              {money && <td class="num money">{eur(r.contracted)}</td>}
+              {has('tipo') && <td>{r.type ?? '—'}</td>}
+              {has('ciudad') && <td>{r.city ?? '—'}</td>}
+              {has('contacto') && <td>{r.contact_name ?? '—'}</td>}
+              {has('telefono') && <td>{r.phone ?? '—'}</td>}
+              {has('email') && <td>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
+              {has('expedientes') && <td class="num">{r.exps}</td>}
+              {has('uso') && <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
+              {has('contrato') && <td>{(() => { const c = contractOf.get(r.id); return c ? <a class="contract-cell" href={`/proveedores/${r.id}/contratos/${c.id}`}><Pill state={c.state} /><span class="small muted">{c.state.text}</span></a> : <span class="muted">—</span>; })()}</td>}
+              {has('altas') && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
+              {has('year') && <td class="num money">{eur(r.this_year)}</td>}
+              {has('gasto') && <td class="num money">{eur(r.contracted)}</td>}
             </tr>
           ))}
         </tbody>
@@ -176,6 +167,7 @@ const totalYear = money ? rows.reduce((a, r) => a + r.this_year, 0) : 0;
       <p>{filtered ? 'Ningún proveedor con esos filtros.' : 'Todavía no hay proveedores. Se dan de alta con «Nuevo proveedor» o al elegir el proveedor de un pago.'}</p>
     </div>
   )}
+  <Pager info={info} url={Astro.url} noun={def.noun} />
 
   {editable && (
     <section class="card mt" id="tipos">

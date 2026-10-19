@@ -1,0 +1,15 @@
+---
+// Cabecera de una columna de una tabla de listado. Si se puede ordenar por ella, es un enlace: la primera vez en
+// su sentido natural y, si ya está ordenada por ella, en el contrario. Marca la columna y el sentido del orden
+// (la flecha la pone el CSS, así el texto de la cabecera es sólo su nombre).
+import { sortHref } from '../lib/table.js';
+
+const { col, state, url } = Astro.props;
+const active = state.sort === col.key;
+const aria = active ? (state.dir === 'asc' ? 'ascending' : 'descending') : undefined;
+---
+<th scope="col" class:list={{ num: col.num, 'is-sorted': active }} aria-sort={aria}>
+  {col.sort
+    ? <a class="sort-link" data-dir={active ? state.dir : undefined} href={sortHref(url, state, col)} title={`Ordenar por ${col.label.toLowerCase()}`}>{col.label}</a>
+    : col.label}
+</th>

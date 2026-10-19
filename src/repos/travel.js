@@ -6,6 +6,7 @@
 /** @typedef {import('../services/types').Db} Db */
 
 import { likeTerm } from './payments.js';
+import { orderBy } from '../lib/table.js';
 
 // Totales de una reserva (b alias de bt_bookings)
 const TOTALS = `
@@ -21,29 +22,49 @@ const CLIENT = 'c.name AS client_name, c.title AS client_title, c.kind AS client
 
 // ── Consultas ──────────────────────────────────────────────────────────────
 
+// Columna de la tabla (src/lib/tables.js) → expresión para ordenar
+const SORT = {
+  reserva: 'reference', cliente: 'client_name COLLATE NOCASE', fechas: 'first_date', pasajeros: 'passengers', servicios: 'lines',
+  base: 'base_cents', total: 'total_cents', fee: 'fee_cents', pvp: 'pvp_cents', estado: 'status', creada: 'created_at',
+  creador: 'created_by_name COLLATE NOCASE',
+};
+
 /**
- * Reservas, las más recientes primero. q: referencia, cliente, descripción, pasajero, proveedor o localizador.
- * month: 'YYYY-MM' (por la fecha de sus servicios: alguno empieza ese mes).
+ * Reservas por páginas. q: referencia, cliente, descripción, pasajero, proveedor o localizador.
+ * month: 'YYYY-MM' (por la fecha de sus servicios: alguno empieza ese mes). Devuelve la página, cuántas hay con esos
+ * filtros y la suma de sus importes (sin las canceladas).
  * @param {Db} db
- * @param {{ q?: string, status?: string, clientId?: number | null, month?: string }} filters
+ * @param {{ q?: string, status?: string, clientId?: number | null, month?: string, sort?: string, dir?: 'asc' | 'desc', limit?: number, offset?: number }} filters
+ * @returns {Promise<{ rows: any[], total: number, sums: { base_cents: number, total_cents: number, fee_cents: number, pvp_cents: number } }>}
  */
-export function list(db, { q = '', status = '', clientId = null, month = '' } = {}) {
-  return db.prepare(
-    `SELECT b.id, b.reference, b.client_id, b.title, b.status, b.created_at, ${CLIENT}, ${TOTALS}
-       FROM bt_bookings b JOIN clients c ON c.id = b.client_id
-      WHERE (?1 = '%%' OR b.reference LIKE ?1 OR b.title LIKE ?1 OR c.name LIKE ?1
-             OR EXISTS (SELECT 1 FROM bt_passengers p WHERE p.booking_id = b.id AND (p.first_name || ' ' || p.last_name) LIKE ?1)
-             OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND (l.supplier LIKE ?1 OR l.locator LIKE ?1 OR l.description LIKE ?1)))
-        AND (?2 = '' OR b.status = ?2)
-        AND (?3 IS NULL OR b.client_id = ?3)
-        AND (?4 = '' OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND substr(l.start_date, 1, 7) = ?4))
-      ORDER BY b.created_at DESC, b.id DESC
-      LIMIT 500`,
-  ).bind(likeTerm(q), status, clientId, month).all().then((r) => r.results);
+export async function list(db, { q = '', status = '', clientId = null, month = '', sort = 'reserva', dir = 'desc', limit = 25, offset = 0 } = {}) {
+  const base = `
+    SELECT b.id, b.reference, b.client_id, b.title, b.status, b.created_at, u.name AS created_by_name, ${CLIENT}, ${TOTALS}
+      FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by
+     WHERE (?1 = '%%' OR b.reference LIKE ?1 OR b.title LIKE ?1 OR c.name LIKE ?1
+            OR EXISTS (SELECT 1 FROM bt_passengers p WHERE p.booking_id = b.id AND (p.first_name || ' ' || p.last_name) LIKE ?1)
+            OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND (l.supplier LIKE ?1 OR l.locator LIKE ?1 OR l.description LIKE ?1)))
+       AND (?2 = '' OR b.status = ?2)
+       AND (?3 IS NULL OR b.client_id = ?3)
+       AND (?4 = '' OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND substr(l.start_date, 1, 7) = ?4))`;
+  const args = [likeTerm(q), status, clientId, month];
+  const live = "CASE WHEN status <> 'cancelada' THEN";
+  const [count, page] = await db.batch([
+    db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(${live} base_cents END), 0) AS base_cents, COALESCE(SUM(${live} total_cents END), 0) AS total_cents,
+                       COALESCE(SUM(${live} fee_cents END), 0) AS fee_cents, COALESCE(SUM(${live} pvp_cents END), 0) AS pvp_cents FROM (${base})`).bind(...args),
+    db.prepare(`SELECT * FROM (${base}) ORDER BY ${orderBy(SORT, sort, dir, 'reserva', 'id')} LIMIT ?5 OFFSET ?6`).bind(...args, limit, offset),
+  ]);
+  const { n, ...sums } = count.results[0];
+  return { rows: page.results, total: n, sums };
 }
 
-/** Las reservas de un cliente (para su ficha) @param {Db} db @param {number} clientId */
-export const forClient = (db, clientId) => list(db, { clientId });
+/** Los clientes que tienen reservas (para el filtro) @param {Db} db */
+export const clientsWithBookings = (db) => db.prepare(
+  `SELECT DISTINCT c.id, c.name, c.title FROM bt_bookings b JOIN clients c ON c.id = b.client_id ORDER BY c.name COLLATE NOCASE LIMIT 500`,
+).all().then((r) => r.results);
+
+/** Las reservas de un cliente (para su ficha), las más recientes primero @param {Db} db @param {number} clientId */
+export const forClient = (db, clientId) => list(db, { clientId, limit: 500 }).then((r) => r.rows);
 
 /**
  * La reserva con su cliente, sus pasajeros, sus servicios (con los pasajeros de cada uno) y quién la creó

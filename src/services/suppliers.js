@@ -13,6 +13,8 @@ import { cleanName, businessVolume } from '../lib/suppliers.js';
 import { similarNames } from '../lib/name-match.js';
 import { SupplierSchema, SupplierQuickSchema, SupplierTypeSchema, SUPPLIER_STATUS, validate } from '../lib/validate.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
+import { allowedColumns } from '../lib/table.js';
+import { TABLES } from '../lib/tables.js';
 
 /** @typedef {import('./types').Context} Context */
 
@@ -23,19 +25,31 @@ const orList = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} 
 // ── Consultas ──────────────────────────────────────────────────────────────
 
 /**
- * Directorio con filtros y orden. Sin permiso de gasto, sin importes (ni ordenar por ellos).
+ * Directorio por páginas, con buscador, filtros (tipo, estado, ciudad) y orden por cualquier columna que pueda ver.
+ * Sin permiso de gasto no llegan importes (ni se ordena por ellos). Los totales son de todos los que cumplen los filtros.
  * @param {Context} ctx
- * @param {{ q?: string, typeId?: number|null, status?: string, order?: string }} filters
+ * @param {{ q?: string, typeId?: number|null, status?: string, city?: string, order?: string, dir?: string|null, limit?: number, offset?: number }} [filters]
  */
-export async function directory(ctx, { q = '', typeId = null, status = '', order = 'name' } = {}) {
+export async function directory(ctx, { q = '', typeId = null, status = '', city = '', order = 'name', dir = null, limit = 25, offset = 0 } = {}) {
   if (!can(ctx.user, 'proveedores')) return forbidden();
   const money = can(ctx.user, 'proveedores.gasto');
   const year = Number(ctx.now.slice(0, 4));
-  const orders = { name: 'Nombre', uso: 'Último evento', expedientes: 'Más expedientes', altas: 'Altas recientes', ...(money ? { year: `Contratado en ${year}`, gasto: 'Contratado en total' } : {}) };
-  const ord = Object.hasOwn(orders, order) ? order : 'name';
+  const user = ctx.user;
+  const sortable = allowedColumns(TABLES.proveedores, (p) => can(user, p)).filter((c) => c.sort);
+  const orders = Object.fromEntries(sortable.map((c) => [c.key, c.label]));
+  const col = sortable.find((c) => c.key === order) ?? sortable[0];
+  const d = dir === 'asc' || dir === 'desc' ? dir : col.sort;
   const st = Object.hasOwn(SUPPLIER_STATUS, status) ? status : '';
-  const [rows, types] = await Promise.all([repo.list(ctx.db, { q: q.trim().slice(0, 80), typeId, status: st, year, order: ord }), repo.types(ctx.db)]);
-  return done({ rows: money ? rows : rows.map((r) => strip(r, MONEY_FIELDS)), types, orders, order: ord, status: st, year, money });
+  const [res, types, cities] = await Promise.all([
+    repo.list(ctx.db, { q: q.trim().slice(0, 80), typeId, status: st, city: city.trim().slice(0, 80), year, sort: col.key, dir: d,
+      limit: Math.min(Math.max(1, limit), 100), offset: Math.max(0, offset) }),
+    repo.types(ctx.db),
+    repo.cities(ctx.db),
+  ]);
+  return done({
+    rows: money ? res.rows : res.rows.map((r) => strip(r, MONEY_FIELDS)), total: res.total, sums: money ? res.sums : null,
+    types, cities, orders, order: col.key, dir: d, status: st, year, money,
+  });
 }
 
 /**

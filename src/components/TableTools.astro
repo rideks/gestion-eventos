@@ -1,0 +1,68 @@
+---
+// Encima de una tabla de listado: el buscador (por las propiedades de esa tabla), un desplegable por filtro y el
+// botón «Columnas» para añadir o quitar columnas (se guarda para cada persona; ver src/services/prefs.js).
+// Los filtros se aplican al cambiarlos (con JavaScript) o con «Buscar». El orden y las filas por página se conservan.
+//   def: la tabla (src/lib/tables.js) · state: tableState() · filters: [{ key, label, all, options: [[valor, texto]] }]
+import Icon from './Icon.astro';
+import { hrefWith, isFiltered, PER_PAGE } from '../lib/table.js';
+
+//   keep: otros parámetros de la página que se conservan al buscar (p. ej. la pestaña: 'ver')
+const { def, state, filters = [], url, label = null, keep: extra = [] } = Astro.props;
+const back = `${url.pathname}${url.search}`;
+const keep = ['orden', 'dir', 'por', ...extra].filter((k) => url.searchParams.get(k));
+const clear = hrefWith(url, { q: null, ...Object.fromEntries(filters.map((f) => [f.key, null])) });
+const optional = state.columns.filter((c) => !c.fixed);
+---
+<div class="table-tools">
+  <form method="get" class="quick-form table-filters supplier-filters" role="search" data-table-filters>
+    {keep.map((k) => <input type="hidden" name={k} value={url.searchParams.get(k)} />)}
+    <label class="visually-hidden" for={`${def.key}-q`}>{label ?? `Buscar ${def.noun[0]}`}</label>
+    <input id={`${def.key}-q`} name="q" type="search" value={state.q} placeholder={def.search} />
+    {filters.map((f) => (
+      <>
+        <label class="visually-hidden" for={`${def.key}-${f.key}`}>{f.label}</label>
+        <select id={`${def.key}-${f.key}`} name={f.key} data-auto-submit>
+          <option value="">{f.all}</option>
+          {f.options.map(([value, text]) => <option value={value} selected={String(state.filters[f.key] ?? '') === String(value)}>{text}</option>)}
+        </select>
+      </>
+    ))}
+    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+    {isFiltered(state) && <a class="btn btn-ghost btn-sm" href={clear}>Quitar filtros</a>}
+  </form>
+
+  {optional.length > 0 && (
+    <details class="table-columns">
+      <summary class="btn btn-ghost btn-sm"><Icon name="list-checks" size={16} /> Columnas</summary>
+      <form method="post" action="/preferencias/tabla" class="table-columns-pop">
+        <input type="hidden" name="tabla" value={def.key} />
+        <input type="hidden" name="volver" value={back} />
+        <p class="small muted">Elige las columnas que quieres ver. Se guarda para ti.</p>
+        <div class="table-columns-list">
+          {optional.map((c) => (
+            <label><input type="checkbox" name="columnas" value={c.key} checked={state.chosen.includes(c.key)} /> {c.label}</label>
+          ))}
+        </div>
+        <label class="table-columns-per">Filas por página
+          <select name="por">{PER_PAGE.map((n) => <option value={n} selected={state.per === n}>{n}</option>)}</select>
+        </label>
+        <div class="actions-inline">
+          <button class="btn btn-primary btn-sm" type="submit" name="intent" value="save">Guardar</button>
+          <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reset" formnovalidate>Las de siempre</button>
+        </div>
+      </form>
+    </details>
+  )}
+</div>
+
+<script>
+  // Los desplegables de filtro se aplican al cambiarlos; los campos vacíos no van a la URL
+  document.querySelectorAll('[data-table-filters] [data-auto-submit]').forEach((el) => {
+    el.addEventListener('change', () => (el instanceof HTMLSelectElement ? el.form?.requestSubmit() : null));
+  });
+  document.querySelectorAll('form[data-table-filters]').forEach((form) => {
+    form.addEventListener('formdata', (e) => {
+      for (const [k, v] of [...e.formData.entries()]) if (v === '') e.formData.delete(k);
+    });
+  });
+</script>

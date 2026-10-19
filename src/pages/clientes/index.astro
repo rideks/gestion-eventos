@@ -7,13 +7,19 @@ import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import ClientFields from '../../components/ClientFields.astro';
 import { readForm, can } from '../../lib/app.js';
-import { CLIENT_STATUS, formToObject } from '../../lib/validate.js';
+import TableTools from '../../components/TableTools.astro';
+import SortTh from '../../components/SortTh.astro';
+import Pager from '../../components/Pager.astro';
+import { CLIENT_STATUS, CLIENT_KINDS, formToObject } from '../../lib/validate.js';
+import { TABLES } from '../../lib/tables.js';
+import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
 import { cleanName } from '../../lib/suppliers.js';
 import { feeLabel } from '../../lib/clients.js';
 import { eur } from '../../lib/money.js';
 import { formatDate } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as clients from '../../services/clients.js';
+import * as prefs from '../../services/prefs.js';
 
 const ctx = serviceContext(Astro);
 const creatable = can(Astro.locals.user, 'clientes.create');
@@ -38,13 +44,25 @@ if (Astro.request.method === 'POST') {
   similar = r.similar ?? [];
 }
 
-const params = Astro.url.searchParams;
-const q = (params.get('q') ?? '').trim().slice(0, 80);
-const dir = await clients.directory(ctx, { q, status: params.get('estado') ?? '', order: params.get('orden') ?? 'name' });
+// La tabla: buscador, filtros, orden, página y las columnas que ha elegido cada persona
+const def = TABLES.clientes;
+const state = tableState(def, Astro.url.searchParams, { prefs: await prefs.forTable(ctx, 'clientes'), can: (p) => can(Astro.locals.user, p) });
+const dir = await clients.directory(ctx, {
+  q: state.q, status: state.filters.estado ?? '', kind: state.filters.tipo ?? '', city: state.filters.ciudad ?? '',
+  order: state.sort, dir: state.dir, limit: state.per, offset: state.offset,
+});
 if (!dir.ok) return failure(Astro, dir, '/');
-const { rows, orders: ORDERS, order, status, year, economy, billing } = dir.value;
-const filtered = q || status;
-const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
+const { rows, total, sums, cities, year, economy, billing } = dir.value;
+const info = pageInfo(total, state);
+// Si la página pedida ya no existe (p. ej. tras filtrar), a la última
+if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
+const filtered = isFiltered(state);
+const has = (k) => shows(state, k);
+const filters = [
+  { ...def.filters[0], options: Object.entries(CLIENT_STATUS) },
+  { ...def.filters[1], options: Object.entries(CLIENT_KINDS) },
+  { ...def.filters[2], options: cities.map((c) => [c, c]) },
+];
 ---
 <App title="Clientes" section="clientes" error={error} fieldErrors={errors} origin="Clientes">
   <div class="page-top">
@@ -80,26 +98,12 @@ const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
     </details>
   )}
 
-  <form method="get" class="quick-form supplier-filters" role="search">
-    <label class="visually-hidden" for="q">Buscar cliente</label>
-    <input id="q" name="q" type="search" value={q} placeholder="Nombre, NIF, ciudad o entidad" />
-    <label class="visually-hidden" for="estado">Estado</label>
-    <select id="estado" name="estado">
-      <option value="">Todos los estados</option>
-      {Object.entries(CLIENT_STATUS).map(([k, label]) => <option value={k} selected={status === k}>{label}</option>)}
-    </select>
-    <label class="visually-hidden" for="orden">Ordenar por</label>
-    <select id="orden" name="orden">
-      {Object.entries(ORDERS).map(([k, label]) => <option value={k} selected={order === k}>{label}</option>)}
-    </select>
-    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
-    {filtered && <a class="btn btn-ghost btn-sm" href="/clientes">Quitar filtros</a>}
-  </form>
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} />
 
   <p class="muted mt">
-    {rows.length} {rows.length === 1 ? 'cliente' : 'clientes'}
-    {economy && rows.length > 0 && <> · presupuestado en {year}: <b class="money">{eur(sum('this_year'))}</b> · en total: <b class="money">{eur(sum('budget'))}</b> <span class="small">(sin IVA, sin cancelados)</span></>}
-    {billing && sum('pending') > 0 && <> · pendiente de cobro: <b class="money">{eur(sum('pending'))}</b> <span class="small">(con IVA)</span></>}
+    {total} {total === 1 ? 'cliente' : 'clientes'}{filtered && ' con esos filtros'}
+    {economy && total > 0 && <> · presupuestado en {year}: <b class="money">{eur(sums.this_year)}</b> · en total: <b class="money">{eur(sums.budget)}</b> <span class="small">(sin IVA, sin cancelados)</span></>}
+    {billing && sums.pending > 0 && <> · pendiente de cobro: <b class="money">{eur(sums.pending)}</b> <span class="small">(con IVA)</span></>}
   </p>
 
   {rows.length ? (
@@ -107,15 +111,7 @@ const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
       <table class="dtable clients">
         <thead>
           <tr>
-            <th scope="col">Cliente</th>
-            <th scope="col">Ciudad</th>
-            <th scope="col" class="num">Expedientes</th>
-            <th scope="col">Próximo evento</th>
-            <th scope="col">Último evento</th>
-            {economy && <th scope="col" class="num">Fee</th>}
-            {economy && <th scope="col" class="num">Presupuestado</th>}
-            {billing && <th scope="col" class="num">Facturado</th>}
-            {billing && <th scope="col" class="num">Pendiente de cobro</th>}
+            {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
           </tr>
         </thead>
         <tbody>
@@ -125,14 +121,21 @@ const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
                 <a href={`/clientes/${r.id}`}><strong>{[r.title, r.name].filter(Boolean).join(' ')}</strong></a>
                 {r.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[r.status]}</span>}
               </td>
-              <td>{r.city ?? '—'}</td>
-              <td class="num">{r.exps}</td>
-              <td>{r.next_date ? formatDate(r.next_date) : '—'}</td>
-              <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>
-              {economy && <td class="num">{feeLabel(r.fee_bp) ?? '—'}</td>}
-              {economy && <td class="num money">{eur(r.budget)}</td>}
-              {billing && <td class="num money">{eur(r.invoiced)}</td>}
-              {billing && <td class:list={['num', 'money', { neg: r.pending > 0 }]}>{eur(r.pending)}</td>}
+              {has('tipo') && <td>{CLIENT_KINDS[r.kind] ?? '—'}</td>}
+              {has('ciudad') && <td>{r.city ?? '—'}</td>}
+              {has('nif') && <td>{r.tax_id ?? '—'}</td>}
+              {has('email') && <td>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
+              {has('telefono') && <td>{r.phone ?? '—'}</td>}
+              {has('expedientes') && <td class="num">{r.exps}</td>}
+              {has('viajes') && <td class="num">{r.bookings}</td>}
+              {has('proximo') && <td>{r.next_date ? formatDate(r.next_date) : '—'}</td>}
+              {has('uso') && <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
+              {has('fee') && <td class="num">{feeLabel(r.fee_bp) ?? '—'}</td>}
+              {has('volumen') && <td class="num money">{eur(r.budget)}</td>}
+              {has('year') && <td class="num money">{eur(r.this_year)}</td>}
+              {has('facturado') && <td class="num money">{eur(r.invoiced)}</td>}
+              {has('pendiente') && <td class:list={['num', 'money', { neg: r.pending > 0 }]}>{eur(r.pending)}</td>}
+              {has('altas') && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
             </tr>
           ))}
         </tbody>
@@ -143,5 +146,6 @@ const sum = (f) => rows.reduce((a, r) => a + (r[f] ?? 0), 0);
       <p>{filtered ? 'Ningún cliente con esos filtros.' : 'Todavía no hay clientes. Se dan de alta con «Nuevo cliente» o al pedir un expediente.'}</p>
     </div>
   )}
+  <Pager info={info} url={Astro.url} noun={def.noun} />
   {economy && <p class="muted small mt">Presupuestado: la versión vigente del presupuesto de cada expediente, sin IVA.{billing && ' Facturado: facturas emitidas o cobradas, sin IVA. Pendiente de cobro: facturas emitidas sin cobrar, con IVA.'}</p>}
 </App>

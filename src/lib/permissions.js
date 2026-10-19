@@ -143,7 +143,7 @@ export function roleKey(name) {
 // Qué permiso hace falta para entrar en cada parte de la aplicación (el middleware lo comprueba
 // antes de la página; cada página comprueba además sus acciones). Una ruta que no esté aquí no se
 // abre a nadie: una página nueva que se olvide añadir queda cerrada, no abierta.
-const ANY_SESSION = new Set(['/', '/cuenta', '/salir', '/404']);
+const ANY_SESSION = new Set(['/', '/cuenta', '/salir', '/404', '/preferencias/tabla']);
 const SECTIONS = [
   [/^\/(expedientes|archivos|buscar)(\/|$)/, 'expedientes'],
   [/^\/pagos\/?$/, 'pagos'],

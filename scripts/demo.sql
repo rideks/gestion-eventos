@@ -21,7 +21,7 @@ INSERT INTO supplier_types (name, sort) VALUES
   ('Hotel', 10), ('Venue / espacio', 20), ('Restaurante', 30), ('Catering', 40), ('Actividades', 50),
   ('Formación', 60), ('Transporte', 70), ('Aerolínea', 72), ('Tren', 74), ('Central de reservas', 76), ('Inscripciones y congresos', 78),
   ('Audiovisuales', 80), ('Otros', 90);
-DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
+DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM user_prefs; DELETE FROM users;
 DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
 -- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009, 0010 y 0011)
 INSERT INTO role_permissions (role_id, permission)

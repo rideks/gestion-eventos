@@ -6,13 +6,19 @@ import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import EntityPicker from '../../components/EntityPicker.astro';
 import EntityPickerKit from '../../components/EntityPickerKit.astro';
-import { readForm } from '../../lib/app.js';
+import TableTools from '../../components/TableTools.astro';
+import SortTh from '../../components/SortTh.astro';
+import Pager from '../../components/Pager.astro';
+import { readForm, can, parseId } from '../../lib/app.js';
+import { TABLES } from '../../lib/tables.js';
+import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
 import { formToObject } from '../../lib/validate.js';
 import { BOOKING_STATUS } from '../../lib/travel.js';
 import { eur } from '../../lib/money.js';
-import { formatRange, formatMonth } from '../../lib/dates.js';
+import { formatRange, formatMonth, formatStamp } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as travel from '../../services/travel.js';
+import * as prefs from '../../services/prefs.js';
 
 const ctx = serviceContext(Astro);
 let error = null;
@@ -33,22 +39,33 @@ if (Astro.request.method === 'POST') {
   v = input;
 }
 
-const params = Astro.url.searchParams;
-const q = (params.get('q') ?? '').trim().slice(0, 80);
+// La tabla: buscador, filtros, orden, página y las columnas que ha elegido cada persona
+const def = TABLES.viajes;
+const state = tableState(def, Astro.url.searchParams, { prefs: await prefs.forTable(ctx, 'viajes'), can: (p) => can(Astro.locals.user, p) });
 const [res, picker] = await Promise.all([
-  travel.list(ctx, { q, status: params.get('estado') ?? '', month: params.get('mes') ?? '' }),
+  travel.list(ctx, {
+    q: state.q, status: state.filters.estado ?? '', month: state.filters.mes ?? '', clientId: parseId(state.filters.cliente),
+    order: state.sort, dir: state.dir, limit: state.per, offset: state.offset,
+  }),
   travel.draft(ctx),
 ]);
 if (!res.ok) return failure(Astro, res, '/');
-const { rows, status, month, fee } = res.value;
-const filtered = q || status || month;
-const sum = (f) => rows.filter((r) => r.status !== 'cancelada').reduce((a, r) => a + (r[f] ?? 0), 0);
-// Los últimos doce meses para el filtro (el mes de sus servicios)
+const { rows, total, sums, clients, fee } = res.value;
+const info = pageInfo(total, state);
+if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
+const filtered = isFiltered(state);
+const has = (k) => shows(state, k);
+// Los meses para el filtro: de dentro de dos meses hacia atrás (el mes de sus servicios)
 const months = Array.from({ length: 15 }, (_, i) => {
   const d = new Date(Date.UTC(Number(ctx.now.slice(0, 4)), Number(ctx.now.slice(5, 7)) - 1 + 2 - i, 1));
   return d.toISOString().slice(0, 7);
 });
 const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(' ');
+const filters = [
+  { ...def.filters[0], options: clients.map((c) => [c.id, [c.title, c.name].filter(Boolean).join(' ')]) },
+  { ...def.filters[1], options: months.map((m) => [m, formatMonth(m)]) },
+  { ...def.filters[2], options: Object.entries(BOOKING_STATUS) },
+];
 ---
 <App title="Business Travel" section="viajes" error={error} fieldErrors={errors} origin="Business Travel">
   <div class="page-top">
@@ -82,26 +99,11 @@ const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(
   </details>
   <EntityPickerKit kind="client" options={picker.ok ? picker.value.clients : []} />
 
-  <form method="get" class="quick-form supplier-filters" role="search">
-    <label class="visually-hidden" for="q">Buscar reserva</label>
-    <input id="q" name="q" type="search" value={q} placeholder="Referencia, cliente, pasajero, proveedor o localizador" />
-    <label class="visually-hidden" for="mes">Mes</label>
-    <select id="mes" name="mes">
-      <option value="">Todos los meses</option>
-      {months.map((m) => <option value={m} selected={month === m}>{formatMonth(m)}</option>)}
-    </select>
-    <label class="visually-hidden" for="estado">Estado</label>
-    <select id="estado" name="estado">
-      <option value="">Todos los estados</option>
-      {Object.entries(BOOKING_STATUS).map(([k, label]) => <option value={k} selected={status === k}>{label}</option>)}
-    </select>
-    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
-    {filtered && <a class="btn btn-ghost btn-sm" href="/viajes">Quitar filtros</a>}
-  </form>
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} />
 
   <p class="muted mt">
-    {rows.length} {rows.length === 1 ? 'reserva' : 'reservas'}
-    {rows.length > 0 && <> · PVP: <b class="money">{eur(sum('pvp_cents'))}</b>{fee && <> · fees: <b class="money">{eur(sum('fee_cents'))}</b></>} <span class="small">(sin las canceladas)</span></>}
+    {total} {total === 1 ? 'reserva' : 'reservas'}{filtered && ' con esos filtros'}
+    {total > 0 && <> · PVP: <b class="money">{eur(sums.pvp_cents)}</b>{fee && <> · fees: <b class="money">{eur(sums.fee_cents)}</b></>} <span class="small">(sin las canceladas)</span></>}
   </p>
 
   {rows.length ? (
@@ -109,14 +111,7 @@ const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(
       <table class="dtable bookings">
         <thead>
           <tr>
-            <th scope="col">Reserva</th>
-            <th scope="col">Cliente</th>
-            <th scope="col">Fechas</th>
-            <th scope="col" class="num">Pasajeros</th>
-            <th scope="col" class="num">Servicios</th>
-            <th scope="col" class="num">Con IVA</th>
-            {fee && <th scope="col" class="num">Fee</th>}
-            <th scope="col" class="num">PVP</th>
+            {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
           </tr>
         </thead>
         <tbody>
@@ -124,16 +119,20 @@ const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(
             <tr class:list={{ 'is-planned': r.status === 'cancelada' }}>
               <td>
                 <a href={`/viajes/${r.id}`}><strong>{r.reference}</strong></a>
-                {r.status === 'cancelada' && <span class="pill pill-muted">Cancelada</span>}
+                {r.status === 'cancelada' && !has('estado') && <span class="pill pill-muted">Cancelada</span>}
                 {r.title && <div class="small muted">{r.title}</div>}
               </td>
-              <td>{clientLabel(r)}</td>
-              <td>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>
-              <td class="num">{r.passengers}</td>
-              <td class="num">{r.lines}</td>
-              <td class="num money">{eur(r.total_cents)}</td>
-              {fee && <td class="num money">{eur(r.fee_cents)}</td>}
-              <td class="num money"><strong>{eur(r.pvp_cents)}</strong></td>
+              {has('cliente') && <td>{clientLabel(r)}</td>}
+              {has('fechas') && <td>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>}
+              {has('pasajeros') && <td class="num">{r.passengers}</td>}
+              {has('servicios') && <td class="num">{r.lines}</td>}
+              {has('base') && <td class="num money">{eur(r.base_cents)}</td>}
+              {has('total') && <td class="num money">{eur(r.total_cents)}</td>}
+              {has('fee') && <td class="num money">{eur(r.fee_cents)}</td>}
+              {has('pvp') && <td class="num money"><strong>{eur(r.pvp_cents)}</strong></td>}
+              {has('estado') && <td><span class:list={['pill', r.status === 'cancelada' ? 'pill-muted' : 'pill-ok']}>{BOOKING_STATUS[r.status]}</span></td>}
+              {has('creada') && <td>{formatStamp(r.created_at, { year: true })}</td>}
+              {has('creador') && <td>{r.created_by_name ?? '—'}</td>}
             </tr>
           ))}
         </tbody>
@@ -144,4 +143,5 @@ const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(
       <p>{filtered ? 'Ninguna reserva con esos filtros.' : 'Todavía no hay reservas. Crea la primera con «Nueva reserva».'}</p>
     </div>
   )}
+  <Pager info={info} url={Astro.url} noun={def.noun} />
 </App>

@@ -11,6 +11,8 @@ import { cleanName } from '../lib/suppliers.js';
 import { similarNames } from '../lib/name-match.js';
 import { clientVolume, seniority, feeLabel } from '../lib/clients.js';
 import { diffFields } from '../lib/changes.js';
+import { allowedColumns } from '../lib/table.js';
+import { TABLES } from '../lib/tables.js';
 import { ClientSchema, ClientQuickSchema, ClientEntitySchema, CLIENT_STATUS, CLIENT_KINDS, validate } from '../lib/validate.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
 
@@ -51,20 +53,33 @@ const DATA_FIELDS = {
 // ── Consultas ──────────────────────────────────────────────────────────────
 
 /**
- * Directorio con filtros y orden. Sin los permisos económicos no llegan importes ni fee (ni se ordena por ellos).
+ * Directorio por páginas, con buscador, filtros (estado, tipo, ciudad) y orden por cualquier columna que pueda ver.
+ * Sin los permisos económicos no llegan importes, fee ni NIF (ni se ordena por ellos). Los totales (sums) son de
+ * todos los clientes que cumplen los filtros, no sólo de la página.
  * @param {Context} ctx
- * @param {{ q?: string, status?: string, order?: string }} [filters]
+ * @param {{ q?: string, status?: string, kind?: string, city?: string, order?: string, dir?: string | null, limit?: number, offset?: number }} [filters]
  */
-export async function directory(ctx, { q = '', status = '', order = 'name' } = {}) {
+export async function directory(ctx, { q = '', status = '', kind = '', city = '', order = 'name', dir = null, limit = 25, offset = 0 } = {}) {
   if (!can(ctx.user, 'clientes')) return forbidden();
   const { economy, billing } = sees(ctx);
   const year = Number(ctx.now.slice(0, 4));
-  const orders = { name: 'Nombre', proximo: 'Próximo evento', uso: 'Último evento', expedientes: 'Más expedientes', altas: 'Altas recientes', ...(economy ? { volumen: 'Presupuestado en total', year: `Presupuestado en ${year}` } : {}) };
-  const ord = Object.hasOwn(orders, order) ? order : 'name';
+  const user = ctx.user;
+  const sortable = allowedColumns(TABLES.clientes, (p) => can(user, p)).filter((c) => c.sort);
+  const orders = Object.fromEntries(sortable.map((c) => [c.key, c.label]));
+  const col = sortable.find((c) => c.key === order) ?? sortable[0];
+  const d = dir === 'asc' || dir === 'desc' ? dir : col.sort;
   const st = Object.hasOwn(CLIENT_STATUS, status) ? status : '';
-  const rows = await repo.list(ctx.db, { q: q.trim().slice(0, 80), status: st, order: ord, year, now: ctx.now });
+  const kd = Object.hasOwn(CLIENT_KINDS, kind) ? kind : '';
+  const [res, cities] = await Promise.all([
+    repo.list(ctx.db, { q: q.trim().slice(0, 80), status: st, kind: kd, city: city.trim().slice(0, 80), sort: col.key, dir: d, year, now: ctx.now,
+      limit: Math.min(Math.max(1, limit), 100), offset: Math.max(0, offset) }),
+    repo.cities(ctx.db),
+  ]);
   const hidden = hide(ctx);
-  return done({ rows: rows.map((r) => strip(r, hidden)), orders, order: ord, status: st, year, economy, billing });
+  return done({
+    rows: res.rows.map((r) => strip(r, hidden)), total: res.total, sums: strip(res.sums, hidden),
+    orders, order: col.key, dir: d, status: st, kind: kd, city, cities, year, economy, billing,
+  });
 }
 
 /**

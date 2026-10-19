@@ -89,4 +89,11 @@ export const FLASH = {
   password: 'Contraseña cambiada. Se ha cerrado la sesión en tus otros dispositivos.',
   sesiones: 'Se ha cerrado la sesión en tus otros dispositivos.',
   bienvenida: '¡Bienvenido/a!',
+  creada: 'Reserva creada: añade sus pasajeros y servicios',
+  cancelada: 'Reserva cancelada: se conserva y se puede reabrir',
+  reabierta: 'Reserva reabierta',
+  pasajero: 'Pasajero añadido',
+  servicio: 'Servicio añadido',
+  quitado: 'Quitado de la reserva',
+  columnas: 'Columnas guardadas: se mantienen la próxima vez',
 };

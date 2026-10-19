@@ -6,7 +6,8 @@
 import * as repo from '../repos/contracts.js';
 import * as suppliersRepo from '../repos/suppliers.js';
 import { can, activityStmt } from '../lib/app.js';
-import { contractState, contractOn, contractDiff, renewalDraft, byUrgency, RENEWAL } from '../lib/contracts.js';
+import { contractState, contractOn, contractDiff, renewalDraft, byUrgency, RENEWAL, CONTRACT_VIEWS } from '../lib/contracts.js';
+import { sortRows } from '../lib/table.js';
 import { ContractSchema, RenewalSchema, validate } from '../lib/validate.js';
 import { UploadError } from '../lib/files.js';
 import { storeFile, deleteFiles } from './files.js';
@@ -30,6 +31,34 @@ export async function list(ctx, q = '') {
   if (!can(ctx.user, 'contratos')) return forbidden();
   const rows = await repo.all(ctx.db, q.trim().slice(0, 80));
   return done(rows.map(withState(ctx.now)).sort(byUrgency));
+}
+
+/**
+ * La lista de contratos (Proveedores → Contratos) por páginas: una pestaña (atención, en vigor, aún no vigentes,
+ * historial o todos), buscador, tipo de proveedor y orden por columna. El estado se calcula por fechas, así que se
+ * filtra y se ordena aquí (son pocos: cientos como mucho). Devuelve también los recuentos de las pestañas y avisos.
+ * @param {Context} ctx
+ * @param {{ q?: string, view?: string, type?: string, sort?: string, dir?: 'asc' | 'desc', limit?: number, offset?: number }} [options]
+ */
+export async function table(ctx, { q = '', view = '', type = '', sort = 'estado', dir = 'asc', limit = 25, offset = 0 } = {}) {
+  if (!can(ctx.user, 'contratos')) return forbidden();
+  const all = (await repo.all(ctx.db, q.trim().slice(0, 80))).map(withState(ctx.now)).sort(byUrgency);
+  /** @type {Record<string, number>} */
+  const counts = Object.fromEntries(Object.entries(CONTRACT_VIEWS).map(([k, x]) => [k, all.filter(x.test).length]));
+  const v = Object.hasOwn(CONTRACT_VIEWS, view) ? view : counts.atencion ? 'atencion' : 'todos';
+  const urgency = new Map(all.map((c, i) => [c.id, i]));
+  const rows = sortRows(all.filter(CONTRACT_VIEWS[/** @type {keyof typeof CONTRACT_VIEWS} */ (v)].test).filter((c) => !type || c.supplier_type === type), {
+    proveedor: (c) => c.supplier_name, contrato: (c) => c.title, tipo: (c) => c.supplier_type, ciudad: (c) => c.supplier_city,
+    firma: (c) => c.signed_on, inicio: (c) => c.starts_on, fin: (c) => c.ends_on, estado: (c) => urgency.get(c.id), aviso: (c) => c.alert_days,
+  }, sort, dir);
+  const due = all.filter((c) => c.state.attention);
+  const n = (/** @type {string} */ key) => due.filter((c) => c.state.key === key).length;
+  return done({
+    rows: rows.slice(Math.max(0, offset), Math.max(0, offset) + Math.min(Math.max(1, limit), 100)), total: rows.length,
+    view: v, counts, all: all.length, due: { caducado: n('caducado'), por_caducar: n('por_caducar'), pendiente: n('pendiente') },
+    // Los tipos de lo encontrado (y el elegido, aunque la búsqueda ya no lo tenga, para que se vea en el filtro)
+    types: [...new Set([...all.map((c) => c.supplier_type), type].filter(Boolean))].sort((x, y) => x.localeCompare(y, 'es')),
+  });
 }
 
 /**

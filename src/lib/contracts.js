@@ -113,3 +113,12 @@ export function renewalDraft(c, addDays) {
     payment_terms: c.payment_terms, other_terms: c.other_terms, alert_days: c.alert_days,
   };
 }
+
+/** Las pestañas de la lista de contratos: qué contratos enseña cada una (por su estado) */
+export const CONTRACT_VIEWS = {
+  atencion: { label: 'Requieren atención', test: (c) => c.state.attention },
+  vigentes: { label: 'En vigor', test: (c) => ['vigente', 'por_caducar', 'pendiente'].includes(c.state.key) },
+  futuros: { label: 'Aún no vigentes', test: (c) => c.state.key === 'futuro' },
+  historial: { label: 'Historial', test: (c) => ['renovado', 'finalizado'].includes(c.state.key) },
+  todos: { label: 'Todos', test: () => true },
+};

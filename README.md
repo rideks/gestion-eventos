@@ -215,13 +215,23 @@ Reparto inicial:
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
-- **Business Travel**: las reservas con buscador (referencia, cliente, pasajero, proveedor o localizador), mes y
-  estado, con sus pasajeros, servicios y PVP. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
+- **Tablas** (Clientes, Proveedores, Contratos y Business Travel), todas iguales:
+  - **por páginas** (25, 50 o 100 filas), con «26–50 de 143 clientes» y las páginas debajo;
+  - un **buscador** por las propiedades de cada tabla (se dicen en el propio campo) y un **filtro por columna**
+    (ciudad, tipo, estado, cliente, mes…) que se aplica al cambiarlo; «Quitar filtros» vuelve a todo;
+  - se **ordena pulsando la cabecera** (otra vez, al revés); si se ordena por una columna oculta, se ve mientras tanto;
+  - **«Columnas»**: cada persona elige qué columnas ve (hay más de las que salen por defecto: NIF, email, teléfono,
+    contacto, alta, tipo…) y cuántas filas por página; se guarda para esa persona (también en otro ordenador) y
+    «Las de siempre» lo deja como estaba. Las columnas que piden un permiso (fee, importes, NIF) no se ofrecen a
+    quien no lo tiene, ni aunque se pidan a mano;
+  - los **totales** de encima son de todo lo filtrado, no sólo de la página; la búsqueda, el orden y la página van
+    en la dirección, así que se puede enviar el enlace a una búsqueda.
+- **Business Travel**: las reservas con buscador (referencia, cliente, pasajero, proveedor o localizador), cliente,
+  mes y estado, con sus pasajeros, servicios y PVP. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
   añaden los pasajeros (si ya viajaron con ese cliente, se eligen y se rellenan sus datos) y los servicios de cada
   bloque, con el resumen económico arriba y el historial abajo. La ficha del cliente enseña sus reservas.
 - **Clientes**: directorio con buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
-  entidades), filtro de estado y orden por nombre, próximo o último evento, expedientes, altas recientes o lo
-  presupuestado; con permiso económico, el fee y lo presupuestado de cada uno (y, con cobros, lo facturado y lo
+  entidades), filtros de estado, tipo (empresa o persona) y ciudad; con permiso económico, el fee y lo presupuestado de cada uno (y, con cobros, lo facturado y lo
   pendiente de cobro). **Ficha** de cada cliente: datos, antigüedad, personas de contacto de sus expedientes,
   condiciones y datos fiscales, **relación económica** (ver arriba), sus expedientes (previstos, en curso,
   terminados y cancelados), los **hoteles y proveedores** con los que se ha trabajado para él, por año y por ciudad,
@@ -229,8 +239,8 @@ Reparto inicial:
   expediente, el cliente **se elige de la lista** (no se escribe a mano); si es nuevo, «Dar de alta» con aviso de
   los parecidos. Si aun así hay repetidos, se **fusionan** (expedientes, entidades e historial pasan al bueno y el
   nombre queda como anterior). Un cliente con expedientes no se borra: se marca como inactivo.
-- **Proveedores**: directorio con buscador (nombre, ciudad, contacto o un nombre anterior), filtros por tipo y
-  estado y orden por nombre, último evento, expedientes, **altas recientes** o lo contratado. **Ficha** de cada proveedor: tipo
+- **Proveedores**: directorio con buscador (nombre, ciudad, contacto o un nombre anterior) y filtros por tipo,
+  estado y ciudad. **Ficha** de cada proveedor: tipo
   (ampliable), estado (activo, inactivo, no contratar), contacto, dirección, capacidad, condiciones económicas y de
   crédito, comentarios internos, nombres anteriores, cuándo y quién lo dio de alta, el **historial de expedientes** (cliente, ciudad, fechas,
   servicios) y el **volumen de negocio** (ver abajo), por año (con el cambio respecto al anterior), por cliente y
@@ -242,7 +252,8 @@ Reparto inicial:
   pago, crédito), «Renovar» si requieren atención y los anteriores aparte; en el historial de expedientes, el
   **contrato aplicado** a cada uno. Cada contrato tiene su página (caducidad, aviso, condiciones, documento,
   renovaciones, expedientes en los que se aplicó, historial de cambios, «Pendiente de renovación» / «No se renueva»).
-  **Proveedores → Contratos**: todas las caducidades, primero lo que requiere atención.
+  **Proveedores → Contratos**: todas las caducidades, primero lo que requiere atención, en pestañas (requieren
+  atención, en vigor, aún no vigentes, historial, todos) con buscador y filtro de tipo de proveedor.
 - **Usuarios y permisos** (sólo Técnico): personas (invitación por enlace, sin registro abierto; rol; activar o
   desactivar), roles (crear, permisos por áreas, quién tiene cada uno, tabla de quién puede hacer qué) y el
   registro de cambios. **Mi cuenta** para todos.
@@ -275,7 +286,8 @@ Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-
 
 `npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
 (lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios);
-también los **servicios** de Proveedores, Contratos, Clientes, Pagos y Business Travel contra una base SQLite en memoria con las migraciones y los
+también las **tablas** (columnas por permiso, orden, páginas, enlaces) y los **servicios** de Proveedores, Contratos, Clientes,
+Pagos, Business Travel y las tablas de listado (páginas, totales, filtros, columnas de cada persona) contra una base SQLite en memoria con las migraciones y los
 datos de ejemplo (permisos de cada rol, datos que se devuelven, cambios en la base; necesita Node 22.13 o superior)
 y las **reglas de la arquitectura**. `npm run typecheck` comprueba los tipos de servicios y repositorios y
 `npm run check` hace las dos cosas. Cómo está organizado el código: [ARQUITECTURA.md](ARQUITECTURA.md).
@@ -291,6 +303,9 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 ```
 
 **Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Columnas de las tablas (migración 0013)**: sólo añade la tabla `user_prefs` (las columnas y filas por página que
+elige cada persona). Si se borra a alguien, se borran sus preferencias.
 
 **Business Travel (migración 0012)**: sólo añade tablas (`bt_bookings`, `bt_passengers`, `bt_lines`,
 `bt_line_passengers` y `counters` para las numeraciones), el tipo (empresa o persona) y el tratamiento de los
@@ -342,6 +357,10 @@ coge el siguiente).
 - El resumen de documentos de cada pago (facturas, proformas, pendientes de revisar) se calcula en la misma consulta
   de la lista, sin una consulta por fila.
 - Las sugerencias de «facturar a» de las PO se guardan 5 minutos en memoria; las listas de clientes y de proveedores de los selectores se leen siempre de la base de datos (un alta se ve al momento).
+- Las tablas de listado piden a la base **sólo su página** (`LIMIT`/`OFFSET`) y, en la misma ida (`batch`), el total y
+  las sumas de todo lo filtrado; el orden sale de una lista cerrada de columnas (nunca del texto de la dirección) y
+  lleva un desempate fijo para que al pasar de página no se repitan ni se salten filas. Los contratos, cuyo estado
+  depende de la fecha de hoy, se filtran y ordenan en el servidor (son cientos como mucho).
 - Para revisar los planes de las consultas: `EXPLAIN QUERY PLAN` sobre la base local (`.wrangler/state/v3/d1/…`).
 
 ## Seguridad
@@ -359,17 +378,19 @@ src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
   services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients, payments,
-                    travel (Business Travel) y files (guardar y borrar documentos); result y context
+                    travel (Business Travel), prefs (columnas de cada persona) y files (guardar y borrar documentos);
+                    result y context
   repos/            El SQL de cada área: suppliers, contracts, clients, payments, supplier-docs (facturas y proformas
                     de proveedor), files, rates (tipos de IVA), expedientes (su cabecera), travel (reservas de Business
-                    Travel), counters (numeraciones) y changes (historial común)
-  lib/              Reglas puras: money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
+                    Travel), counters (numeraciones), prefs (preferencias de cada persona) y changes (historial común)
+  lib/              Reglas puras: table y tables (tablas de listado: columnas, orden, filtros y páginas), money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
                     suppliers (volumen de negocio), clients (relación económica, antigüedad), changes (qué cambió),
                     travel (servicios de viaje, importes y PVP), name-match (nombres parecidos), supplier (reglas de las facturas de proveedor), files (comprobar
                     archivos), validate (formularios), permissions… y lo que aún no está en capas: data (consultas),
                     actions (cobrar), invoicing (nº de factura y envío), auth…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)
-  components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios, selector de cliente o proveedor (EntityPicker)
+  components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios, selector de cliente o proveedor
+                    (EntityPicker) y las piezas de las tablas (TableTools: buscador, filtros y «Columnas»; SortTh; Pager)
   pages/            Inicio, expedientes, bandejas de pagos y cobros, clientes, proveedores y contratos, usuarios, cuenta, acceso
 migrations/         Esquema de D1
 scripts/            invite.mjs (primera cuenta) y demo.sql (datos de ejemplo, sólo local)

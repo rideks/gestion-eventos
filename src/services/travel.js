@@ -15,6 +15,8 @@ import { LINE_KINDS, BOOKING_STATUS, personName, bookingReference, parseLineAmou
 import { BtBookingSchema, BtPassengerSchema, btLineSchema, validate } from '../lib/validate.js';
 import { diffFields } from '../lib/changes.js';
 import { eur } from '../lib/money.js';
+import { allowedColumns } from '../lib/table.js';
+import { TABLES } from '../lib/tables.js';
 import { nowIso } from '../lib/dates.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
 
@@ -43,16 +45,30 @@ async function load(ctx, id, { write = true } = {}) {
 // ── Consultas ──────────────────────────────────────────────────────────────
 
 /**
- * Reservas con sus totales. Sin «viajes.fee» no llega el fee.
+ * Reservas por páginas con sus totales, buscador, filtros (cliente, mes, estado) y orden por cualquier columna que
+ * pueda ver. Sin «viajes.fee» no llega el fee (ni se ordena por él). Los totales son de todas las que cumplen los
+ * filtros (sin las canceladas).
  * @param {Context} ctx
- * @param {{ q?: string, status?: string, month?: string }} [filters]
+ * @param {{ q?: string, status?: string, month?: string, clientId?: number | null, order?: string, dir?: string | null, limit?: number, offset?: number }} [filters]
  */
-export async function list(ctx, { q = '', status = '', month = '' } = {}) {
+export async function list(ctx, { q = '', status = '', month = '', clientId = null, order = 'reserva', dir = null, limit = 25, offset = 0 } = {}) {
   if (!can(ctx.user, 'viajes')) return forbidden();
+  const user = ctx.user;
+  const sortable = allowedColumns(TABLES.viajes, (p) => can(user, p)).filter((c) => c.sort);
+  const col = sortable.find((c) => c.key === order) ?? sortable[0];
+  const d = dir === 'asc' || dir === 'desc' ? dir : col.sort;
   const st = Object.hasOwn(BOOKING_STATUS, status) ? status : '';
   const mo = /^\d{4}-\d{2}$/.test(month) ? month : '';
-  const rows = await repo.list(ctx.db, { q: q.trim().slice(0, 80), status: st, month: mo });
-  return done({ rows: seesFee(ctx) ? rows : rows.map(noFee), status: st, month: mo, fee: seesFee(ctx) });
+  const [res, clientOptions] = await Promise.all([
+    repo.list(ctx.db, { q: q.trim().slice(0, 80), status: st, month: mo, clientId: Number.isInteger(clientId) ? clientId : null, sort: col.key, dir: d,
+      limit: Math.min(Math.max(1, limit), 100), offset: Math.max(0, offset) }),
+    repo.clientsWithBookings(ctx.db),
+  ]);
+  const fee = seesFee(ctx);
+  return done({
+    rows: fee ? res.rows : res.rows.map(noFee), total: res.total, sums: fee ? res.sums : noFee(res.sums),
+    clients: clientOptions, status: st, month: mo, order: col.key, dir: d, fee,
+  });
 }
 
 /** Las reservas de un cliente (su ficha) @param {Context} ctx @param {number} clientId */
