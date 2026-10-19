@@ -1,0 +1,253 @@
+---
+// Ficha de un proveedor: datos y condiciones, volumen de negocio (con quién, cuánto y cuándo) y el
+// historial de expedientes en los que ha trabajado. Cómo se calcula cada importe: src/lib/suppliers.js.
+// Los importes y las condiciones económicas sólo con permiso de gasto; editar y fusionar, con el de edición.
+import { env } from 'cloudflare:workers';
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import SupplierFields from '../../components/SupplierFields.astro';
+import { parseId, readForm, actor, can, logActivity } from '../../lib/app.js';
+import { SupplierSchema, SUPPLIER_STATUS, validate, formToObject } from '../../lib/validate.js';
+import { supplierFicha, supplierTypes, businessVolume, nameTaken, renameStmts, mergeStmts, cleanName } from '../../lib/suppliers.js';
+import { expLabel } from '../../lib/finance.js';
+import { eur } from '../../lib/money.js';
+import { today, formatDate, formatRange } from '../../lib/dates.js';
+
+const db = env.DB;
+const id = parseId(Astro.params.id);
+const me = Astro.locals.user;
+const money = can(me, 'proveedores.gasto');
+const editable = can(me, 'proveedores.edit');
+const year = Number(today().slice(0, 4));
+let ficha = id ? await supplierFicha(db, id) : null;
+if (!ficha) return Astro.rewrite('/404');
+
+let error = null;
+let errors = {};
+let v = ficha.supplier;
+let openEdit = Astro.url.searchParams.has('editar');
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const who = actor(Astro);
+  const s = ficha.supplier;
+  if (!editable) {
+    return Astro.redirect(`/proveedores/${id}?aviso=permiso`, 303);
+  } else if (input.intent === 'save') {
+    openEdit = true;
+    v = { ...s, ...input };
+    const parsed = validate(SupplierSchema, { ...input, name: cleanName(input.name) });
+    const taken = parsed.ok ? await nameTaken(db, parsed.data.name, id) : null;
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (taken) {
+      error = `Ese nombre ya lo usa ${taken}. Si es el mismo proveedor, fusiónalos.`;
+      errors = { name: error };
+    } else {
+      const d = parsed.data;
+      // Sin permiso de gasto, las condiciones económicas no se ven en el formulario: se conservan
+      if (!money) Object.assign(d, { economic_terms: s.economic_terms, payment_terms: s.payment_terms });
+      await db.batch([
+        db.prepare(
+          `UPDATE suppliers SET name = ?, type_id = ?, status = ?, city = ?, address = ?, contact_name = ?, phone = ?, email = ?,
+                  max_capacity = ?, since_on = ?, economic_terms = ?, payment_terms = ?, notes = ?,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+        ).bind(d.name, d.type_id, d.status, d.city, d.address, d.contact_name, d.phone, d.email,
+          d.max_capacity, d.since_on, d.economic_terms, d.payment_terms, d.notes, id),
+        ...renameStmts(db, id, s.name, d.name),
+      ]);
+      await logActivity(db, who, null, 'supplier.update', d.name !== s.name ? `renombró al proveedor ${s.name}: ahora ${d.name}` : `editó la ficha del proveedor ${d.name}`);
+      return Astro.redirect(`/proveedores/${id}?ok=guardado`, 303);
+    }
+  } else if (input.intent === 'merge') {
+    const into = await db.prepare('SELECT id, name FROM suppliers WHERE id = ?').bind(Number(input.into)).first();
+    if (!into || into.id === id) {
+      error = 'Elige el proveedor con el que fusionarlo.';
+    } else {
+      await db.batch(mergeStmts(db, s, into));
+      await logActivity(db, who, null, 'supplier.merge', `fusionó al proveedor ${s.name} con ${into.name}`);
+      return Astro.redirect(`/proveedores/${into.id}?ok=guardado&fusionado=${encodeURIComponent(s.name)}`, 303);
+    }
+  } else if (input.intent === 'delete') {
+    if (ficha.expedientes.length) {
+      error = 'Tiene pagos en expedientes: no se puede borrar. Si está repetido, fusiónalo con el bueno; si ya no se trabaja con él, márcalo como inactivo.';
+    } else {
+      await db.prepare('DELETE FROM suppliers WHERE id = ?').bind(id).run();
+      await logActivity(db, who, null, 'supplier.delete', `borró al proveedor ${s.name}`);
+      return Astro.redirect('/proveedores?ok=borrado', 303);
+    }
+  }
+  Astro.response.status = 400;
+}
+
+const s = ficha.supplier;
+const vol = businessVolume(ficha.expedientes, year);
+const [types, others] = await Promise.all([
+  editable ? supplierTypes(db) : [],
+  editable ? db.prepare('SELECT id, name FROM suppliers WHERE id <> ? ORDER BY name COLLATE NOCASE').bind(id).all().then((r) => r.results) : [],
+]);
+const merged = Astro.url.searchParams.get('fusionado');
+const pct = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)} %`;
+const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
+---
+<App title={s.name} section="proveedores" error={error} fieldErrors={errors} notice={merged ? `Fusionado: los pagos de «${merged}» ya están en esta ficha y su nombre queda como nombre anterior.` : null}>
+  <div class="crumbs">
+    <nav aria-label="Estás en">
+      <ol>
+        <li class="is-parent"><a href="/proveedores" data-crumb-list><Icon name="arrow-left" size={16} class="crumb-arrow" />Proveedores</a></li>
+        <li><span aria-current="page">{s.name}</span></li>
+      </ol>
+    </nav>
+    <a class="btn btn-ghost btn-sm return-link" href="/" data-return hidden><Icon name="corner-up-left" size={16} /> Volver a <span data-return-label></span></a>
+  </div>
+
+  <div class="page-top">
+    <div>
+      <h1>{s.name}</h1>
+      <p class="exp-meta">
+        {s.type && <span class="pill pill-accent">{s.type}</span>}
+        {s.status !== 'activo' && <span class:list={['pill', s.status === 'bloqueado' ? 'pill-danger' : 'pill-muted']}>{SUPPLIER_STATUS[s.status]}</span>}
+        {s.city && <span><Icon name="map-pin" size={16} />{s.city}</span>}
+        <span><Icon name="folder" size={16} />{vol.exps} {vol.exps === 1 ? 'expediente' : 'expedientes'}{vol.last && ` · el último, ${formatDate(vol.last)}`}</span>
+      </p>
+    </div>
+    {editable && <a class="btn btn-ghost btn-sm" href={`/proveedores/${id}?editar#editar`}><Icon name="pencil" size={16} /> Editar ficha</a>}
+  </div>
+
+  {money && (
+    <>
+      <h2 class="section-title">Volumen de negocio</h2>
+      <div class="kpis">
+        <div class="kpi is-gold"><span>Contratado</span><b class="money">{eur(vol.contracted)}</b><small>sin IVA · {vol.exps} {vol.exps === 1 ? 'expediente' : 'expedientes'}{vol.exps > 1 && ` · media ${eur(vol.average)}`}</small></div>
+        <div class="kpi"><span>En {year}</span><b class="money">{eur(vol.thisYear)}</b><small>eventos de {year}</small></div>
+        <div class="kpi is-ok"><span>Pagado</span><b class="money">{eur(vol.paid)}</b><small>con factura del proveedor: {eur(vol.invoiced)}</small></div>
+        <div class:list={['kpi', { 'is-danger': vol.pending > 0 }]}><span>Pendiente de pago</span><b class="money">{eur(vol.pending)}</b><small>{vol.credits ? `abonos y comisiones: ${eur(vol.credits)}` : 'sin abonos ni comisiones'}</small></div>
+      </div>
+      <p class="muted small">Importes sin IVA de los pagos a este proveedor en expedientes no cancelados. «Contratado» incluye los pagos previstos; los abonos y comisiones (líneas en negativo) van aparte.</p>
+    </>
+  )}
+
+  <div class="two-col mt">
+    <section class="card">
+      <h2>Datos</h2>
+      <dl class="kv">
+        <dt>Contacto</dt><dd>{s.contact_name ?? '—'}</dd>
+        <dt>Teléfono</dt><dd>{phoneHref ? <a href={phoneHref}>{s.phone}</a> : '—'}</dd>
+        <dt>Email</dt><dd>{s.email ? <a href={`mailto:${s.email}`}>{s.email}</a> : '—'}</dd>
+        <dt>Dirección</dt><dd>{[s.address, s.city].filter(Boolean).join(' · ') || '—'}</dd>
+        <dt>Capacidad</dt><dd>{s.max_capacity ? `${s.max_capacity} personas` : '—'}</dd>
+        <dt>Relación desde</dt><dd>{s.since_on ? formatDate(s.since_on) : vol.first ? `${formatDate(vol.first)} (primer evento registrado)` : '—'}</dd>
+        {ficha.aliases.length > 0 && <><dt>Nombres anteriores</dt><dd>{ficha.aliases.join(' · ')}</dd></>}
+        <dt>Alta</dt><dd>{formatDate(s.created_at.slice(0, 10))}{s.created_by_name && ` · ${s.created_by_name}`}</dd>
+      </dl>
+    </section>
+    <section class="card">
+      <h2>Condiciones y comentarios</h2>
+      <dl class="kv">
+        {money && <><dt>Condiciones económicas</dt><dd class="pre">{s.economic_terms ?? '—'}</dd></>}
+        {money && <><dt>Crédito y pago</dt><dd class="pre">{s.payment_terms ?? '—'}</dd></>}
+        <dt>Comentarios internos</dt><dd class="pre">{s.notes ?? '—'}</dd>
+      </dl>
+    </section>
+  </div>
+
+  <h2 class="section-title">Expedientes en los que ha trabajado ({ficha.expedientes.length})</h2>
+  {ficha.expedientes.length ? (
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead>
+          <tr>
+            <th scope="col">Expediente</th><th scope="col">Cliente</th><th scope="col">Ciudad</th><th scope="col">Fechas</th><th scope="col">Servicios</th>
+            {money && <><th scope="col" class="num">Contratado</th><th scope="col" class="num">Pagado</th><th scope="col" class="num">Pendiente</th></>}
+          </tr>
+        </thead>
+        <tbody>
+          {ficha.expedientes.map((e) => (
+            <tr class:list={{ 'is-planned': e.status === 'cancelado' }}>
+              <td><a href={`/expedientes/${e.id}/pagos`}><strong>{expLabel(e)}</strong> · {e.name}</a>{e.status === 'cancelado' && <span class="pill pill-muted">Cancelado · no cuenta</span>}</td>
+              <td>{e.company}</td>
+              <td>{e.destination ?? '—'}</td>
+              <td>{e.start_date ? formatRange(e.start_date, e.end_date) : '—'}</td>
+              <td>{e.concepts ? e.concepts.split(',').join(' · ') : '—'}</td>
+              {money && <><td class="num">{eur(e.contracted)}</td><td class="num">{eur(e.paid)}</td><td class:list={['num', { neg: e.pending > 0 }]}>{eur(e.pending)}</td></>}
+            </tr>
+          ))}
+        </tbody>
+        {money && vol.exps > 0 && (
+          <tfoot><tr><td colspan="5">Total (sin cancelados)</td><td class="num">{eur(vol.contracted)}</td><td class="num">{eur(vol.paid)}</td><td class="num">{eur(vol.pending)}</td></tr></tfoot>
+        )}
+      </table>
+    </div>
+  ) : <p class="muted">Todavía no aparece en ningún expediente.</p>}
+
+  {money && vol.exps > 0 && (
+    <div class="two-col mt">
+      <section class="card">
+        <h2>Por año</h2>
+        <table class="dtable compact">
+          <thead><tr><th scope="col">Año</th><th scope="col" class="num">Exp.</th><th scope="col" class="num">Contratado</th><th scope="col" class="num">vs año anterior</th></tr></thead>
+          <tbody>
+            {vol.byYear.map((y) => (
+              <tr><td>{y.key}</td><td class="num">{y.exps}</td><td class="num">{eur(y.contracted)}</td><td class="num">{y.change === null ? '—' : pct(y.change)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+      <section class="card">
+        <h2>Por cliente</h2>
+        <table class="dtable compact">
+          <thead><tr><th scope="col">Cliente</th><th scope="col" class="num">Exp.</th><th scope="col" class="num">Contratado</th></tr></thead>
+          <tbody>
+            {vol.byClient.map((c) => <tr><td>{c.key}</td><td class="num">{c.exps}</td><td class="num">{eur(c.contracted)}</td></tr>)}
+          </tbody>
+        </table>
+        {vol.byCity.length > 1 && (
+          <>
+            <h2 class="mt">Por ciudad</h2>
+            <table class="dtable compact">
+              <thead><tr><th scope="col">Ciudad</th><th scope="col" class="num">Exp.</th><th scope="col" class="num">Contratado</th></tr></thead>
+              <tbody>{vol.byCity.map((c) => <tr><td>{c.key}</td><td class="num">{c.exps}</td><td class="num">{eur(c.contracted)}</td></tr>)}</tbody>
+            </table>
+          </>
+        )}
+      </section>
+    </div>
+  )}
+
+  {editable && (
+    <>
+      <details class="add mt" id="editar" open={openEdit}>
+        <summary class="btn btn-primary"><Icon name="pencil" size={18} /> <span class="when-closed">Editar ficha</span><span class="when-open">Cerrar formulario</span></summary>
+        <form method="post" class="form-section">
+          <h2><Icon name="briefcase" /> Ficha de {s.name}</h2>
+          <SupplierFields v={v} errors={errors} types={types} full money={money} />
+          <p class="muted small">Si cambias el nombre, el anterior se guarda: si alguien lo vuelve a escribir en un pago, irá a este proveedor.</p>
+          <div><button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar ficha</button></div>
+        </form>
+      </details>
+
+      {others.length > 0 && (
+        <section class="card mt">
+          <h2>¿Está repetido?</h2>
+          <p class="muted small">Fusionarlo pasa sus pagos y documentos al otro proveedor, completa los datos que le falten y guarda «{s.name}» como nombre anterior. No se puede deshacer.</p>
+          <form method="post" class="quick-form mt">
+            <label class="visually-hidden" for="into">Fusionar con</label>
+            <select id="into" name="into" required>
+              <option value="">Fusionar con…</option>
+              {others.map((o) => <option value={o.id}>{o.name}</option>)}
+            </select>
+            <button class="btn btn-danger btn-sm" type="submit" name="intent" value="merge" data-confirm={`¿Fusionar «${s.name}» con el proveedor elegido? Sus pagos pasarán a esa ficha y esta desaparecerá.`}>Fusionar</button>
+          </form>
+        </section>
+      )}
+
+      {!ficha.expedientes.length && (
+        <form method="post" class="mt">
+          <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar al proveedor ${s.name}?`}><Icon name="trash-2" size={16} /> Borrar proveedor</button>
+        </form>
+      )}
+    </>
+  )}
+</App>

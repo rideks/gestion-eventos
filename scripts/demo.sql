@@ -1,6 +1,6 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- Datos de EJEMPLO para desarrollo local (npm run db:demo). NUNCA en producción.
--- Borra todo (también los tipos de IVA, que vuelven a los de serie) y carga cuatro expedientes basados en casos reales:
+-- Borra todo (también los tipos de IVA y de proveedor, que vuelven a los de serie) y carga cuatro expedientes basados en casos reales:
 --   · EXP 1287 Workshop BMW (Valladolid)      → celebrado, por cerrar (como el Excel de cierre)
 --   · EXP 1285 Jornadas de trabajo ELECNOR    → cerrado
 --   · EXP 1289 Convención anual ROCHE         → en curso, con pagos urgentes y una factura pedida
@@ -13,15 +13,19 @@
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
+DELETE FROM supplier_aliases; DELETE FROM suppliers; DELETE FROM supplier_types;
+INSERT INTO supplier_types (name, sort) VALUES
+  ('Hotel', 10), ('Venue / espacio', 20), ('Restaurante', 30), ('Catering', 40), ('Actividades', 50),
+  ('Formación', 60), ('Transporte', 70), ('Audiovisuales', 80), ('Otros', 90);
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
 DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
--- Reparto inicial (el mismo que migrations/0008_roles_y_permisos.sql)
+-- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más el de 0009_proveedores.sql)
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.value FROM roles r, json_each(CASE r.key
-  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings"]'
-  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings"]'
-  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage"]'
-  WHEN 'eventos' THEN '["expedientes","pagos"]'
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto"]'
+  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto"]'
+  WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create"]'
   WHEN 'tecnico' THEN '["users"]'
 END) p;
 DELETE FROM vat_rates;
@@ -195,3 +199,33 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (3, 1, 'Tania Ruiz', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
   (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.022,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),
   (4, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z');
+
+-- ── Proveedores: el directorio sale de los nombres de los pagos; algunas fichas, completas ─────────
+INSERT INTO suppliers (name, created_by)
+SELECT TRIM(supplier), 1 FROM payments WHERE TRIM(supplier) <> ''
+UNION
+SELECT TRIM(supplier), 1 FROM supplier_invoices WHERE TRIM(supplier) <> ''
+ON CONFLICT (name) DO NOTHING;
+UPDATE payments SET supplier_id = (SELECT s.id FROM suppliers s WHERE s.name = TRIM(payments.supplier));
+UPDATE supplier_invoices SET supplier_id = (SELECT s.id FROM suppliers s WHERE s.name = TRIM(supplier_invoices.supplier));
+
+UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Hotel') WHERE name LIKE 'Hotel %';
+UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Restaurante') WHERE name = 'La Parrilla de San Lorenzo';
+UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Catering') WHERE name = 'Catering Lazo';
+UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Audiovisuales') WHERE name IN ('AV Sistemas', 'Fluge Audiovisuales', 'Sonido Toledo');
+UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Transporte') WHERE name = 'Autocares Sevilla';
+UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Actividades') WHERE name = 'DMC Marbella';
+UPDATE suppliers SET city = 'Valladolid', contact_name = 'Departamento de grupos', phone = '+34 983 000 000', email = 'grupos.valladolid@example.com',
+       max_capacity = 400, since_on = '2025-02-01',
+       economic_terms = 'Tarifa de grupos 2026: habitación doble 118 € · sala plenaria 1.200 €/día. 10 % de comisión sobre alojamiento.',
+       payment_terms = '50 % a la confirmación y el resto 7 días antes del evento. Factura de comisión al cierre.',
+       notes = 'Muy buena respuesta en eventos de concesionarios. Pedir siempre la factura de comisión.'
+ WHERE name = 'Hotel Barceló Valladolid';
+UPDATE suppliers SET city = 'Sevilla', contact_name = 'Eventos y congresos', email = 'eventos.sevilla@example.com', max_capacity = 600,
+       payment_terms = 'Proforma del 1er pago antes del 15/10; 2º pago antes del evento.'
+ WHERE name = 'Hotel Alfonso XIII';
+UPDATE suppliers SET city = 'Toledo' WHERE name IN ('Hotel Beatriz Toledo', 'Sonido Toledo');
+UPDATE suppliers SET city = 'Madrid' WHERE name IN ('Hotel 1881 Madrid', 'Catering Lazo');
+UPDATE suppliers SET city = 'Marbella' WHERE name IN ('Hotel Puente Romano', 'DMC Marbella');
+UPDATE suppliers SET city = 'Sevilla' WHERE name = 'Autocares Sevilla';
+UPDATE suppliers SET city = 'Valladolid' WHERE name = 'La Parrilla de San Lorenzo';

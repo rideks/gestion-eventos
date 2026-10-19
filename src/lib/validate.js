@@ -72,6 +72,30 @@ export const InviteSchema = z.object({
 
 export const UserRoleSchema = z.object({ role_id: roleId });
 
+// ── Proveedores ────────────────────────────────────────────────────────────
+export const SUPPLIER_STATUS = { activo: 'Activo', inactivo: 'Inactivo', bloqueado: 'No contratar' };
+
+export const SupplierSchema = z.object({
+  name: reqText('Nombre del proveedor', 2, 120),
+  type_id: z.preprocess((v) => (v === '' || v == null ? null : Number(v)), z.number().int().positive().nullable()),
+  status: z.enum(Object.keys(SUPPLIER_STATUS), { error: 'Elige el estado' }),
+  city: optText('Ciudad', 80),
+  address: optText('Dirección', 200),
+  contact_name: optText('Persona de contacto', 120),
+  phone: z.preprocess(blankToNull, z.string().regex(/^[+\d\s().-]{6,20}$/, 'Teléfono no válido').nullable()),
+  email: optEmail('Email'),
+  max_capacity: optInt('Capacidad máxima', 1, 100000),
+  since_on: optDate('Inicio de la relación'),
+  economic_terms: optText('Condiciones económicas', 2000),
+  payment_terms: optText('Condiciones de crédito y pago', 1000),
+  notes: optText('Comentarios internos', 2000),
+});
+
+// Alta rápida desde el selector de un pago: lo básico (el resto, en su ficha)
+export const SupplierQuickSchema = SupplierSchema.pick({ name: true, type_id: true, city: true });
+
+export const SupplierTypeSchema = z.object({ type_name: reqText('Tipo de proveedor', 2, 40) });
+
 export const RoleSchema = z.object({
   name: reqText('Nombre del rol', 2, 40),
   description: optText('Descripción', 160),
@@ -108,8 +132,12 @@ export const BudgetSchema = z.object({
  * Una fila de pagos previstos (hotel: 21.400 € IVA incluido antes del 29/01).
  * Se escribe el importe con IVA y su tipo; la base se calcula.
  */
+// El proveedor de cada fila se elige de la lista: supplier_id (con JavaScript) o su nombre exacto
+const supplierId = z.preprocess((v) => (blankToNull(v) === null ? null : Number(v)), z.number().int().positive().nullable().catch(null));
+
 export const forecastRowSchema = (rates) => z.object({
   supplier: reqText('Proveedor', 2, 120),
+  supplier_id: supplierId,
   concept: optText('Concepto', 160),
   due_date: optDate('Fecha límite'),
   total: z.preprocess((v) => parseAmount(v), z.custom((v) => typeof v === 'number' && !Number.isNaN(v),
@@ -124,6 +152,7 @@ export const forecastRowSchema = (rates) => z.object({
 // ── Proveedores ────────────────────────────────────────────────────────────
 export const PaymentSchema = z.object({
   supplier: reqText('Proveedor', 2, 120),
+  supplier_id: supplierId,
   concept: optText('Concepto', 160),
   due_date: optDate('Fecha límite de pago'),
   status: z.enum(['pendiente', 'pagado']),

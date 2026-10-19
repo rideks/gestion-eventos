@@ -13,8 +13,9 @@ import PaymentForm from '../../../../components/PaymentForm.astro';
 import SupplierDocFields from '../../../../components/SupplierDocFields.astro';
 import FileField from '../../../../components/FileField.astro';
 import Pill from '../../../../components/Pill.astro';
+import SupplierPickerKit from '../../../../components/SupplierPickerKit.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
-import { getExpediente, suggestions, PAYMENT_SELECT, PAYMENT_JOINS } from '../../../../lib/data.js';
+import { getExpediente, PAYMENT_SELECT, PAYMENT_JOINS } from '../../../../lib/data.js';
 import { PaymentSchema, SupplierDocSchema, ConformSchema, validate, formToObject } from '../../../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../../lib/vat.js';
 import {
@@ -26,6 +27,7 @@ import { paymentState, supplierInvoiceState, documentState, needsReceipt, confor
 import { eur } from '../../../../lib/money.js';
 import { today, nowIso, formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markPaid } from '../../../../lib/actions.js';
+import { resolveSupplier, supplierOptions, supplierTypes } from '../../../../lib/suppliers.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
@@ -177,24 +179,30 @@ if (Astro.request.method === 'POST') {
       lines = rawVatLines(form);
       const parsed = validate(PaymentSchema, { ...input, status: 'pendiente' });
       const amounts = parseVatLines(form, rates);
+      // Uno de la lista; el que ya tenía se puede mantener aunque ahora esté en «No contratar»
+      const picked = parsed.ok ? await resolveSupplier(db, { id: parsed.data.supplier_id, name: parsed.data.supplier }, { keepId: p.supplier_id }) : null;
       if (paid) {
         error = PAID_LOCKED;
       } else if (!parsed.ok) {
         error = parsed.message;
         errors = parsed.errors;
+      } else if (!picked.ok) {
+        error = picked.message;
+        errors = { supplier: picked.message };
       } else if (!amounts.ok) {
         error = amounts.message;
         errors = { amount: amounts.message };
       } else {
         const d = parsed.data;
+        const sup = picked.supplier;
         await db.batch([
           db.prepare(
-            `UPDATE payments SET supplier = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
+            `UPDATE payments SET supplier = ?, supplier_id = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
                     due_date = ?, notes = ?, updated_at = ? WHERE id = ?`,
-          ).bind(d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
+          ).bind(sup.name, sup.id, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
             d.due_date, d.notes, nowIso(), pid),
           activityStmt(db, who, id, 'payment.update',
-            `${amounts.total !== p.total_cents ? `importe ${eur(p.total_cents)} → ${eur(amounts.total)}` : 'editó el pago'} · ${d.supplier}`),
+            `${amounts.total !== p.total_cents ? `importe ${eur(p.total_cents)} → ${eur(amounts.total)}` : 'editó el pago'} · ${sup.name}`),
         ]);
         return Astro.redirect(`${self}?ok=guardado`, 303);
       }
@@ -209,7 +217,10 @@ if (Astro.request.method === 'POST') {
 }
 
 // Pagos que cubre cada documento (para los compartidos con otros pagos)
-const [{ suppliers }, all, shared] = await Promise.all([suggestions(db), expedienteDocuments(db, id), documentsCoverage(db, pid)]);
+const editable = !locked && !paid;
+const [options, types, all, shared] = await Promise.all([
+  editable ? supplierOptions(db) : [], editable ? supplierTypes(db) : [], expedienteDocuments(db, id), documentsCoverage(db, pid),
+]);
 const state = paymentState(p, now);
 const invState = supplierInvoiceState(p);
 const saved = linesOf(p);
@@ -217,7 +228,7 @@ const receiptHref = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_n
 // Documentos ya subidos en el expediente que no están en este pago (los del mismo proveedor, primero)
 const linked = new Set(docs.map((d) => d.id));
 const choices = all.filter((d) => !linked.has(d.id)).sort((a, b) => (b.supplier === p.supplier) - (a.supplier === p.supplier));
-const sameSupplier = `/expedientes/${id}/pagos?nuevo&proveedor=${encodeURIComponent(p.supplier)}`;
+const sameSupplier = `/expedientes/${id}/pagos?nuevo${p.supplier_id ? `&proveedor=${p.supplier_id}` : ''}`;
 const showUpload = openUpload || !docs.length;
 // ¿Están hechos todos los pagos que cubre el documento? (para conformar la factura)
 const docPaid = (d) => !conformBlocker(d.payment_count > 1 ? shared.get(d.id) ?? [] : [p]);
@@ -250,7 +261,7 @@ const flow = [
 
   <section class="card">
     <div class="sec-head">
-      <h2><Icon name="wallet" /> {p.supplier} <Pill state={state} /></h2>
+      <h2><Icon name="wallet" /> {p.supplier_id && can(me, 'proveedores') ? <a href={`/proveedores/${p.supplier_id}`} title="Ficha del proveedor">{p.supplier}</a> : p.supplier} <Pill state={state} /></h2>
       <span class:list={['big-money money', { neg: p.total_cents < 0 }]}>{eur(p.total_cents)}</span>
     </div>
     <dl class="kv">
@@ -272,7 +283,7 @@ const flow = [
           <details class="add edit-inline" id="editar" open={openEdit}>
             <summary class="btn btn-sm"><Icon name="pencil" size={16} /> <span class="when-closed">Modificar pago</span><span class="when-open">Cerrar sin guardar</span></summary>
             <form method="post" class="form edit-form">
-              <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} withStatus={false} id="edit" />
+              <PaymentForm v={v} errors={errors} rates={rates} lines={lines} withStatus={false} keepId={p.supplier_id} id="edit" />
               <div class="actions-inline">
                 <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar cambios</button>
               </div>
@@ -493,4 +504,5 @@ const flow = [
     )}
   </section>
 
+  {editable && <SupplierPickerKit options={options} types={types} />}
 </App>

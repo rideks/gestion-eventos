@@ -1,0 +1,81 @@
+---
+// Campos de la ficha de un proveedor. `full`: todos (editar la ficha); si no, los básicos (alta rápida).
+// `money`: las condiciones económicas y de pago sólo las ve y las cambia quien tiene permiso de gasto.
+import { SUPPLIER_STATUS } from '../lib/validate.js';
+
+const { v = {}, errors = {}, types = [], full = false, money = false } = Astro.props;
+const err = (k) => ({ 'has-error': errors[k] });
+---
+<div class="row row-2">
+  <div class:list={['field', err('name')]}>
+    <label for="sup-name">Nombre del proveedor</label>
+    <input id="sup-name" name="name" type="text" maxlength="120" required value={v.name ?? ''} placeholder="Hotel Plaza Valladolid" />
+  </div>
+  <div class:list={['field', err('type_id')]}>
+    <label for="sup-type">Tipo</label>
+    <select id="sup-type" name="type_id">
+      <option value="">Sin tipo</option>
+      {types.map((t) => <option value={t.id} selected={Number(v.type_id) === t.id}>{t.name}</option>)}
+    </select>
+  </div>
+</div>
+<div class="row row-3">
+  <div class:list={['field', err('city')]}>
+    <label for="sup-city">Ciudad <span class="opt">(opcional)</span></label>
+    <input id="sup-city" name="city" type="text" maxlength="80" value={v.city ?? ''} placeholder="Valladolid" />
+  </div>
+  <div class:list={['field', err('contact_name')]}>
+    <label for="sup-contact">Comercial o contacto <span class="opt">(opcional)</span></label>
+    <input id="sup-contact" name="contact_name" type="text" maxlength="120" value={v.contact_name ?? ''} />
+  </div>
+  <div class:list={['field', err('status')]}>
+    <label for="sup-status">Estado</label>
+    <select id="sup-status" name="status">
+      {Object.entries(SUPPLIER_STATUS).map(([k, label]) => <option value={k} selected={(v.status ?? 'activo') === k}>{label}</option>)}
+    </select>
+  </div>
+</div>
+<div class="row row-2">
+  <div class:list={['field', err('phone')]}>
+    <label for="sup-phone">Teléfono <span class="opt">(opcional)</span></label>
+    <input id="sup-phone" name="phone" type="tel" maxlength="20" value={v.phone ?? ''} />
+  </div>
+  <div class:list={['field', err('email')]}>
+    <label for="sup-email">Email <span class="opt">(opcional)</span></label>
+    <input id="sup-email" name="email" type="email" maxlength="200" value={v.email ?? ''} />
+  </div>
+</div>
+{full && (
+  <>
+    <div class:list={['field', err('address')]}>
+      <label for="sup-address">Dirección <span class="opt">(opcional)</span></label>
+      <input id="sup-address" name="address" type="text" maxlength="200" value={v.address ?? ''} placeholder="Calle, número, código postal" />
+    </div>
+    <div class="row row-2">
+      <div class:list={['field', err('max_capacity')]}>
+        <label for="sup-capacity">Capacidad máxima <span class="opt">(personas · opcional)</span></label>
+        <input id="sup-capacity" name="max_capacity" type="number" min="1" max="100000" inputmode="numeric" value={v.max_capacity ?? ''} />
+      </div>
+      <div class:list={['field', err('since_on')]}>
+        <label for="sup-since">Inicio de la relación <span class="opt">(si se sabe)</span></label>
+        <input id="sup-since" name="since_on" type="date" value={v.since_on ?? ''} />
+      </div>
+    </div>
+    {money && (
+      <div class="row row-2">
+        <div class:list={['field', err('economic_terms')]}>
+          <label for="sup-terms">Condiciones económicas <span class="opt">(tarifas, descuentos…)</span></label>
+          <textarea id="sup-terms" name="economic_terms" rows="3" maxlength="2000">{v.economic_terms ?? ''}</textarea>
+        </div>
+        <div class:list={['field', err('payment_terms')]}>
+          <label for="sup-payment">Condiciones de crédito y pago</label>
+          <textarea id="sup-payment" name="payment_terms" rows="3" maxlength="1000" placeholder="50 % a la firma y el resto 7 días antes">{v.payment_terms ?? ''}</textarea>
+        </div>
+      </div>
+    )}
+    <div class:list={['field', err('notes')]}>
+      <label for="sup-notes">Comentarios internos <span class="opt">(opcional)</span></label>
+      <textarea id="sup-notes" name="notes" rows="3" maxlength="2000">{v.notes ?? ''}</textarea>
+    </div>
+  </>
+)}

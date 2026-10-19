@@ -24,6 +24,21 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Facturas al cliente | Correo a Tania con las PO | Un expediente puede tener **una o varias facturas**, con o sin PO (una factura puede llevar varias PO y una PO puede facturarse en varias veces). La factura se hace **en la aplicación**, en su propia página: cliente con sus **datos fiscales** (NIF/CIF, dirección fiscal y email de facturación, que se rellenan solos si ya se le ha facturado), PO que cubre, concepto e importe por tipo de IVA. Eventos la **pide** (queda «Por emitir»); Administración la **emite** y recibe sola el **número siguiente**, correlativo y **único** (`G/000904/26/01`; formato y próximo número en Ajustes). Una factura emitida **no se modifica**: si tiene un error, se anula y se hace otra. Después se **envía al cliente**: de momento el envío es **simulado** (se enseña el correo tal y como saldría y queda apuntado a quién, cuándo y quién lo envió, pero no sale ningún correo). «Ver la factura» la enseña lista para imprimir o guardar en PDF (hasta tener la plantilla de contabilidad). Después, **Cobrada**. |
 | Cierre | Excel de cierre hecho a mano | **Pestaña Cierre** con las dos tablas del Excel (proveedores \| cliente), total neto grupo, total grupo, beneficio y % sobre ventas, calculado solo. Comprobaciones antes de cerrar, **descarga para Excel** (mismo formato) e impresión/PDF. Al cerrar queda en sólo lectura. |
 
+### Volumen de negocio con cada proveedor (cómo se calcula)
+
+Siempre **sin IVA**, sólo con **expedientes no cancelados** y a partir de las líneas de pago (nada se apunta a
+mano, así que no se desactualiza). Cada línea cuenta una vez: los importes de las facturas del proveedor no se
+suman (una factura puede cubrir varios pagos).
+
+| Indicador | Qué suma |
+|---|---|
+| Contratado | Las líneas de coste del proveedor (importe positivo), previstas o ya facturadas |
+| Con factura | La parte de lo contratado cuyas líneas tienen al menos una **factura** (no proforma) |
+| Pagado / Pendiente de pago | La parte de lo contratado ya pagada / por pagar |
+| Abonos y comisiones | Las líneas en negativo (abonos, comisiones del hotel, devoluciones), aparte |
+| En el año | Lo contratado en eventos de ese año (fecha de inicio del expediente) |
+| Expedientes / media | En cuántos expedientes aparece y lo contratado de media por expediente |
+
 ### Quién hace qué (roles y permisos)
 
 Cada persona tiene **un rol** y cada rol, una lista de **permisos** (lista blanca: lo que no tiene marcado, no
@@ -45,6 +60,10 @@ Reparto inicial:
 | Ver **Cobros** (bandeja, pestaña del expediente, facturas al cliente, PO y sus documentos) | ✔ | ✔ | ✔ | | |
 | Emitir, enviar, cobrar y anular facturas al cliente | ✔ | ✔ | ✔ | | |
 | Subir, editar y cerrar las **PO** del cliente | ✔ | ✔ | ✔ | | |
+| Ver el directorio y las fichas de **proveedores** (contacto, tipo, comentarios, historial de expedientes) | ✔ | ✔ | ✔ | ✔ | |
+| **Dar de alta** proveedores nuevos (con aviso de los que tienen un nombre parecido) | ✔ | ✔ | ✔ | ✔ | |
+| Editar, fusionar y borrar proveedores (y sus tipos) | ✔ | ✔ | ✔ | | |
+| Ver las condiciones económicas y el gasto con cada proveedor | ✔ | ✔ | ✔ | | |
 | Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
 | Usuarios, roles y permisos | | | | | ✔ |
 
@@ -96,7 +115,15 @@ Reparto inicial:
   (subir otra, elegir una ya subida si cubre varios pagos, revisarla con su número, borrar las que no estén conformes) y
   debajo **2. Justificante y pago** (Administración sube el justificante y lo marca pagado, o «Deshacer pagado»; Eventos
   sólo «Pagado con tarjeta»).
-- Las sugerencias de proveedores y clientes salen al escribir (no al entrar en el campo) y el navegador no propone lo
+- El **proveedor de un pago se elige de la lista** de proveedores dados de alta (en el alta del pago, al modificarlo,
+  en «varios pagos previstos» y en la previsión de la Nueva solicitud): al escribir se buscan por nombre, nombre
+  anterior, tipo o ciudad, sin acentos ni mayúsculas, y cada uno sale con su tipo y su ciudad. Un nombre que no está
+  **no se guarda** (ni en el navegador ni en el servidor). Si es nuevo, «**Dar de alta «…»**» abre una ventana
+  (nombre, tipo y ciudad) que antes **avisa de los que tienen un nombre parecido** («Barcelo Valladolid S.L.» →
+  «Hotel Barceló Valladolid»: acentos, «Hotel», «S.L.», erratas o una palabra de más o de menos): se elige
+  «Es este» o se confirma «No, es otro: darlo de alta». Los proveedores en «No contratar» salen en la lista pero no
+  se pueden elegir para un pago nuevo.
+- Las sugerencias de clientes salen al escribir (no al entrar en el campo) y el navegador no propone lo
   escrito otras veces: al entrar en un campo sólo se ve su ejemplo.
 - Todo lo que borra o quita algo pide **confirmación** en una ventana propia de la aplicación.
 - **Ajustes** (Administración): los **tipos de IVA** que salen en todos los desplegables (añadir, quitar,
@@ -104,6 +131,14 @@ Reparto inicial:
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
+- **Proveedores**: directorio con buscador (nombre, ciudad, contacto o un nombre anterior), filtros por tipo y
+  estado y orden por nombre, último evento, expedientes, **altas recientes** o lo contratado. **Ficha** de cada proveedor: tipo
+  (ampliable), estado (activo, inactivo, no contratar), contacto, dirección, capacidad, condiciones económicas y de
+  crédito, comentarios internos, nombres anteriores, cuándo y quién lo dio de alta, el **historial de expedientes** (cliente, ciudad, fechas,
+  servicios) y el **volumen de negocio** (ver abajo), por año (con el cambio respecto al anterior), por cliente y
+  por ciudad. Un proveedor se da de alta con «Nuevo proveedor» o desde el selector de un pago, siempre con el aviso
+  de nombres parecidos; si aun así hay repetidos, se **fusionan** (pagos y documentos pasan al bueno y el nombre
+  queda como anterior, así que también se encuentra por él). Desde la pestaña Pagos de cada expediente y desde la ficha de pago se llega a la ficha del proveedor.
 - **Usuarios y permisos** (sólo Técnico): personas (invitación por enlace, sin registro abierto; rol; activar o
   desactivar), roles (crear, permisos por áreas, quién tiene cada uno, tabla de quién puede hacer qué) y el
   registro de cambios. **Mi cuenta** para todos.
@@ -179,7 +214,7 @@ coge el siguiente).
   que no se hacen más lentas con los años de histórico.
 - El resumen de documentos de cada pago (facturas, proformas, pendientes de revisar) se calcula en la misma consulta
   de la lista, sin una consulta por fila.
-- Las sugerencias de proveedores y clientes (autocompletar) se guardan 5 minutos en memoria.
+- Las sugerencias de clientes (autocompletar) se guardan 5 minutos en memoria; la lista de proveedores del selector se lee siempre de la base de datos (un alta se ve al momento).
 - Para revisar los planes de las consultas: `EXPLAIN QUERY PLAN` sobre la base local (`.wrangler/state/v3/d1/…`).
 
 ## Seguridad

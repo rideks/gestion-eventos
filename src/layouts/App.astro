@@ -34,6 +34,7 @@ const nav = [
   ...(work ? [{ key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: canOpen ? counts.requests : 0, tone: 'warn' }] : []),
   ...(can(user, 'pagos') ? [{ key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' }] : []),
   ...(can(user, 'cobros') ? [{ key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: counts.to_issue, tone: 'warn' }] : []),
+  ...(can(user, 'proveedores') ? [{ key: 'proveedores', href: '/proveedores', label: 'Proveedores', icon: 'briefcase' }] : []),
   ...(work ? [{ key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true }] : []),
   ...(can(user, 'users') ? [{ key: 'usuarios', href: '/usuarios', label: 'Usuarios y permisos', icon: 'user-plus', sep: !work }] : []),
   ...(can(user, 'settings') ? [{ key: 'ajustes', href: '/ajustes', label: 'Ajustes', icon: 'settings' }] : []),
@@ -245,6 +246,7 @@ const roleLabel = user?.role_name ?? '';
       // Desplegables: las sugerencias (proveedores, clientes…) salen al escribir, no nada más entrar en el
       // campo, y el navegador no propone lo escrito otras veces: así se ve el ejemplo del campo.
       const syncList = (input) => {
+        if (input.hasAttribute('data-picker-input')) return; // el proveedor tiene su propio desplegable
         if (!input.dataset.list) {
           if (!input.hasAttribute('list')) return;
           input.dataset.list = input.getAttribute('list');

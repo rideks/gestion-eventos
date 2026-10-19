@@ -14,7 +14,7 @@ const LAST_DOC_FILE = `(SELECT d.file_id FROM payment_documents pd JOIN supplier
  *  invoice_number (los números de sus facturas), file_id / file_name (el último documento: factura si hay).
  */
 export const PAYMENT_SELECT = `
-  p.id, p.expediente_id, p.supplier, p.concept, p.base_cents, p.total_cents, p.vat, p.vat_lines, p.due_date, p.status,
+  p.id, p.expediente_id, p.supplier, p.supplier_id, p.concept, p.base_cents, p.total_cents, p.vat, p.vat_lines, p.due_date, p.status,
   p.paid_on, p.method, p.planned, p.notes, p.created_by, p.created_at, p.updated_at,
   p.receipt_file_id, rf.name AS receipt_name,
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura'")}) AS invoice_count,
@@ -81,7 +81,7 @@ export async function loadFinance(db, id, now) {
 /**
  * Nombres ya usados para autocompletar:
  *   companies → clientes de los expedientes · billed → además, a quién se ha facturado (facturas y PO:
- *   sólo para los formularios de cobros) · suppliers → proveedores
+ *   sólo para los formularios de cobros). Los proveedores no: se eligen de su lista (supplierOptions).
  */
 // Cambian poco y salen en todos los formularios: se guardan unos minutos en la memoria del servidor
 // para no recorrer todo el histórico en cada página (un nombre nuevo aparece como mucho a los 5 minutos).
@@ -89,15 +89,14 @@ const SUGGESTIONS_TTL = 5 * 60 * 1000;
 let suggestionsCache = null;
 export async function suggestions(db) {
   if (suggestionsCache && suggestionsCache.until > Date.now()) return suggestionsCache.value;
-  const [companies, billed, suppliers] = await db.batch([
+  const [companies, billed] = await db.batch([
     db.prepare('SELECT DISTINCT company AS name FROM expedientes ORDER BY company COLLATE NOCASE LIMIT 300'),
     db.prepare(`SELECT name FROM (
                   SELECT company AS name FROM expedientes UNION SELECT billed_to FROM invoices UNION SELECT billed_to FROM purchase_orders
                 ) WHERE name IS NOT NULL ORDER BY name COLLATE NOCASE LIMIT 300`),
-    db.prepare('SELECT DISTINCT supplier AS name FROM payments ORDER BY supplier COLLATE NOCASE LIMIT 300'),
   ]);
   const names = (r) => r.results.map((x) => x.name);
-  const value = { companies: names(companies), billed: names(billed), suppliers: names(suppliers) };
+  const value = { companies: names(companies), billed: names(billed) };
   suggestionsCache = { value, until: Date.now() + SUGGESTIONS_TTL };
   return value;
 }
@@ -297,14 +296,14 @@ export function byMonth(rows, field) {
 }
 
 /**
- * Búsqueda en todo (cabecera): expedientes, pagos a proveedores (también por el nº de sus facturas
- * y proformas), facturas al cliente y PO. Hasta 20 de cada cosa, lo más reciente primero.
+ * Búsqueda en todo (cabecera): expedientes, proveedores, pagos a proveedores (también por el nº de sus
+ * facturas y proformas), facturas al cliente y PO. Hasta 20 de cada cosa, lo más reciente primero.
  */
-export async function searchAll(db, q, { cobros = true } = {}) {
+export async function searchAll(db, q, { cobros = true, suppliers = false } = {}) {
   const term = likeTerm(q);
-  // Sin permiso de cobros (Eventos) no se buscan facturas al cliente ni PO
+  // Sin permiso de cobros (Eventos) no se buscan facturas al cliente ni PO; sin el de proveedores, sus fichas
   const none = 'SELECT NULL AS id WHERE 0';
-  const [expedientes, payments, invoices, pos] = await db.batch([
+  const [expedientes, payments, invoices, pos, directory] = await db.batch([
     db.prepare(
       `SELECT e.id, e.number, e.name, e.company, e.destination, e.status, e.start_date, e.end_date FROM expedientes e
         WHERE e.name LIKE ?1 OR e.company LIKE ?1 OR e.destination LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1
@@ -332,8 +331,14 @@ export async function searchAll(db, q, { cobros = true } = {}) {
         WHERE po.number LIKE ?1 OR po.billed_to LIKE ?1
         ORDER BY po.id DESC LIMIT 20`,
     ).bind(term) : db.prepare(none),
+    suppliers ? db.prepare(
+      `SELECT s.id, s.name, s.city, s.status, t.name AS type FROM suppliers s LEFT JOIN supplier_types t ON t.id = s.type_id
+        WHERE s.name LIKE ?1 OR s.city LIKE ?1 OR s.contact_name LIKE ?1
+           OR EXISTS (SELECT 1 FROM supplier_aliases a WHERE a.supplier_id = s.id AND a.alias LIKE ?1)
+        ORDER BY s.name COLLATE NOCASE LIMIT 20`,
+    ).bind(term) : db.prepare(none),
   ]).then((rs) => rs.map((r) => r.results));
-  return { expedientes, payments, invoices, pos };
+  return { expedientes, payments, invoices, pos, suppliers: directory };
 }
 
 /**

@@ -699,3 +699,46 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
 .matrix tr.area th { background: var(--bg); color: var(--muted); }
 .matrix .yes { color: var(--ok); }
 .matrix .no { color: var(--line-2); }
+/* Proveedores */
+.supplier-filters { margin-top: 4px; }
+.supplier-filters input[type='search'] { flex: 1 1 220px; width: auto; }
+.supplier-filters select { flex: 0 1 190px; min-width: 0; }
+.dtable.suppliers .pill { margin-left: 6px; }
+.dtable.compact { font-size: 0.9rem; }
+.dtable.compact th { background: none; color: var(--muted); padding: 6px 8px; }
+.dtable.compact td { padding: 6px 8px; }
+.kv .pre { white-space: pre-line; }
+.type-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.type-list li { display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface); }
+.type-list li:not(:has(form)) { padding-right: 12px; }
+.supplier-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -8px 0 16px; }
+.supplier-chips a.pill:hover { color: var(--text); border-color: var(--line-2); }
+.type-list .btn { border: 0; background: none; min-height: 0; padding: 4px 6px; }
+
+/* Selector de proveedor (SupplierPicker): sólo los de la lista; «Dar de alta» con aviso de parecidos */
+.picker { position: relative; }
+.picker-pop {
+  position: absolute; z-index: 30; margin: 0; padding: 4px; list-style: none;
+  max-height: min(320px, 50vh); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface); border: 1px solid var(--line-2); border-radius: 12px;
+  box-shadow: 0 18px 40px -14px rgb(0 0 0 / 0.35);
+}
+.picker-pop li { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; line-height: 1.3; }
+.picker-pop li[role="option"]:hover, .picker-pop li[aria-selected="true"] { background: var(--c2-soft); }
+.picker-pop li[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; background: none; }
+.picker-pop .picker-name { font-weight: 600; }
+.picker-meta { flex-basis: 100%; color: var(--muted); font-size: 0.875rem; }
+.picker-pop .pill { order: -1; margin-left: auto; }
+.picker-pop .picker-create { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; font-weight: 600; }
+.picker-pop .picker-empty { cursor: default; color: var(--muted); }
+.picker-dialog { width: min(100% - 32px, 540px); }
+.picker-dialog form { align-items: stretch; text-align: left; }
+.picker-dialog p { font-size: 0.95rem; font-weight: 400; }
+.picker-dialog h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.25rem; }
+.picker-dialog .confirm-actions { margin-top: 4px; }
+.picker-similar { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--warn-bg); }
+.picker-similar > p { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 1rem; font-weight: 600; color: var(--warn); }
+.picker-similar > p svg { flex: none; margin-top: 3px; }
+.picker-similar ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.picker-similar li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface); }
+.picker-similar li .picker-meta { flex-basis: auto; }

@@ -95,9 +95,9 @@ export async function attachDocument({ db, bucket, who, payment, file, data }) {
   const conforme = invoice && can(who.user, 'supplier.review') && !!data.number && payment.status === 'pagado';
   const at = nowIso();
   const d = await db.prepare(
-    `INSERT INTO supplier_invoices (expediente_id, kind, supplier, number, issued_on, total_cents, file_id, review, reviewed_by, reviewed_at, uploaded_by, uploaded_at, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-  ).bind(payment.expediente_id, data.kind, payment.supplier, data.number, data.issued_on, data.total ?? null, fileId,
+    `INSERT INTO supplier_invoices (expediente_id, kind, supplier, supplier_id, number, issued_on, total_cents, file_id, review, reviewed_by, reviewed_at, uploaded_by, uploaded_at, notes)
+     VALUES (?, ?, ?, (SELECT supplier_id FROM payments WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+  ).bind(payment.expediente_id, data.kind, payment.supplier, payment.id, data.number, data.issued_on, data.total ?? null, fileId,
     conforme ? 'conforme' : 'pendiente', conforme ? who.user.id : null, conforme ? at : null, who.user.id, at, data.comment ?? null).first();
   const what = docName({ kind: data.kind, number: data.number });
   await db.batch([

@@ -9,6 +9,7 @@ import ExpedienteFields from '../../components/ExpedienteFields.astro';
 import VatLines from '../../components/VatLines.astro';
 import FileField from '../../components/FileField.astro';
 import ForecastRows from '../../components/ForecastRows.astro';
+import SupplierPickerKit from '../../components/SupplierPickerKit.astro';
 import { readForm, actor, can, activityStmt } from '../../lib/app.js';
 import { ExpedienteSchema, forecastRowSchema, NumberSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../lib/vat.js';
@@ -16,6 +17,7 @@ import { suggestions, activeUsers, suggestNumber, numberTaken } from '../../lib/
 import { storeFile, getFile, UploadError } from '../../lib/files.js';
 import { eur } from '../../lib/money.js';
 import { nowIso } from '../../lib/dates.js';
+import { resolveSuppliers, supplierOptions, supplierTypes } from '../../lib/suppliers.js';
 
 const db = env.DB;
 const me = Astro.locals.user;
@@ -34,12 +36,14 @@ if (Astro.request.method === 'POST') {
   v = { ...input };
   const e = validate(ExpedienteSchema, input);
   const b = parseVatLines(form, rates);
-  const fc = form ? parseRows(form, 'fc', ['supplier', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate'] }) : { ok: true, rows: [] };
+  const fc = form ? parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] }) : { ok: true, rows: [] };
+  // Los proveedores de la previsión tienen que estar dados de alta (se eligen de la lista)
+  const sups = fc.ok && fc.rows.length ? await resolveSuppliers(db, fc.rows) : { ok: true };
   if (form) {
     // Para volver a pintar el formulario tal cual si hay un error
     budgetLines = rawVatLines(form);
     const col = (f) => form.getAll(`fc_${f}`).map(String);
-    forecast = col('supplier').map((supplier, i) => ({ supplier, concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
+    forecast = col('supplier').map((supplier, i) => ({ supplier, supplier_id: col('supplier_id')[i], concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
       .filter((r) => r.supplier || r.total);
   }
   const wantsNumber = admin && String(input.number ?? '').trim() !== '';
@@ -53,6 +57,8 @@ if (Astro.request.method === 'POST') {
     errors = { amount: b.message };
   } else if (!fc.ok) {
     error = `Previsión de pagos · ${fc.message}`;
+  } else if (!sups.ok) {
+    error = `Previsión de pagos · ${sups.message}`;
   } else if (!n.ok) {
     error = n.message;
     errors = n.errors;
@@ -73,13 +79,14 @@ if (Astro.request.method === 'POST') {
     try {
       const file = getFile(form, 'file');
       const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: exp.id, userId: me.id }) : null;
+      const supOf = sups.of;
       await db.batch([
         db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, file_id, created_by) VALUES (?, 1, ?, ?, ?, ?, ?, ?)')
           .bind(exp.id, b.base, b.total, JSON.stringify(b.lines), 'Presupuesto aprobado por el cliente', fileId, me.id),
         ...fc.rows.map((r) => db.prepare(
-          `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-        ).bind(exp.id, r.supplier, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
+          `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        ).bind(exp.id, supOf(r).name, supOf(r).id, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
         activityStmt(db, who, exp.id, 'expediente.request',
           `pidió el expediente con un presupuesto de ${eur(b.base)} sin IVA${fc.rows.length ? ` y ${fc.rows.length} pagos previstos` : ''}`),
         ...(number ? [activityStmt(db, who, exp.id, 'expediente.open', `abrió el expediente con el número ${number}`)] : []),
@@ -95,7 +102,9 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ companies, suppliers }, users, suggested] = await Promise.all([suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null]);
+const [{ companies }, users, suggested, options, types] = await Promise.all([
+  suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null, supplierOptions(db), supplierTypes(db),
+]);
 ---
 <App title="Nueva solicitud" section="nuevo" error={error} fieldErrors={errors}>
   <div class="page-top">
@@ -120,7 +129,7 @@ const [{ companies, suppliers }, users, suggested] = await Promise.all([suggesti
       <h2><Icon name="wallet" /> Previsión de pagos a proveedores</h2>
       <p class="muted">Lo que realmente cuesta el evento (sin hinchar precios): los pagos grandes y cuándo los exigen.
         Ej.: el hotel exige 21.400 € antes del 29/01 y un 2º pago de 28.600 € el 28/02. Cada fila pasa a la lista de pagos del expediente.</p>
-      <ForecastRows rows={forecast} suppliers={suppliers} rates={rates} />
+      <ForecastRows rows={forecast} rates={rates} />
     </section>
 
     {admin && (
@@ -139,4 +148,5 @@ const [{ companies, suppliers }, users, suggested] = await Promise.all([suggesti
       <a class="btn btn-ghost" href="/expedientes">Cancelar</a>
     </div>
   </form>
+  <SupplierPickerKit options={options} types={types} />
 </App>

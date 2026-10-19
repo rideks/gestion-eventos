@@ -11,10 +11,12 @@ import PaymentForm from '../../../components/PaymentForm.astro';
 import SupplierDocFields from '../../../components/SupplierDocFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
+import SupplierPickerKit from '../../../components/SupplierPickerKit.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
-import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
+import { getExpediente, loadFinance } from '../../../lib/data.js';
 import { PaymentSchema, SupplierDocSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
 import { attachDocument } from '../../../lib/supplier.js';
+import { resolveSupplier, resolveSuppliers, supplierOptions, supplierTypes } from '../../../lib/suppliers.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../../lib/vat.js';
 import { getFile, storeFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
@@ -30,13 +32,14 @@ if (!exp) return Astro.rewrite('/404');
 const me = Astro.locals.user;
 const now = today();
 const locked = isLocked(exp);
-// ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?proveedor=… lo rellena
+// ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?proveedor=<id> lo rellena
 const params = Astro.url.searchParams;
 let open = params.has('nuevo') ? (params.get('nuevo') === 'varios' ? 'varios' : 'uno') : null;
-const presetSupplier = (params.get('proveedor') ?? '').slice(0, 120);
+const presetId = parseId(params.get('proveedor'));
+const preset = presetId ? await db.prepare("SELECT id, name FROM suppliers WHERE id = ? AND status <> 'bloqueado'").bind(presetId).first() : null;
 let error = null;
 let errors = {};
-let v = { supplier: presetSupplier };
+let v = { supplier: preset?.name, supplier_id: preset?.id };
 let lines = [];
 let many = [];
 
@@ -56,6 +59,8 @@ if (Astro.request.method === 'POST') {
     open = 'uno';
     lines = rawVatLines(form);
     const parsed = validate(PaymentSchema, input);
+    // El proveedor tiene que ser uno de la lista (no se crea al escribirlo)
+    const picked = parsed.ok ? await resolveSupplier(db, { id: parsed.data.supplier_id, name: parsed.data.supplier }) : null;
     const doc = validate(SupplierDocSchema, input);
     const amounts = parseVatLines(form, rates);
     const file = form ? getFile(form, 'file') : null;
@@ -67,6 +72,9 @@ if (Astro.request.method === 'POST') {
     if (!parsed.ok) {
       error = parsed.message;
       errors = parsed.errors;
+    } else if (!picked.ok) {
+      error = picked.message;
+      errors = { supplier: picked.message };
     } else if (!amounts.ok) {
       error = amounts.message;
       errors = { amount: amounts.message };
@@ -85,13 +93,14 @@ if (Astro.request.method === 'POST') {
       try {
         // El justificante se guarda antes: si no se puede subir, no se crea nada
         const receiptId = paid && receipt ? await storeFile({ db, bucket: env.DOCS, file: receipt, expedienteId: id, userId: me.id }) : null;
+        const sup = picked.supplier;
         const payment = await db.prepare(
-          `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines,
+          `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines,
                                  due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, status`,
-        ).bind(id, d.supplier, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, status`,
+        ).bind(id, sup.name, sup.id, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
           d.due_date, d.status, paid ? d.paid_on : null, paid ? d.method : null, receiptId, d.notes, me.id).first();
-        await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${d.supplier} (${eur(amounts.total)})${paid ? ' ya pagado' : ''}`).run();
+        await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${sup.name} (${eur(amounts.total)})${paid ? ' ya pagado' : ''}`).run();
         // El documento (si se ha adjuntado o se sabe su número): la factura queda pendiente de revisar
         try {
           if (file || doc.data.number) await attachDocument({ db, bucket: env.DOCS, who, payment, file, data: doc.data });
@@ -110,22 +119,26 @@ if (Astro.request.method === 'POST') {
   } else if (input.intent === 'add_many') {
     open = 'varios';
     const col = (f) => form.getAll(`fc_${f}`).map(String);
-    many = col('supplier').map((supplier, i) => ({ supplier, concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
+    many = col('supplier').map((supplier, i) => ({ supplier, supplier_id: col('supplier_id')[i], concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
       .filter((r) => r.supplier || r.total);
-    const rows = parseRows(form, 'fc', ['supplier', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate'] });
+    const rows = parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] });
+    const sups = rows.ok && rows.rows.length ? await resolveSuppliers(db, rows.rows) : null;
     if (!rows.ok) {
       error = rows.message;
     } else if (!rows.rows.length) {
       error = 'Escribe al menos un pago (proveedor e importe).';
+    } else if (!sups.ok) {
+      error = sups.message;
     } else {
       const sum = rows.rows.reduce((a, r) => a + r.total, 0);
+      const supOf = sups.of;
       await db.batch([
         ...rows.rows.map((r) => db.prepare(
-          `INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-        ).bind(id, r.supplier, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
+          `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        ).bind(id, supOf(r).name, supOf(r).id, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
         activityStmt(db, who, id, 'payment.add',
-          `añadió ${plural(rows.rows.length, 'pago previsto', 'pagos previstos')} (${eur(sum)}): ${[...new Set(rows.rows.map((r) => r.supplier))].join(', ')}`),
+          `añadió ${plural(rows.rows.length, 'pago previsto', 'pagos previstos')} (${eur(sum)}): ${[...new Set(rows.rows.map((r) => supOf(r).name))].join(', ')}`),
       ]);
       return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
     }
@@ -133,10 +146,13 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [fin, { suppliers }] = await Promise.all([loadFinance(db, id, now), suggestions(db)]);
+const [fin, options, types] = await Promise.all([loadFinance(db, id, now), locked ? [] : supplierOptions(db), locked ? [] : supplierTypes(db)]);
 const s = fin.summary;
 const pending = fin.payments.filter((p) => p.status !== 'pagado');
 const paid = fin.payments.filter((p) => p.status === 'pagado');
+// Con qué proveedores se trabaja en este expediente (cada uno, una vez)
+const suppliersHere = [...new Map(fin.payments.filter((p) => p.supplier_id).map((p) => [p.supplier_id, { id: p.supplier_id, name: p.supplier }])).values()]
+  .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 ---
 <App title={`Pagos · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="pagos" fin={fin} />
@@ -148,6 +164,13 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
     <div class="kpi"><span>Sin factura</span><b>{s.withoutInvoice.length}</b><small>{s.paidWithoutInvoice.length ? plural(s.paidWithoutInvoice.length, 'ya pagado', 'ya pagados') : 'líneas previstas'}</small></div>
   </div>
 
+  {suppliersHere.length > 0 && (
+    <p class="supplier-chips">
+      <span class="muted small">Proveedores:</span>
+      {suppliersHere.map((x) => (can(me, 'proveedores') ? <a class="pill pill-muted" href={`/proveedores/${x.id}`}>{x.name}</a> : <span class="pill pill-muted">{x.name}</span>))}
+    </p>
+  )}
+
   {!locked && (
     <div class="add-group">
       <details class="add" open={open === 'uno'} name="nuevo-pago">
@@ -156,7 +179,7 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
           <h2><Icon name="receipt" /> Pago a proveedor</h2>
           <p class="muted">Un pago nuevo (aunque no estuviera previsto), un pago con tarjeta o un abono/comisión (en negativo).
             Si es la factura de un pago que ya está en la lista, ábrelo y añádesela allí.</p>
-          <PaymentForm v={v} errors={errors} suppliers={suppliers} rates={rates} lines={lines} receipt id="new" />
+          <PaymentForm v={v} errors={errors} rates={rates} lines={lines} receipt id="new" />
           <h3 class="form-sub"><Icon name="paperclip" size={18} /> Factura o proforma del proveedor <span class="opt muted">(si ya la tienes)</span></h3>
           <SupplierDocFields v={v} errors={errors} id="newinv" comment="none" />
           <div class="actions-inline">
@@ -170,7 +193,7 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
           <h2><Icon name="wallet" /> Varios pagos previstos</h2>
           <p class="muted">Pagos que habrá que hacer, al mismo proveedor o a varios (p. ej. un 2º pago al hotel y el autocar).
             Las facturas se les añaden cuando lleguen.</p>
-          <ForecastRows rows={many} suppliers={suppliers} rates={rates} supplier={presetSupplier} addLabel="Añadir otra fila" />
+          <ForecastRows rows={many} rates={rates} supplier={preset} addLabel="Añadir otra fila" />
           <div class="actions-inline">
             <button class="btn btn-primary" type="submit" name="intent" value="add_many" data-busy="Guardando…">Guardar pagos</button>
           </div>
@@ -178,6 +201,7 @@ const paid = fin.payments.filter((p) => p.status === 'pagado');
       </details>
     </div>
   )}
+  {!locked && <SupplierPickerKit options={options} types={types} />}
 
   <div class:list={['group-title', { 'is-danger': s.overdue.length > 0 }]}>
     <h3>Por pagar ({pending.length})</h3>

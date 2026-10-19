@@ -22,8 +22,8 @@ if (/^\d{1,6}$/.test(q)) {
   if (exact) return Astro.redirect(`/expedientes/${exact.id}`, 303);
 }
 const cobros = can(Astro.locals.user, 'cobros');
-const r = q.length >= 2 ? await searchAll(db, q, { cobros }) : null;
-const total = r ? r.expedientes.length + r.payments.length + r.invoices.length + r.pos.length : 0;
+const r = q.length >= 2 ? await searchAll(db, q, { cobros, suppliers: can(Astro.locals.user, 'proveedores') }) : null;
+const total = r ? r.expedientes.length + r.suppliers.length + r.payments.length + r.invoices.length + r.pos.length : 0;
 ---
 <App title={q ? `Buscar «${q}»` : 'Buscar'} section="" origin={q ? `Búsqueda «${q}»` : null}>
   <div class="page-top">
@@ -48,6 +48,22 @@ const total = r ? r.expedientes.length + r.payments.length + r.invoices.length +
               <span class="item-title"><span class:list={['exp-num', { 'is-draft': !e.number }]}>{expLabel(e)}</span> {e.name}</span>
               <span class="item-meta"><span>{e.company}</span>{e.destination && <span>{e.destination}</span>}<span>{formatRange(e.start_date, e.end_date)}</span></span>
               <span class="item-flags"><Pill state={expedienteState(e, now)} /></span>
+            </div>
+            <Icon name="chevron-right" class="chev" />
+          </a></li>
+        ))}
+      </ul>
+    </section>
+  )}
+  {r?.suppliers.length > 0 && (
+    <section>
+      <div class="sec-head"><h2><Icon name="briefcase" /> Proveedores ({r.suppliers.length})</h2></div>
+      <ul class="list">
+        {r.suppliers.map((x) => (
+          <li><a class="item" href={`/proveedores/${x.id}`}>
+            <div class="item-body">
+              <span class="item-title">{x.name}</span>
+              <span class="item-meta">{x.type && <span>{x.type}</span>}{x.city && <span>{x.city}</span>}</span>
             </div>
             <Icon name="chevron-right" class="chev" />
           </a></li>

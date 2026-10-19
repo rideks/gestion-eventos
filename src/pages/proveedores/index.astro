@@ -1,0 +1,207 @@
+---
+// Proveedores: directorio con búsqueda, filtros y orden. Lo contratado (sin IVA, eventos no
+// cancelados; ver src/lib/suppliers.js) sólo lo ve quien tiene permiso de gasto.
+// Aquí se dan de alta proveedores (también desde el selector de un pago) y se gestionan los tipos.
+// Antes de crear uno se avisa de los que tienen un nombre parecido: hay que confirmar que es otro.
+import { env } from 'cloudflare:workers';
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import SupplierFields from '../../components/SupplierFields.astro';
+import { readForm, actor, can, logActivity } from '../../lib/app.js';
+import { SupplierSchema, SupplierTypeSchema, SUPPLIER_STATUS, validate, formToObject } from '../../lib/validate.js';
+import { supplierList, supplierTypes, createSupplier, cleanName } from '../../lib/suppliers.js';
+import { eur } from '../../lib/money.js';
+import { today, formatDate } from '../../lib/dates.js';
+
+const db = env.DB;
+const me = Astro.locals.user;
+const money = can(me, 'proveedores.gasto');
+const creatable = can(me, 'proveedores.create');
+const editable = can(me, 'proveedores.edit');
+const year = Number(today().slice(0, 4));
+let error = null;
+let errors = {};
+let v = { status: 'activo' };
+let openNew = Astro.url.searchParams.has('nuevo');
+let similar = [];
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  const who = actor(Astro);
+  if (input.intent === 'create' ? !creatable : !editable) {
+    return Astro.redirect('/proveedores?aviso=permiso', 303);
+  } else if (input.intent === 'create') {
+    openNew = true;
+    v = input;
+    const parsed = validate(SupplierSchema, { ...input, name: cleanName(input.name) });
+    // Si se parece a alguno, se enseñan y hay que confirmar que es otro (el nombre escrito tiene que ser el mismo)
+    const r = parsed.ok ? await createSupplier(db, parsed.data, me.id, { confirmed: input.confirm_similar === parsed.data.name }) : null;
+    if (!parsed.ok) {
+      error = parsed.message;
+      errors = parsed.errors;
+    } else if (r.taken) {
+      error = `Ya existe: ${r.taken}. Búscalo en la lista.`;
+      errors = { name: error };
+    } else if (r.similar) {
+      similar = r.similar;
+      error = 'Ya hay proveedores con un nombre parecido: comprueba que no es ninguno de ellos.';
+    } else {
+      await logActivity(db, who, null, 'supplier.create', `dio de alta al proveedor ${r.supplier.name}`);
+      return Astro.redirect(`/proveedores/${r.supplier.id}?ok=creado`, 303);
+    }
+  } else if (input.intent === 'add_type') {
+    const parsed = validate(SupplierTypeSchema, { type_name: cleanName(input.type_name) });
+    if (!parsed.ok) {
+      error = parsed.message;
+    } else {
+      const { meta } = await db.prepare(
+        'INSERT INTO supplier_types (name, sort) VALUES (?, (SELECT COALESCE(MAX(sort), 0) + 10 FROM supplier_types)) ON CONFLICT (name) DO NOTHING',
+      ).bind(parsed.data.type_name).run();
+      if (!meta.changes) error = 'Ese tipo ya existe.';
+      else return Astro.redirect('/proveedores?ok=creado#tipos', 303);
+    }
+  } else if (input.intent === 'delete_type') {
+    const { meta } = await db.prepare('DELETE FROM supplier_types WHERE id = ? AND NOT EXISTS (SELECT 1 FROM suppliers WHERE type_id = ?)')
+      .bind(Number(input.type_id), Number(input.type_id)).run();
+    if (!meta.changes) error = 'Ese tipo lo tiene algún proveedor: cámbiales el tipo antes de quitarlo.';
+    else return Astro.redirect('/proveedores?ok=borrado#tipos', 303);
+  }
+  Astro.response.status = 400;
+}
+
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const typeId = Number(Astro.url.searchParams.get('tipo')) || null;
+const status = Object.hasOwn(SUPPLIER_STATUS, Astro.url.searchParams.get('estado') ?? '') ? Astro.url.searchParams.get('estado') : '';
+const ORDERS = { name: 'Nombre', uso: 'Último evento', expedientes: 'Más expedientes', altas: 'Altas recientes', ...(money ? { year: `Contratado en ${year}`, gasto: 'Contratado en total' } : {}) };
+const order = Object.hasOwn(ORDERS, Astro.url.searchParams.get('orden') ?? '') ? Astro.url.searchParams.get('orden') : 'name';
+const [rows, types] = await Promise.all([supplierList(db, { q, typeId, status, year, order }), supplierTypes(db)]);
+const filtered = q || typeId || status;
+const total = rows.reduce((a, r) => a + r.contracted, 0);
+const totalYear = rows.reduce((a, r) => a + r.this_year, 0);
+---
+<App title="Proveedores" section="proveedores" error={error} fieldErrors={errors} origin="Proveedores">
+  <div class="page-top">
+    <div>
+      <h1>Proveedores</h1>
+      <p>Hoteles, venues, restaurantes y el resto: con quién trabajamos{money && ' y cuánto contratamos'}</p>
+    </div>
+  </div>
+
+  {creatable && (
+    <details class="add" open={openNew}>
+      <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Nuevo proveedor</span><span class="when-open">Cerrar formulario</span></summary>
+      <form method="post" class="form-section">
+        <h2><Icon name="briefcase" /> Nuevo proveedor</h2>
+        <p class="muted">Lo básico; el resto se completa en su ficha. Antes, búscalo en la lista: si ya está, no lo des de alta otra vez.</p>
+        <SupplierFields v={v} errors={errors} types={types} />
+        {similar.length > 0 && (
+          <div class="picker-similar">
+            <p><Icon name="triangle-alert" size={18} /> Ya hay proveedores con un nombre parecido. ¿Es alguno de estos?</p>
+            <ul>
+              {similar.map((x) => (
+                <li>
+                  <span><a href={`/proveedores/${x.id}`}><strong>{x.name}</strong></a> <span class="picker-meta">{[x.type, x.city, x.via && `antes «${x.via}»`].filter(Boolean).join(' · ')}</span></span>
+                  {x.status !== 'activo' && <span class:list={['pill', x.status === 'bloqueado' ? 'pill-danger' : 'pill-muted']}>{SUPPLIER_STATUS[x.status]}</span>}
+                </li>
+              ))}
+            </ul>
+            <label class="check"><input type="checkbox" name="confirm_similar" value={cleanName(v.name)} /> No es ninguno de estos: es un proveedor distinto</label>
+          </div>
+        )}
+        <div><button class="btn btn-primary" type="submit" name="intent" value="create" data-busy="Guardando…"><Icon name="check" size={18} /> Dar de alta</button></div>
+      </form>
+    </details>
+  )}
+
+  <form method="get" class="quick-form supplier-filters" role="search">
+    <label class="visually-hidden" for="q">Buscar proveedor</label>
+    <input id="q" name="q" type="search" value={q} placeholder="Nombre, ciudad o contacto" />
+    <label class="visually-hidden" for="tipo">Tipo</label>
+    <select id="tipo" name="tipo">
+      <option value="">Todos los tipos</option>
+      {types.map((t) => <option value={t.id} selected={typeId === t.id}>{t.name}</option>)}
+    </select>
+    <label class="visually-hidden" for="estado">Estado</label>
+    <select id="estado" name="estado">
+      <option value="">Todos los estados</option>
+      {Object.entries(SUPPLIER_STATUS).map(([k, label]) => <option value={k} selected={status === k}>{label}</option>)}
+    </select>
+    <label class="visually-hidden" for="orden">Ordenar por</label>
+    <select id="orden" name="orden">
+      {Object.entries(ORDERS).map(([k, label]) => <option value={k} selected={order === k}>{label}</option>)}
+    </select>
+    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
+    {filtered && <a class="btn btn-ghost btn-sm" href="/proveedores">Quitar filtros</a>}
+  </form>
+
+  <p class="muted mt">
+    {rows.length} {rows.length === 1 ? 'proveedor' : 'proveedores'}
+    {money && rows.length > 0 && <> · contratado en {year}: <b class="money">{eur(totalYear)}</b> · en total: <b class="money">{eur(total)}</b> <span class="small">(sin IVA, eventos no cancelados)</span></>}
+  </p>
+
+  {rows.length ? (
+    <div class="table-scroll mt">
+      <table class="dtable suppliers">
+        <thead>
+          <tr>
+            <th scope="col">Proveedor</th>
+            <th scope="col">Tipo</th>
+            <th scope="col">Ciudad</th>
+            <th scope="col" class="num">Expedientes</th>
+            <th scope="col">Último evento</th>
+            {order === 'altas' && <th scope="col">Alta</th>}
+            {money && <th scope="col" class="num">{year}</th>}
+            {money && <th scope="col" class="num">Total</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr class:list={{ 'is-planned': r.status !== 'activo' }}>
+              <td>
+                <a href={`/proveedores/${r.id}`}><strong>{r.name}</strong></a>
+                {r.status !== 'activo' && <span class:list={['pill', r.status === 'bloqueado' ? 'pill-danger' : 'pill-muted']}>{SUPPLIER_STATUS[r.status]}</span>}
+              </td>
+              <td>{r.type ?? '—'}</td>
+              <td>{r.city ?? '—'}</td>
+              <td class="num">{r.exps}</td>
+              <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>
+              {order === 'altas' && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
+              {money && <td class="num money">{eur(r.this_year)}</td>}
+              {money && <td class="num money">{eur(r.contracted)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <div class="empty mt">
+      <p>{filtered ? 'Ningún proveedor con esos filtros.' : 'Todavía no hay proveedores. Se dan de alta con «Nuevo proveedor» o al elegir el proveedor de un pago.'}</p>
+    </div>
+  )}
+
+  {editable && (
+    <section class="card mt" id="tipos">
+      <h2>Tipos de proveedor</h2>
+      <p class="muted small">Se pueden añadir los que hagan falta. Un tipo sólo se puede quitar si ningún proveedor lo tiene.</p>
+      <ul class="type-list">
+        {types.map((t) => (
+          <li>
+            <span>{t.name} <span class="muted small">({t.n})</span></span>
+            {t.n === 0 && (
+              <form method="post">
+                <input type="hidden" name="type_id" value={t.id} />
+                <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="delete_type" aria-label={`Quitar el tipo ${t.name}`}><Icon name="x" size={14} /></button>
+              </form>
+            )}
+          </li>
+        ))}
+      </ul>
+      <form method="post" class="quick-form mt">
+        <label class="visually-hidden" for="type_name">Tipo nuevo</label>
+        <input id="type_name" name="type_name" type="text" maxlength="40" placeholder="Tipo nuevo (p. ej. Guías)" required />
+        <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="add_type"><Icon name="plus" size={16} /> Añadir tipo</button>
+      </form>
+    </section>
+  )}
+</App>

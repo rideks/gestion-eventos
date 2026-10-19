@@ -3,6 +3,7 @@
 // un pago puede tener varias facturas y proformas, y una factura puede cubrir varios pagos.
 // El importe se escribe CON IVA (lo que pone la factura) y el sin IVA se calcula.
 import VatLines from './VatLines.astro';
+import SupplierPicker from './SupplierPicker.astro';
 import FileField from './FileField.astro';
 import { PAYMENT_METHODS } from '../lib/finance.js';
 import { can } from '../lib/app.js';
@@ -10,7 +11,9 @@ import { can } from '../lib/app.js';
 // lines: desglose por tipos de IVA (guardado o lo escrito antes de un error)
 // receipt: muestra el campo del justificante bancario (si se marca «Ya pagado» por transferencia)
 // withStatus: «Por pagar / Ya pagado» (en el alta); en la ficha se paga en su paso, no al editar
-const { v = {}, errors = {}, suppliers = [], id = 'pay', rates = [], lines = [], receipt = false, withStatus = true } = Astro.props;
+// keepId: el proveedor que ya tiene el pago (al editarlo); el proveedor se elige con SupplierPicker
+// (la página lleva SupplierPickerKit)
+const { v = {}, errors = {}, id = 'pay', rates = [], lines = [], receipt = false, withStatus = true, keepId = null } = Astro.props;
 const status = v.status ?? 'pendiente';
 // Eventos sólo registra como pagados los pagos con tarjeta (el resto lo marca Administración)
 const cardOnly = !can(Astro.locals.user, 'payment.any_method');
@@ -21,8 +24,7 @@ const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHOD
 <div class="row row-2">
   <div class:list={['field', { 'has-error': errors.supplier }]}>
     <label for={`${id}-supplier`}>Proveedor</label>
-    <input id={`${id}-supplier`} name="supplier" type="text" required maxlength="120" list={`${id}-suppliers`} value={v.supplier ?? ''} placeholder="Hotel Barceló Valladolid" autocomplete="off" />
-    <datalist id={`${id}-suppliers`}>{suppliers.map((s) => <option value={s} />)}</datalist>
+    <SupplierPicker id={`${id}-supplier`} value={v.supplier} valueId={v.supplier_id} keepId={keepId} required placeholder="Busca por nombre, tipo o ciudad" />
   </div>
   <div class:list={['field', { 'has-error': errors.concept }]}>
     <label for={`${id}-concept`}>Concepto <span class="opt">(opcional)</span></label>

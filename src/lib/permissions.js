@@ -35,6 +35,16 @@ export const AREAS = [
     ],
   },
   {
+    key: 'proveedores',
+    label: 'Proveedores',
+    permissions: [
+      { key: 'proveedores', label: 'Ver el directorio y las fichas de proveedores', help: 'Datos de contacto, tipo, comentarios e historial de expedientes (sin importes).' },
+      { key: 'proveedores.create', label: 'Dar de alta proveedores nuevos', help: 'Desde el directorio o al elegir el proveedor de un pago. Antes de crearlo se avisa si ya hay alguno con un nombre parecido.' },
+      { key: 'proveedores.edit', label: 'Editar y fusionar proveedores', help: 'Cambiar sus datos, juntar los duplicados, borrarlos y gestionar los tipos de proveedor.' },
+      { key: 'proveedores.gasto', label: 'Ver las condiciones económicas y el gasto', help: 'Tarifas, condiciones de pago y cuánto se ha contratado, facturado y pagado con cada uno.' },
+    ],
+  },
+  {
     key: 'sistema',
     label: 'Configuración',
     permissions: [
@@ -61,6 +71,10 @@ export const REQUIRES = {
   cobros: 'expedientes',
   'invoice.issue': 'cobros',
   'po.manage': 'cobros',
+  proveedores: 'expedientes',
+  'proveedores.create': 'proveedores',
+  'proveedores.edit': 'proveedores',
+  'proveedores.gasto': 'proveedores',
 };
 
 /**
@@ -107,6 +121,7 @@ const SECTIONS = [
   [/^\/(expedientes|archivos|buscar)(\/|$)/, 'expedientes'],
   [/^\/pagos\/?$/, 'pagos'],
   [/^\/cobros\/?$/, 'cobros'],
+  [/^\/proveedores(\/|$)/, 'proveedores'],
   [/^\/usuarios(\/|$)/, 'users'],
   [/^\/ajustes\/?$/, 'settings'],
 ];
