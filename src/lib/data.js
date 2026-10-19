@@ -1,7 +1,7 @@
 // Consultas a la base de datos que comparten varias páginas.
 import { summarize, nextNumber, SOON_DAYS } from './finance.js';
 import { addDays } from './dates.js';
-import { contractDue } from './contracts.js';
+import { contractDue } from '../repos/contracts.js';
 
 // Documentos del proveedor de un pago (facturas y proformas; uno puede cubrir varios pagos)
 const DOCS_OF = (where) => `FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id WHERE pd.payment_id = p.id AND ${where}`;

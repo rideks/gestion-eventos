@@ -66,7 +66,11 @@ export function getFile(form, name) {
  * Comprueba el fichero, lo sube a R2 y crea su fila en `files`.
  * @returns {Promise<number>} id del documento
  */
-// folder: carpeta en R2 si el documento no es de un expediente (p. ej. el contrato de un proveedor: `prov/12`)
+/**
+ * folder: carpeta en R2 si el documento no es de un expediente (p. ej. el contrato de un proveedor: `prov/12`)
+ * @param {{ db: any, bucket: any, file: File, expedienteId?: number | null, userId?: number | null, folder?: string | null }} args
+ * @returns {Promise<number>} id del archivo
+ */
 export async function storeFile({ db, bucket, file, expedienteId = null, userId, folder = null }) {
   const name = cleanName(file.name);
   const ext = extensionOf(name);

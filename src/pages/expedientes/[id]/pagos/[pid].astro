@@ -27,7 +27,8 @@ import { paymentState, supplierInvoiceState, documentState, needsReceipt, confor
 import { eur } from '../../../../lib/money.js';
 import { today, nowIso, formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
 import { isLocked, LOCKED_MSG, markPaid } from '../../../../lib/actions.js';
-import { resolveSupplier, supplierOptions, supplierTypes } from '../../../../lib/suppliers.js';
+import { serviceContext } from '../../../../services/context.js';
+import * as suppliers from '../../../../services/suppliers.js';
 
 const db = env.DB;
 const id = parseId(Astro.params.id);
@@ -180,7 +181,7 @@ if (Astro.request.method === 'POST') {
       const parsed = validate(PaymentSchema, { ...input, status: 'pendiente' });
       const amounts = parseVatLines(form, rates);
       // Uno de la lista; el que ya tenía se puede mantener aunque ahora esté en «No contratar»
-      const picked = parsed.ok ? await resolveSupplier(db, { id: parsed.data.supplier_id, name: parsed.data.supplier }, { keepId: p.supplier_id }) : null;
+      const picked = parsed.ok ? await suppliers.resolveForPayment(serviceContext(Astro), { id: parsed.data.supplier_id, name: parsed.data.supplier }, { keepId: p.supplier_id }) : null;
       if (paid) {
         error = PAID_LOCKED;
       } else if (!parsed.ok) {
@@ -188,13 +189,13 @@ if (Astro.request.method === 'POST') {
         errors = parsed.errors;
       } else if (!picked.ok) {
         error = picked.message;
-        errors = { supplier: picked.message };
+        errors = picked.fields;
       } else if (!amounts.ok) {
         error = amounts.message;
         errors = { amount: amounts.message };
       } else {
         const d = parsed.data;
-        const sup = picked.supplier;
+        const sup = picked.value;
         await db.batch([
           db.prepare(
             `UPDATE payments SET supplier = ?, supplier_id = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
@@ -218,9 +219,10 @@ if (Astro.request.method === 'POST') {
 
 // Pagos que cubre cada documento (para los compartidos con otros pagos)
 const editable = !locked && !paid;
-const [options, types, all, shared] = await Promise.all([
-  editable ? supplierOptions(db) : [], editable ? supplierTypes(db) : [], expedienteDocuments(db, id), documentsCoverage(db, pid),
+const [picker, all, shared] = await Promise.all([
+  editable ? suppliers.pickerData(serviceContext(Astro)) : null, expedienteDocuments(db, id), documentsCoverage(db, pid),
 ]);
+const { options = [], types = [] } = picker?.ok ? picker.value : {};
 const state = paymentState(p, now);
 const invState = supplierInvoiceState(p);
 const saved = linesOf(p);

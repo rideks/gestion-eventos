@@ -1,4 +1,6 @@
-// Contratos y acuerdos con proveedores (migrations/0010_contratos_proveedor.sql).
+// Contratos y acuerdos con proveedores — reglas puras (sin base de datos): estado por fechas, contrato
+// aplicado en una fecha, cambios y renovación. Las consultas están en src/repos/contracts.js y los casos
+// de uso en src/services/contracts.js (migrations/0010_contratos_proveedor.sql).
 //
 // El estado de un contrato no se guarda: se calcula por fechas cada vez.
 //   · Aún no vigente      → empieza más adelante.
@@ -9,7 +11,7 @@
 //   · Renovado            → terminó (o lo sustituye otro) y tiene su renovación: es historial.
 //   · Finalizado          → terminó y se decidió no renovarlo.
 // «Requiere atención» = próximo a caducar, pendiente de renovación o caducado: salen en el inicio y en
-// el contador del menú (la misma condición en SQL: contractDue).
+// el contador del menú (la misma condición en SQL: contractDue, en src/repos/contracts.js).
 //
 // El contrato que se aplicó a un expediente es el que estaba en vigor en la fecha del evento.
 // Cambiar un contrato no reescribe el pasado: cada cambio queda en su historial y al renovar se crea
@@ -61,14 +63,6 @@ export function contractState(c, now) {
   return st('vigente', 'Vigente', 'ok', ends);
 }
 
-/** Lo mismo que `attention` de contractState, en SQL (alias c; `now`: el parámetro con la fecha de hoy) */
-export const contractDue = (now = '?1') => `c.starts_on <= ${now}
-  AND NOT EXISTS (SELECT 1 FROM supplier_contracts r WHERE r.replaces_id = c.id)
-  AND (c.renewal IS NULL OR c.renewal <> 'no')
-  AND (c.renewal = 'pendiente'
-       OR c.ends_on < ${now}
-       OR (c.alert_days IS NOT NULL AND c.ends_on <= date(${now}, '+' || c.alert_days || ' days')))`;
-
 /** El contrato que estaba en vigor en una fecha (el que empezó más tarde, si se solapan) */
 export function contractOn(contracts, date) {
   if (!date) return null;
@@ -118,54 +112,4 @@ export function renewalDraft(c, addDays) {
     conditions: c.conditions, rates: c.rates, discounts: c.discounts, credit_terms: c.credit_terms,
     payment_terms: c.payment_terms, other_terms: c.other_terms, alert_days: c.alert_days,
   };
-}
-
-// ── Consultas ──────────────────────────────────────────────────────────────
-const SELECT = `c.*, s.name AS supplier_name, s.city AS supplier_city, s.status AS supplier_status, t.name AS supplier_type,
-  (SELECT r.id FROM supplier_contracts r WHERE r.replaces_id = c.id) AS renewed_by,
-  f.name AS file_name, u.name AS created_by_name`;
-const JOINS = `JOIN suppliers s ON s.id = c.supplier_id LEFT JOIN supplier_types t ON t.id = s.type_id
-  LEFT JOIN files f ON f.id = c.file_id LEFT JOIN users u ON u.id = c.created_by`;
-const withState = (now) => (c) => ({ ...c, state: contractState(c, now) });
-
-/** Los contratos de un proveedor, con su estado */
-export function supplierContracts(db, supplierId, now) {
-  return db.prepare(`SELECT ${SELECT} FROM supplier_contracts c ${JOINS} WHERE c.supplier_id = ? ORDER BY c.starts_on DESC, c.id DESC`)
-    .bind(supplierId).all().then((r) => r.results.map(withState(now)).sort(byUrgency));
-}
-
-/** Todos los contratos (pantalla de caducidades), con su estado; q busca en el proveedor y el nombre */
-export function allContracts(db, now, q = '') {
-  const like = `%${q}%`;
-  return db.prepare(`SELECT ${SELECT} FROM supplier_contracts c ${JOINS}
-                      WHERE (?1 = '%%' OR s.name LIKE ?1 OR c.title LIKE ?1 OR s.city LIKE ?1) ORDER BY c.ends_on, c.id LIMIT 1000`)
-    .bind(like).all().then((r) => r.results.map(withState(now)).sort(byUrgency));
-}
-
-/** Contratos que requieren atención (inicio): próximos a caducar, pendientes de renovación o caducados */
-export function contractsDue(db, now) {
-  return db.prepare(`SELECT ${SELECT} FROM supplier_contracts c ${JOINS} WHERE ${contractDue()} ORDER BY c.ends_on IS NULL, c.ends_on, c.id`)
-    .bind(now).all().then((r) => r.results.map(withState(now)));
-}
-
-/** Un contrato con su proveedor, el contrato al que renueva, su renovación y su historial */
-export async function contractDetail(db, id, now) {
-  const [c, history] = await db.batch([
-    db.prepare(`SELECT ${SELECT}, p.title AS replaces_title, p.starts_on AS replaces_starts_on, p.ends_on AS replaces_ends_on,
-                       n.title AS renewed_title, n.starts_on AS renewed_starts_on
-                  FROM supplier_contracts c ${JOINS}
-                  LEFT JOIN supplier_contracts p ON p.id = c.replaces_id
-                  LEFT JOIN supplier_contracts n ON n.replaces_id = c.id
-                 WHERE c.id = ?`).bind(id),
-    db.prepare(`SELECT h.*, u.name AS user_name FROM supplier_contract_changes h LEFT JOIN users u ON u.id = h.user_id
-                 WHERE h.contract_id = ? ORDER BY h.at DESC, h.id DESC`).bind(id),
-  ]);
-  const contract = c.results[0];
-  return contract ? { contract: withState(now)(contract), history: history.results } : null;
-}
-
-/** Sentencia para apuntar algo en el historial de un contrato */
-export function changeStmt(db, contractId, userId, action, summary, changes = null) {
-  return db.prepare('INSERT INTO supplier_contract_changes (contract_id, user_id, action, summary, changes) VALUES (?, ?, ?, ?, ?)')
-    .bind(contractId, userId, action, summary, changes ? JSON.stringify(changes) : null);
 }

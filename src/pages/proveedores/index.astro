@@ -1,28 +1,26 @@
 ---
 // Proveedores: directorio con búsqueda, filtros y orden. Lo contratado (sin IVA, eventos no
-// cancelados; ver src/lib/suppliers.js) sólo lo ve quien tiene permiso de gasto.
+// cancelados; ver src/lib/suppliers.js) sólo lo ve quien tiene permiso de gasto: el servicio ni lo devuelve.
 // Aquí se dan de alta proveedores (también desde el selector de un pago) y se gestionan los tipos.
 // Antes de crear uno se avisa de los que tienen un nombre parecido: hay que confirmar que es otro.
-import { env } from 'cloudflare:workers';
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
 import SupplierFields from '../../components/SupplierFields.astro';
-import { readForm, actor, can, logActivity } from '../../lib/app.js';
-import { SupplierSchema, SupplierTypeSchema, SUPPLIER_STATUS, validate, formToObject } from '../../lib/validate.js';
-import { supplierList, supplierTypes, createSupplier, cleanName } from '../../lib/suppliers.js';
-import { allContracts } from '../../lib/contracts.js';
+import { readForm, can, parseId } from '../../lib/app.js';
+import { SUPPLIER_STATUS, formToObject } from '../../lib/validate.js';
+import { cleanName } from '../../lib/suppliers.js';
 import { eur } from '../../lib/money.js';
-import { today, formatDate } from '../../lib/dates.js';
+import { formatDate } from '../../lib/dates.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as suppliers from '../../services/suppliers.js';
+import * as contracts from '../../services/contracts.js';
 
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const me = Astro.locals.user;
-const money = can(me, 'proveedores.gasto');
 const creatable = can(me, 'proveedores.create');
 const editable = can(me, 'proveedores.edit');
 const seesContracts = can(me, 'contratos');
-const now = today();
-const year = Number(now.slice(0, 4));
 let error = null;
 let errors = {};
 let v = { status: 'activo' };
@@ -32,63 +30,41 @@ let similar = [];
 if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
-  const who = actor(Astro);
-  if (input.intent === 'create' ? !creatable : !editable) {
-    return Astro.redirect('/proveedores?aviso=permiso', 303);
-  } else if (input.intent === 'create') {
+  const r = input.intent === 'create' ? await suppliers.create(ctx, input)
+    : input.intent === 'add_type' ? await suppliers.addType(ctx, input)
+      : input.intent === 'delete_type' ? await suppliers.removeType(ctx, parseId(input.type_id))
+        : { ok: false, code: 'forbidden' };
+  if (r.ok) {
+    if (input.intent === 'create') return Astro.redirect(`/proveedores/${r.value.id}?ok=creado`, 303);
+    return Astro.redirect(`/proveedores?ok=${input.intent === 'add_type' ? 'creado' : 'borrado'}#tipos`, 303);
+  }
+  const back = failure(Astro, r, '/proveedores');
+  if (back) return back;
+  error = r.message;
+  errors = r.fields;
+  if (input.intent === 'create') {
     openNew = true;
     v = input;
-    const parsed = validate(SupplierSchema, { ...input, name: cleanName(input.name) });
-    // Si se parece a alguno, se enseñan y hay que confirmar que es otro (el nombre escrito tiene que ser el mismo)
-    const r = parsed.ok ? await createSupplier(db, parsed.data, me.id, { confirmed: input.confirm_similar === parsed.data.name }) : null;
-    if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-    } else if (r.taken) {
-      error = `Ya existe: ${r.taken}. Búscalo en la lista.`;
-      errors = { name: error };
-    } else if (r.similar) {
-      similar = r.similar;
-      error = 'Ya hay proveedores con un nombre parecido: comprueba que no es ninguno de ellos.';
-    } else {
-      await logActivity(db, who, null, 'supplier.create', `dio de alta al proveedor ${r.supplier.name}`);
-      return Astro.redirect(`/proveedores/${r.supplier.id}?ok=creado`, 303);
-    }
-  } else if (input.intent === 'add_type') {
-    const parsed = validate(SupplierTypeSchema, { type_name: cleanName(input.type_name) });
-    if (!parsed.ok) {
-      error = parsed.message;
-    } else {
-      const { meta } = await db.prepare(
-        'INSERT INTO supplier_types (name, sort) VALUES (?, (SELECT COALESCE(MAX(sort), 0) + 10 FROM supplier_types)) ON CONFLICT (name) DO NOTHING',
-      ).bind(parsed.data.type_name).run();
-      if (!meta.changes) error = 'Ese tipo ya existe.';
-      else return Astro.redirect('/proveedores?ok=creado#tipos', 303);
-    }
-  } else if (input.intent === 'delete_type') {
-    const { meta } = await db.prepare('DELETE FROM supplier_types WHERE id = ? AND NOT EXISTS (SELECT 1 FROM suppliers WHERE type_id = ?)')
-      .bind(Number(input.type_id), Number(input.type_id)).run();
-    if (!meta.changes) error = 'Ese tipo lo tiene algún proveedor: cámbiales el tipo antes de quitarlo.';
-    else return Astro.redirect('/proveedores?ok=borrado#tipos', 303);
+    // Si se parece a alguno, se enseñan y hay que confirmar que es otro (con el mismo nombre escrito)
+    similar = r.similar ?? [];
   }
-  Astro.response.status = 400;
 }
 
-const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
-const typeId = Number(Astro.url.searchParams.get('tipo')) || null;
-const status = Object.hasOwn(SUPPLIER_STATUS, Astro.url.searchParams.get('estado') ?? '') ? Astro.url.searchParams.get('estado') : '';
-const ORDERS = { name: 'Nombre', uso: 'Último evento', expedientes: 'Más expedientes', altas: 'Altas recientes', ...(money ? { year: `Contratado en ${year}`, gasto: 'Contratado en total' } : {}) };
-const order = Object.hasOwn(ORDERS, Astro.url.searchParams.get('orden') ?? '') ? Astro.url.searchParams.get('orden') : 'name';
-const [rows, types, contracts] = await Promise.all([
-  supplierList(db, { q, typeId, status, year, order }), supplierTypes(db), seesContracts ? allContracts(db, now) : [],
-]);
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 80);
+const typeId = parseId(params.get('tipo'));
+const dir = await suppliers.directory(ctx, { q, typeId, status: params.get('estado') ?? '', order: params.get('orden') ?? 'name' });
+if (!dir.ok) return failure(Astro, dir, '/');
+const { rows, types, orders: ORDERS, order, status, year, money } = dir.value;
+const contractList = seesContracts ? await contracts.list(ctx) : null;
+const allContracts = contractList?.ok ? contractList.value : [];
 // El contrato que más importa de cada proveedor (vienen ordenados: primero lo que requiere atención, luego lo vigente)
 const contractOf = new Map();
-for (const c of contracts) if (!contractOf.has(c.supplier_id)) contractOf.set(c.supplier_id, c);
-const due = contracts.filter((c) => c.state.attention).length;
+for (const c of allContracts) if (!contractOf.has(c.supplier_id)) contractOf.set(c.supplier_id, c);
+const due = allContracts.filter((c) => c.state.attention).length;
 const filtered = q || typeId || status;
-const total = rows.reduce((a, r) => a + r.contracted, 0);
-const totalYear = rows.reduce((a, r) => a + r.this_year, 0);
+const total = money ? rows.reduce((a, r) => a + r.contracted, 0) : 0;
+const totalYear = money ? rows.reduce((a, r) => a + r.this_year, 0) : 0;
 ---
 <App title="Proveedores" section="proveedores" error={error} fieldErrors={errors} origin="Proveedores">
   <div class="page-top">

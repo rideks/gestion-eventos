@@ -2,71 +2,38 @@
 // Contrato nuevo con un proveedor, o la renovación de uno (?renueva=<id>): la renovación es un contrato
 // nuevo que empieza donde acaba el anterior, con sus condiciones ya escritas para cambiar lo que haga falta.
 // El anterior se conserva tal cual (historial). Hace falta el permiso contratos.edit.
-import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
 import ContractFields from '../../../../components/ContractFields.astro';
-import { parseId, readForm, actor, can, logActivity } from '../../../../lib/app.js';
-import { ContractSchema, validate, formToObject } from '../../../../lib/validate.js';
-import { changeStmt, renewalDraft } from '../../../../lib/contracts.js';
-import { getFile, storeFile, UploadError } from '../../../../lib/files.js';
-import { addDays, formatDate } from '../../../../lib/dates.js';
+import { parseId, readForm } from '../../../../lib/app.js';
+import { formToObject } from '../../../../lib/validate.js';
+import { getFile } from '../../../../lib/files.js';
+import { serviceContext, failure } from '../../../../services/context.js';
+import * as contracts from '../../../../services/contracts.js';
 
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
-const me = Astro.locals.user;
 const renewsId = parseId(Astro.url.searchParams.get('renueva'));
-const [s, prev] = id ? await Promise.all([
-  db.prepare('SELECT id, name FROM suppliers WHERE id = ?').bind(id).first(),
-  renewsId ? db.prepare(`SELECT c.*, (SELECT r.id FROM supplier_contracts r WHERE r.replaces_id = c.id) AS renewed_by
-                           FROM supplier_contracts c WHERE c.id = ? AND c.supplier_id = ?`).bind(renewsId, id).first() : null,
-]) : [];
-if (!s || (renewsId && !prev)) return Astro.rewrite('/404');
-if (!can(me, 'contratos.edit')) return Astro.redirect(`/proveedores/${id}?aviso=permiso`, 303);
-if (prev?.renewed_by) return Astro.redirect(`/proveedores/${id}/contratos/${prev.renewed_by}`, 303);
+const dr = id ? await contracts.draft(ctx, id, renewsId) : { ok: false, code: 'not_found' };
+// Ya renovado: a su renovación
+if (!dr.ok && dr.code === 'renewed') return Astro.redirect(`/proveedores/${id}/contratos/${dr.renewedBy}`, 303);
+if (!dr.ok) return failure(Astro, dr, `/proveedores/${id}`);
+const { supplier: s, prev } = dr.value;
 
 let error = null;
 let errors = {};
-let v = prev ? renewalDraft(prev, addDays) : { alert_days: 60 };
+let v = dr.value.values;
 
 if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
+  const r = await contracts.create(ctx, id, input, { renewsId, file: form ? getFile(form, 'file') : null });
+  if (r.ok) return Astro.redirect(`/proveedores/${id}/contratos/${r.value.id}?ok=${r.value.renewed ? 'renovado' : 'creado'}`, 303);
+  const back = failure(Astro, r, `/proveedores/${id}`);
+  if (back) return back;
   v = input;
-  const parsed = validate(ContractSchema, input);
-  if (!parsed.ok) {
-    error = parsed.message;
-    errors = parsed.errors;
-  } else {
-    const d = parsed.data;
-    try {
-      const file = form ? getFile(form, 'file') : null;
-      const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, folder: `prov/${id}`, userId: me.id }) : null;
-      const row = await db.prepare(
-        `INSERT INTO supplier_contracts (supplier_id, title, signed_on, starts_on, ends_on, conditions, rates, discounts, credit_terms,
-                                         payment_terms, other_terms, notes, alert_days, replaces_id, file_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      ).bind(id, d.title, d.signed_on, d.starts_on, d.ends_on, d.conditions, d.rates, d.discounts, d.credit_terms,
-        d.payment_terms, d.other_terms, d.notes, d.alert_days, prev?.id ?? null, fileId, me.id).first();
-      const period = `${formatDate(d.starts_on)}${d.ends_on ? ` – ${formatDate(d.ends_on)}` : ' (indefinido)'}`;
-      await db.batch(prev ? [
-        changeStmt(db, row.id, me.id, 'renovacion', `Renovación de «${prev.title}» · ${period}`),
-        changeStmt(db, prev.id, me.id, 'renovado', `Renovado por «${d.title}» · ${period}`),
-        // La decisión sobre la renovación ya está tomada
-        db.prepare('UPDATE supplier_contracts SET renewal = NULL WHERE id = ?').bind(prev.id),
-      ] : [
-        changeStmt(db, row.id, me.id, 'alta', `Alta del contrato · ${period}${fileId ? ' · con documento' : ''}`),
-      ]);
-      await logActivity(db, actor(Astro), null, prev ? 'contract.renew' : 'contract.create',
-        `${prev ? 'renovó' : 'dio de alta'} el contrato «${d.title}» de ${s.name} (${period})`);
-      return Astro.redirect(`/proveedores/${id}/contratos/${row.id}?ok=${prev ? 'renovado' : 'creado'}`, 303);
-    } catch (err) {
-      if (!(err instanceof UploadError)) throw err;
-      error = err.message;
-      errors = { file: err.message };
-    }
-  }
-  Astro.response.status = 400;
+  error = r.message;
+  errors = r.fields;
 }
 const title = prev ? `Renovar «${prev.title}»` : 'Contrato nuevo';
 ---

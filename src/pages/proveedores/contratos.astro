@@ -1,18 +1,18 @@
 ---
 // Caducidades: todos los contratos de proveedores con su estado, primero lo que requiere atención
 // (próximos a caducar según el aviso de cada uno, pendientes de renovación y caducados sin renovar).
-import { env } from 'cloudflare:workers';
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
-import { allContracts } from '../../lib/contracts.js';
-import { today, formatDate } from '../../lib/dates.js';
+import { formatDate } from '../../lib/dates.js';
 import { plural } from '../../lib/finance.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as contracts from '../../services/contracts.js';
 
-const db = env.DB;
-const now = today();
 const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
-const all = await allContracts(db, now, q);
+const r = await contracts.list(serviceContext(Astro), q);
+if (!r.ok) return failure(Astro, r, '/proveedores');
+const all = r.value;
 const VIEWS = {
   atencion: { label: 'Requieren atención', test: (c) => c.state.attention },
   vigentes: { label: 'En vigor', test: (c) => ['vigente', 'por_caducar', 'pendiente'].includes(c.state.key) },

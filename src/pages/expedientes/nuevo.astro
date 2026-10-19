@@ -17,7 +17,8 @@ import { suggestions, activeUsers, suggestNumber, numberTaken } from '../../lib/
 import { storeFile, getFile, UploadError } from '../../lib/files.js';
 import { eur } from '../../lib/money.js';
 import { nowIso } from '../../lib/dates.js';
-import { resolveSuppliers, supplierOptions, supplierTypes } from '../../lib/suppliers.js';
+import { serviceContext } from '../../services/context.js';
+import * as suppliers from '../../services/suppliers.js';
 
 const db = env.DB;
 const me = Astro.locals.user;
@@ -38,7 +39,7 @@ if (Astro.request.method === 'POST') {
   const b = parseVatLines(form, rates);
   const fc = form ? parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] }) : { ok: true, rows: [] };
   // Los proveedores de la previsión tienen que estar dados de alta (se eligen de la lista)
-  const sups = fc.ok && fc.rows.length ? await resolveSuppliers(db, fc.rows) : { ok: true };
+  const sups = fc.ok && fc.rows.length ? await suppliers.resolveRowsForPayment(serviceContext(Astro), fc.rows) : { ok: true, value: null };
   if (form) {
     // Para volver a pintar el formulario tal cual si hay un error
     budgetLines = rawVatLines(form);
@@ -79,7 +80,7 @@ if (Astro.request.method === 'POST') {
     try {
       const file = getFile(form, 'file');
       const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: exp.id, userId: me.id }) : null;
-      const supOf = sups.of;
+      const supOf = sups.value?.of;
       await db.batch([
         db.prepare('INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, file_id, created_by) VALUES (?, 1, ?, ?, ?, ?, ?, ?)')
           .bind(exp.id, b.base, b.total, JSON.stringify(b.lines), 'Presupuesto aprobado por el cliente', fileId, me.id),
@@ -102,9 +103,10 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ companies }, users, suggested, options, types] = await Promise.all([
-  suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null, supplierOptions(db), supplierTypes(db),
+const [{ companies }, users, suggested, picker] = await Promise.all([
+  suggestions(db), activeUsers(db), admin ? suggestNumber(db) : null, suppliers.pickerData(serviceContext(Astro)),
 ]);
+const { options = [], types = [] } = picker.ok ? picker.value : {};
 ---
 <App title="Nueva solicitud" section="nuevo" error={error} fieldErrors={errors}>
   <div class="page-top">

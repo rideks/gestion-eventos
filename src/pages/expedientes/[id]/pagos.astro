@@ -16,7 +16,8 @@ import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js
 import { getExpediente, loadFinance } from '../../../lib/data.js';
 import { PaymentSchema, SupplierDocSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
 import { attachDocument } from '../../../lib/supplier.js';
-import { resolveSupplier, resolveSuppliers, supplierOptions, supplierTypes } from '../../../lib/suppliers.js';
+import { serviceContext } from '../../../services/context.js';
+import * as suppliers from '../../../services/suppliers.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../../lib/vat.js';
 import { getFile, storeFile, UploadError } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
@@ -36,7 +37,9 @@ const locked = isLocked(exp);
 const params = Astro.url.searchParams;
 let open = params.has('nuevo') ? (params.get('nuevo') === 'varios' ? 'varios' : 'uno') : null;
 const presetId = parseId(params.get('proveedor'));
-const preset = presetId ? await db.prepare("SELECT id, name FROM suppliers WHERE id = ? AND status <> 'bloqueado'").bind(presetId).first() : null;
+const ctx = serviceContext(Astro);
+const presetPick = presetId ? await suppliers.resolveForPayment(ctx, { id: presetId }) : null;
+const preset = presetPick?.ok ? presetPick.value : null;
 let error = null;
 let errors = {};
 let v = { supplier: preset?.name, supplier_id: preset?.id };
@@ -60,7 +63,7 @@ if (Astro.request.method === 'POST') {
     lines = rawVatLines(form);
     const parsed = validate(PaymentSchema, input);
     // El proveedor tiene que ser uno de la lista (no se crea al escribirlo)
-    const picked = parsed.ok ? await resolveSupplier(db, { id: parsed.data.supplier_id, name: parsed.data.supplier }) : null;
+    const picked = parsed.ok ? await suppliers.resolveForPayment(ctx, { id: parsed.data.supplier_id, name: parsed.data.supplier }) : null;
     const doc = validate(SupplierDocSchema, input);
     const amounts = parseVatLines(form, rates);
     const file = form ? getFile(form, 'file') : null;
@@ -74,7 +77,7 @@ if (Astro.request.method === 'POST') {
       errors = parsed.errors;
     } else if (!picked.ok) {
       error = picked.message;
-      errors = { supplier: picked.message };
+      errors = picked.fields;
     } else if (!amounts.ok) {
       error = amounts.message;
       errors = { amount: amounts.message };
@@ -93,7 +96,7 @@ if (Astro.request.method === 'POST') {
       try {
         // El justificante se guarda antes: si no se puede subir, no se crea nada
         const receiptId = paid && receipt ? await storeFile({ db, bucket: env.DOCS, file: receipt, expedienteId: id, userId: me.id }) : null;
-        const sup = picked.supplier;
+        const sup = picked.value;
         const payment = await db.prepare(
           `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines,
                                  due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by)
@@ -122,7 +125,7 @@ if (Astro.request.method === 'POST') {
     many = col('supplier').map((supplier, i) => ({ supplier, supplier_id: col('supplier_id')[i], concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
       .filter((r) => r.supplier || r.total);
     const rows = parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] });
-    const sups = rows.ok && rows.rows.length ? await resolveSuppliers(db, rows.rows) : null;
+    const sups = rows.ok && rows.rows.length ? await suppliers.resolveRowsForPayment(ctx, rows.rows) : null;
     if (!rows.ok) {
       error = rows.message;
     } else if (!rows.rows.length) {
@@ -131,7 +134,7 @@ if (Astro.request.method === 'POST') {
       error = sups.message;
     } else {
       const sum = rows.rows.reduce((a, r) => a + r.total, 0);
-      const supOf = sups.of;
+      const supOf = sups.value.of;
       await db.batch([
         ...rows.rows.map((r) => db.prepare(
           `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
@@ -146,7 +149,8 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [fin, options, types] = await Promise.all([loadFinance(db, id, now), locked ? [] : supplierOptions(db), locked ? [] : supplierTypes(db)]);
+const [fin, picker] = await Promise.all([loadFinance(db, id, now), locked ? null : suppliers.pickerData(ctx)]);
+const { options = [], types = [] } = picker?.ok ? picker.value : {};
 const s = fin.summary;
 const pending = fin.payments.filter((p) => p.status !== 'pagado');
 const paid = fin.payments.filter((p) => p.status === 'pagado');

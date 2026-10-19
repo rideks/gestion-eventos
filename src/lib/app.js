@@ -40,6 +40,13 @@ export function actor(Astro) {
  * El texto se guarda ya redactado: así se lee igual aunque luego cambien los datos.
  * Devuelve la sentencia preparada para poder meterla en un db.batch() junto al cambio.
  */
+/**
+ * @param {any} db
+ * @param {{ user: any, ip?: string | null }} who
+ * @param {number | null} expedienteId null: actividad general (proveedores, contratos…)
+ * @param {string} action
+ * @param {string | null} [text]
+ */
 export function activityStmt(db, { user, ip = null }, expedienteId, action, text = null) {
   return db.prepare('INSERT INTO activity (expediente_id, user_id, user_name, action, text, ip) VALUES (?, ?, ?, ?, ?, ?)')
     .bind(expedienteId, user?.id ?? null, user?.name ?? null, action, text, ip);

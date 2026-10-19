@@ -1,0 +1,26 @@
+# Comprobaciones de gestion-eventos en cada push y pull request: pruebas (reglas, servicios contra una
+# base SQLite en memoria y reglas de arquitectura), tipos y compilación. No despliega ni publica nada.
+# (Sólo se ejecuta si esta carpeta es la raíz del repositorio en GitHub.)
+name: Comprobaciones
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build

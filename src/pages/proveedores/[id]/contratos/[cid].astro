@@ -3,124 +3,56 @@
 // condiciones, el documento, la cadena de renovaciones, los expedientes en los que se aplicó (los del
 // proveedor con el evento dentro de sus fechas) y el historial de cambios.
 // Con contratos.edit: modificar (queda en el historial), renovar, marcar la renovación, documento y borrar.
-import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
 import Pill from '../../../../components/Pill.astro';
 import ContractFields from '../../../../components/ContractFields.astro';
 import FileField from '../../../../components/FileField.astro';
-import { parseId, readForm, actor, can, logActivity } from '../../../../lib/app.js';
-import { ContractSchema, RenewalSchema, validate, formToObject } from '../../../../lib/validate.js';
-import { contractDetail, supplierContracts, contractOn, contractDiff, changeStmt, RENEWAL, CONTRACT_FIELDS } from '../../../../lib/contracts.js';
-import { supplierFicha } from '../../../../lib/suppliers.js';
-import { getFile, storeFile, deleteFiles, fileUrl, UploadError } from '../../../../lib/files.js';
+import { parseId, readForm } from '../../../../lib/app.js';
+import { formToObject } from '../../../../lib/validate.js';
+import { RENEWAL, CONTRACT_FIELDS } from '../../../../lib/contracts.js';
+import { getFile, fileUrl } from '../../../../lib/files.js';
 import { expLabel } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
-import { today, addDays, formatDate, formatDateLong, formatRange, formatStamp } from '../../../../lib/dates.js';
+import { addDays, formatDate, formatDateLong, formatRange, formatStamp } from '../../../../lib/dates.js';
+import { serviceContext, failure } from '../../../../services/context.js';
+import * as contracts from '../../../../services/contracts.js';
 
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
 const cid = parseId(Astro.params.cid);
-const me = Astro.locals.user;
-const now = today();
-const editable = can(me, 'contratos.edit');
-const money = can(me, 'proveedores.gasto');
-const detail = id && cid ? await contractDetail(db, cid, now) : null;
-if (!detail || detail.contract.supplier_id !== id) return Astro.rewrite('/404');
-
+const self = `/proveedores/${id}/contratos/${cid}`;
 let error = null;
 let errors = {};
-let v = detail.contract;
+let input = null;
 let openEdit = Astro.url.searchParams.has('editar');
 
-if (Astro.request.method === 'POST') {
+if (id && cid && Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
-  const input = form ? formToObject(form) : {};
-  const who = actor(Astro);
-  const c = detail.contract;
-  const self = `/proveedores/${id}/contratos/${cid}`;
-  if (!editable) return Astro.redirect(`${self}?aviso=permiso`, 303);
-  try {
-    if (input.intent === 'save') {
-      openEdit = true;
-      v = { ...c, ...input };
-      const parsed = validate(ContractSchema, input);
-      if (!parsed.ok) {
-        error = parsed.message;
-        errors = parsed.errors;
-      } else {
-        const d = parsed.data;
-        const diff = contractDiff(c, d);
-        if (!diff.summary) return Astro.redirect(self, 303);
-        await db.batch([
-          db.prepare(
-            `UPDATE supplier_contracts SET title = ?, signed_on = ?, starts_on = ?, ends_on = ?, conditions = ?, rates = ?, discounts = ?,
-                    credit_terms = ?, payment_terms = ?, other_terms = ?, notes = ?, alert_days = ?,
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
-          ).bind(d.title, d.signed_on, d.starts_on, d.ends_on, d.conditions, d.rates, d.discounts, d.credit_terms,
-            d.payment_terms, d.other_terms, d.notes, d.alert_days, cid),
-          changeStmt(db, cid, me.id, 'cambio', diff.summary, diff.changes),
-        ]);
-        await logActivity(db, who, null, 'contract.update', `modificó el contrato «${d.title}» de ${c.supplier_name}: ${diff.summary}`);
-        return Astro.redirect(`${self}?ok=guardado`, 303);
-      }
-    } else if (input.intent === 'renewal') {
-      const parsed = validate(RenewalSchema, input);
-      if (!parsed.ok || c.renewed_by) {
-        error = c.renewed_by ? 'Este contrato ya está renovado.' : parsed.message;
-      } else {
-        const r = parsed.data.renewal;
-        const text = r ? RENEWAL[r] : 'Sin decidir la renovación';
-        await db.batch([
-          db.prepare("UPDATE supplier_contracts SET renewal = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?").bind(r, cid),
-          changeStmt(db, cid, me.id, 'marca', text),
-        ]);
-        await logActivity(db, who, null, 'contract.renewal', `marcó el contrato «${c.title}» de ${c.supplier_name}: ${text.toLowerCase()}`);
-        return Astro.redirect(`${self}?ok=guardado`, 303);
-      }
-    } else if (input.intent === 'file') {
-      const file = form ? getFile(form, 'file') : null;
-      if (!file) {
-        error = 'Elige el documento del contrato.';
-        errors = { file: error };
-      } else {
-        const fileId = await storeFile({ db, bucket: env.DOCS, file, folder: `prov/${id}`, userId: me.id });
-        await db.batch([
-          db.prepare('UPDATE supplier_contracts SET file_id = ? WHERE id = ?').bind(fileId, cid),
-          changeStmt(db, cid, me.id, 'documento', `${c.file_id ? 'Sustituyó el documento' : 'Subió el documento'}: ${file.name}`),
-        ]);
-        if (c.file_id) await deleteFiles(db, env.DOCS, [c.file_id]);
-        return Astro.redirect(`${self}?ok=documento`, 303);
-      }
-    } else if (input.intent === 'delete') {
-      if (c.renewed_by) {
-        error = 'Tiene una renovación: no se puede borrar (es el historial de la renovación).';
-      } else {
-        await db.batch([
-          db.prepare('DELETE FROM supplier_contracts WHERE id = ?').bind(cid),
-          // El contrato al que renovaba vuelve a estar sin renovar: que quede en su historial
-          ...(c.replaces_id ? [changeStmt(db, c.replaces_id, me.id, 'renovado', `Se borró su renovación «${c.title}»: vuelve a estar sin renovar`)] : []),
-        ]);
-        if (c.file_id) await deleteFiles(db, env.DOCS, [c.file_id]);
-        await logActivity(db, who, null, 'contract.delete', `borró el contrato «${c.title}» de ${c.supplier_name}`);
-        return Astro.redirect(`/proveedores/${id}?ok=borrado#contratos`, 303);
-      }
-    } else {
-      error = 'Esa acción no está permitida.';
-    }
-  } catch (err) {
-    if (!(err instanceof UploadError)) throw err;
-    error = err.message;
-    errors = { file: err.message };
+  input = form ? formToObject(form) : {};
+  const ACTIONS = {
+    save: () => contracts.update(ctx, id, cid, input),
+    renewal: () => contracts.setRenewal(ctx, id, cid, input),
+    file: () => contracts.replaceDocument(ctx, id, cid, form ? getFile(form, 'file') : null),
+    delete: () => contracts.remove(ctx, id, cid),
+  };
+  const r = Object.hasOwn(ACTIONS, input.intent) ? await ACTIONS[input.intent]() : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
+  if (r.ok) {
+    if (input.intent === 'delete') return Astro.redirect(`/proveedores/${id}?ok=borrado#contratos`, 303);
+    return Astro.redirect(input.intent === 'save' && !r.value.changed ? self : `${self}?ok=${input.intent === 'file' ? 'documento' : 'guardado'}`, 303);
   }
-  Astro.response.status = 400;
+  const back = failure(Astro, r, self);
+  if (back) return back;
+  error = r.message;
+  errors = r.fields;
+  openEdit = input.intent === 'save';
 }
 
-const c = detail.contract;
+const d = id && cid ? await contracts.detail(ctx, id, cid) : { ok: false, code: 'not_found' };
+if (!d.ok) return failure(Astro, d, `/proveedores/${id}`);
+const { contract: c, history, applied, money, editable } = d.value;
 const st = c.state;
-// Expedientes del proveedor en los que se aplicó este contrato (el que estaba en vigor en la fecha del evento)
-const [ficha, siblings] = await Promise.all([supplierFicha(db, id), supplierContracts(db, id, now)]);
-const applied = ficha.expedientes.filter((e) => contractOn(siblings, e.start_date)?.id === cid);
+const v = openEdit && input ? { ...c, ...input } : c;
 const alertFrom = c.ends_on && c.alert_days ? addDays(c.ends_on, -c.alert_days) : null;
 const fileHref = fileUrl(c);
 const TERMS = ['rates', 'discounts', 'payment_terms', 'credit_terms', 'conditions', 'other_terms', 'notes'].filter((k) => c[k]);
@@ -228,7 +160,7 @@ const canRenew = editable && !c.renewed_by && ['por_caducar', 'pendiente', 'cadu
 
   <h2 class="section-title">Historial</h2>
   <ul class="history">
-    {detail.history.map((h) => (
+    {history.map((h) => (
       <li><span class="muted small">{formatStamp(h.at, { year: true })} · {h.user_name ?? '—'}</span> {h.summary}</li>
     ))}
   </ul>

@@ -181,7 +181,7 @@ cambia nada de lo ya guardado.
 
 ## Desarrollo local
 
-Requisitos: Node 22.12 o superior.
+Requisitos: Node 22.13 o superior (las pruebas de servicios usan `node:sqlite`).
 
 ```bash
 cd gestion-eventos
@@ -199,7 +199,11 @@ Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-
 `--role eventos`, `--role jefes`… para otro rol).
 
 `npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
-(lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios).
+(lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios);
+también los **servicios** de Proveedores y Contratos contra una base SQLite en memoria con las migraciones y los
+datos de ejemplo (permisos de cada rol, datos que se devuelven, cambios en la base; necesita Node 22.13 o superior)
+y las **reglas de la arquitectura**. `npm run typecheck` comprueba los tipos de servicios y repositorios y
+`npm run check` hace las dos cosas. Cómo está organizado el código: [ARQUITECTURA.md](ARQUITECTURA.md).
 
 ## Puesta en producción (Cloudflare)
 
@@ -263,15 +267,21 @@ un sandbox). Se comprueba el tipo real de cada archivo por sus primeros bytes.
 src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
-  lib/              money (importes), vat (tipos de IVA y desglose), finance (estados, totales, cierre), data (consultas),
-                    validate (formularios), files (R2), actions (pagar/cobrar), invoicing (nº de factura y envío), auth, security…
+  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts; result y context
+  repos/            El SQL de cada área: suppliers, contracts
+  lib/              Reglas puras: money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
+                    suppliers (volumen de negocio), validate (formularios), permissions… y lo que aún no está en capas:
+                    data (consultas), actions (pagar/cobrar), invoicing (nº de factura y envío), auth, files (R2)…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)
-  components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios
-  pages/            Inicio, expedientes, bandejas de pagos y cobros, usuarios, cuenta, acceso
+  components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios, selector de proveedor
+  pages/            Inicio, expedientes, bandejas de pagos y cobros, proveedores y contratos, usuarios, cuenta, acceso
 migrations/         Esquema de D1
 scripts/            invite.mjs (primera cuenta) y demo.sql (datos de ejemplo, sólo local)
-tests/              npm test
+tests/              npm test (helpers/: base D1 en memoria y contexto de servicio para las pruebas)
 ```
+
+Las capas y sus reglas (qué puede hacer cada una, cómo se prueban y cómo añadir un área nueva) están en
+[ARQUITECTURA.md](ARQUITECTURA.md).
 
 ## Ideas para las próximas versiones
 

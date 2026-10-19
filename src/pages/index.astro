@@ -12,7 +12,8 @@ import ReviewItem from '../components/ReviewItem.astro';
 import { actor, readForm, can } from '../lib/app.js';
 import { pendingPayments, paidWithoutInvoice, openInvoices, posWithBalance, invoicesToReview, toInvoiceByExpediente, LIST_COLUMNS } from '../lib/data.js';
 import { conformInvoice } from '../lib/supplier.js';
-import { contractsDue } from '../lib/contracts.js';
+import { serviceContext } from '../services/context.js';
+import * as contracts from '../services/contracts.js';
 import { markPaid, markCollected } from '../lib/actions.js';
 import { getFile } from '../lib/files.js';
 import { ConformSchema, validate, formToObject } from '../lib/validate.js';
@@ -77,7 +78,7 @@ const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: op
   db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
   office ? [] : paidWithoutInvoice(db),
   cobros ? toInvoiceByExpediente(db) : [],
-  seesContracts ? contractsDue(db, now) : [],
+  seesContracts ? contracts.due(serviceContext(Astro)).then((r) => (r.ok ? r.value : [])) : [],
 ]);
 // «Te toca» (Eventos): lo que depende de quien lleva el expediente
 const mine = (rows) => rows.filter((r) => r.exp_manager_id === me.id);

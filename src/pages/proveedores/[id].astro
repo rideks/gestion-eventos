@@ -3,107 +3,65 @@
 // historial de expedientes en los que ha trabajado. Cómo se calcula cada importe: src/lib/suppliers.js.
 // Los importes y las condiciones económicas sólo con permiso de gasto; editar y fusionar, con el de edición.
 // Los contratos (con su caducidad bien a la vista) y el contrato aplicado en cada expediente, con el de contratos.
-import { env } from 'cloudflare:workers';
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
 import SupplierFields from '../../components/SupplierFields.astro';
-import { parseId, readForm, actor, can, logActivity } from '../../lib/app.js';
-import { SupplierSchema, SUPPLIER_STATUS, validate, formToObject } from '../../lib/validate.js';
-import { supplierFicha, supplierTypes, businessVolume, nameTaken, renameStmts, mergeStmts, cleanName } from '../../lib/suppliers.js';
-import { supplierContracts, contractOn, RENEWAL } from '../../lib/contracts.js';
+import { parseId, readForm, can } from '../../lib/app.js';
+import { SUPPLIER_STATUS, formToObject } from '../../lib/validate.js';
+import { contractOn, RENEWAL } from '../../lib/contracts.js';
 import { expLabel } from '../../lib/finance.js';
 import { eur } from '../../lib/money.js';
-import { today, formatDate, formatDateLong, formatRange } from '../../lib/dates.js';
+import { formatDate, formatDateLong, formatRange } from '../../lib/dates.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as suppliers from '../../services/suppliers.js';
+import * as contractsService from '../../services/contracts.js';
 
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
 const me = Astro.locals.user;
-const money = can(me, 'proveedores.gasto');
-const editable = can(me, 'proveedores.edit');
 const seesContracts = can(me, 'contratos');
 const editsContracts = can(me, 'contratos.edit');
-const now = today();
-const year = Number(now.slice(0, 4));
-let ficha = id ? await supplierFicha(db, id) : null;
-if (!ficha) return Astro.rewrite('/404');
-
+const self = `/proveedores/${id}`;
 let error = null;
 let errors = {};
-let v = ficha.supplier;
+let input = null;
 let openEdit = Astro.url.searchParams.has('editar');
 
-if (Astro.request.method === 'POST') {
+if (id && Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
-  const input = form ? formToObject(form) : {};
-  const who = actor(Astro);
-  const s = ficha.supplier;
-  if (!editable) {
-    return Astro.redirect(`/proveedores/${id}?aviso=permiso`, 303);
-  } else if (input.intent === 'save') {
-    openEdit = true;
-    v = { ...s, ...input };
-    const parsed = validate(SupplierSchema, { ...input, name: cleanName(input.name) });
-    const taken = parsed.ok ? await nameTaken(db, parsed.data.name, id) : null;
-    if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-    } else if (taken) {
-      error = `Ese nombre ya lo usa ${taken}. Si es el mismo proveedor, fusiónalos.`;
-      errors = { name: error };
-    } else {
-      const d = parsed.data;
-      // Sin permiso de gasto, las condiciones económicas no se ven en el formulario: se conservan
-      if (!money) Object.assign(d, { economic_terms: s.economic_terms, payment_terms: s.payment_terms });
-      await db.batch([
-        db.prepare(
-          `UPDATE suppliers SET name = ?, type_id = ?, status = ?, city = ?, address = ?, contact_name = ?, phone = ?, email = ?,
-                  max_capacity = ?, since_on = ?, economic_terms = ?, payment_terms = ?, notes = ?,
-                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
-        ).bind(d.name, d.type_id, d.status, d.city, d.address, d.contact_name, d.phone, d.email,
-          d.max_capacity, d.since_on, d.economic_terms, d.payment_terms, d.notes, id),
-        ...renameStmts(db, id, s.name, d.name),
-      ]);
-      await logActivity(db, who, null, 'supplier.update', d.name !== s.name ? `renombró al proveedor ${s.name}: ahora ${d.name}` : `editó la ficha del proveedor ${d.name}`);
-      return Astro.redirect(`/proveedores/${id}?ok=guardado`, 303);
-    }
-  } else if (input.intent === 'merge') {
-    const into = await db.prepare('SELECT id, name FROM suppliers WHERE id = ?').bind(Number(input.into)).first();
-    if (!into || into.id === id) {
-      error = 'Elige el proveedor con el que fusionarlo.';
-    } else {
-      await db.batch(mergeStmts(db, s, into));
-      await logActivity(db, who, null, 'supplier.merge', `fusionó al proveedor ${s.name} con ${into.name}`);
-      return Astro.redirect(`/proveedores/${into.id}?ok=guardado&fusionado=${encodeURIComponent(s.name)}`, 303);
-    }
-  } else if (input.intent === 'delete') {
-    const { n: contractCount } = await db.prepare('SELECT COUNT(*) AS n FROM supplier_contracts WHERE supplier_id = ?').bind(id).first();
-    if (ficha.expedientes.length) {
-      error = 'Tiene pagos en expedientes: no se puede borrar. Si está repetido, fusiónalo con el bueno; si ya no se trabaja con él, márcalo como inactivo.';
-    } else if (contractCount) {
-      error = 'Tiene contratos: no se puede borrar. Si está repetido, fusiónalo con el bueno (los contratos pasan con él); si ya no se trabaja con él, márcalo como inactivo.';
-    } else {
-      await db.prepare('DELETE FROM suppliers WHERE id = ?').bind(id).run();
-      await logActivity(db, who, null, 'supplier.delete', `borró al proveedor ${s.name}`);
-      return Astro.redirect('/proveedores?ok=borrado', 303);
-    }
+  input = form ? formToObject(form) : {};
+  const r = input.intent === 'save' ? await suppliers.update(ctx, id, input)
+    : input.intent === 'merge' ? await suppliers.merge(ctx, id, parseId(input.into))
+      : input.intent === 'delete' ? await suppliers.remove(ctx, id)
+        : { ok: false, code: 'forbidden' };
+  if (r.ok) {
+    if (input.intent === 'merge') return Astro.redirect(`/proveedores/${r.value.into.id}?ok=guardado&fusionado=${encodeURIComponent(r.value.from.name)}`, 303);
+    return Astro.redirect(input.intent === 'delete' ? '/proveedores?ok=borrado' : `${self}?ok=guardado`, 303);
   }
-  Astro.response.status = 400;
+  const back = failure(Astro, r, self);
+  if (back) return back;
+  error = r.message;
+  errors = r.fields;
+  openEdit = input.intent === 'save';
 }
 
+const f = id ? await suppliers.ficha(ctx, id) : { ok: false, code: 'not_found' };
+if (!f.ok) return failure(Astro, f, '/proveedores');
+const ficha = f.value;
+const { money, editable, types, others } = ficha;
+const vol = ficha.volume;
 const s = ficha.supplier;
-const vol = businessVolume(ficha.expedientes, year);
-const [types, others, contracts] = await Promise.all([
-  editable ? supplierTypes(db) : [],
-  editable ? db.prepare('SELECT id, name FROM suppliers WHERE id <> ? ORDER BY name COLLATE NOCASE').bind(id).all().then((r) => r.results) : [],
-  seesContracts ? supplierContracts(db, id, now) : [],
-]);
+const v = openEdit && input ? { ...s, ...input } : s;
+const contractsResult = seesContracts ? await contractsService.forSupplier(ctx, id) : null;
+const contracts = contractsResult?.ok ? contractsResult.value : [];
 // En la ficha, arriba: los que están en vigor, los que empiezan más adelante y los caducados sin renovar
 const HISTORY = ['renovado', 'finalizado'];
 const current = contracts.filter((c) => !HISTORY.includes(c.state.key));
 const past = contracts.filter((c) => HISTORY.includes(c.state.key));
 const contractHref = (c) => `/proveedores/${id}/contratos/${c.id}`;
 const firstLine = (text) => (text ?? '').split('\n').find((l) => l.trim()) ?? '';
+const year = Number(ctx.now.slice(0, 4));
 const merged = Astro.url.searchParams.get('fusionado');
 const pct = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)} %`;
 const phoneHref = s.phone ? `tel:${s.phone.replace(/[^\d+]/g, '')}` : null;
