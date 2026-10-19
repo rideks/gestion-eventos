@@ -1,11 +1,16 @@
 ---
+// Usuarios y permisos · Personas: invitar, asignar rol, activar/desactivar y borrar.
+// Los roles y lo que puede hacer cada uno están en /usuarios/roles.
+// Siempre tiene que quedar alguien activo que pueda gestionar usuarios (keepsAManager).
 import { env } from 'cloudflare:workers';
-import App from '../layouts/App.astro';
-import Icon from '../components/Icon.astro';
-import { deny, readForm, actor, logActivity } from '../lib/app.js';
-import { InviteSchema, ROLES, validate, formToObject } from '../lib/validate.js';
-import { generateInviteToken, hashInviteToken, deleteUserSessions, nowSeconds } from '../lib/auth.js';
-import { formatStamp } from '../lib/dates.js';
+import App from '../../layouts/App.astro';
+import Icon from '../../components/Icon.astro';
+import UsersTabs from '../../components/UsersTabs.astro';
+import { deny, readForm, actor, logActivity } from '../../lib/app.js';
+import { InviteSchema, UserRoleSchema, validate, formToObject } from '../../lib/validate.js';
+import { generateInviteToken, hashInviteToken, deleteUserSessions, nowSeconds } from '../../lib/auth.js';
+import { loadRoles, keepsAManager, LAST_MANAGER } from '../../lib/users.js';
+import { formatStamp } from '../../lib/dates.js';
 
 const denied = deny(Astro, 'users');
 if (denied) return denied;
@@ -16,6 +21,9 @@ const company = env.COMPANY_NAME || 'Seven Worlds';
 let error = null;
 let inviteLink = null;
 
+const roles = await loadRoles(db);
+const roleById = new Map(roles.map((r) => [r.id, r]));
+
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
   const form = await readForm(Astro.request);
@@ -24,42 +32,63 @@ if (Astro.request.method === 'POST') {
 
   if (input.intent === 'invite') {
     const parsed = validate(InviteSchema, input);
+    const role = parsed.ok ? roleById.get(parsed.data.role_id) : null;
     if (!parsed.ok) {
       error = parsed.message;
+    } else if (!role) {
+      error = 'Ese rol ya no existe.';
     } else {
       const token = generateInviteToken();
       const now = nowSeconds();
       await db.prepare(
-        'INSERT INTO invites (token_hash, role, note, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
-      ).bind(await hashInviteToken(token), parsed.data.role, parsed.data.note, me.id, now, now + parsed.data.days * 86400).run();
-      await logActivity(db, who, null, 'invite.create', `invitó a ${parsed.data.note ?? 'una persona'} (${ROLES[parsed.data.role]})`);
+        'INSERT INTO invites (token_hash, role_id, note, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).bind(await hashInviteToken(token), role.id, parsed.data.note, me.id, now, now + parsed.data.days * 86400).run();
+      await logActivity(db, who, null, 'invite.create', `invitó a ${parsed.data.note ?? 'una persona'} con el rol ${role.name}`);
       // El enlace sólo se muestra ahora: en la base de datos sólo queda su hash
       inviteLink = `${Astro.url.origin}/registro#token=${token}`;
     }
   } else if (input.intent === 'revoke' && Number.isInteger(id)) {
-    await db.prepare('UPDATE invites SET revoked_at = ? WHERE id = ? AND used_at IS NULL').bind(nowSeconds(), id).run();
+    const { meta } = await db.prepare('UPDATE invites SET revoked_at = ? WHERE id = ? AND used_at IS NULL').bind(nowSeconds(), id).run();
+    if (meta.changes) await logActivity(db, who, null, 'invite.revoke', 'anuló una invitación');
     return Astro.redirect('/usuarios?ok=guardado', 303);
   } else if (['toggle', 'role', 'delete'].includes(input.intent) && Number.isInteger(id)) {
-    const target = await db.prepare('SELECT id, name, role, active FROM users WHERE id = ?').bind(id).first();
-    const { n: activeAdmins } = await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1").first();
-    const isLastAdmin = target?.role === 'admin' && target?.active && activeAdmins <= 1;
+    const target = await db.prepare('SELECT id, name, role_id, active FROM users WHERE id = ?').bind(id).first();
+    const parsedRole = input.intent === 'role' ? validate(UserRoleSchema, input) : null;
+    const newRole = parsedRole?.ok ? roleById.get(parsedRole.data.role_id) : null;
 
     if (!target) {
       error = 'Ese usuario ya no existe.';
     } else if (target.id === me.id) {
       error = 'No puedes cambiar tu propia cuenta desde aquí. Usa «Mi cuenta».';
-    } else if (isLastAdmin && (input.intent !== 'role' || input.role !== 'admin')) {
-      error = 'Debe quedar al menos una cuenta de Administración activa.';
+    } else if (input.intent === 'role' && !newRole) {
+      error = 'Ese rol ya no existe.';
+    } else if (input.intent === 'role') {
+      if (newRole.id === target.role_id) return Astro.redirect('/usuarios', 303);
+      if (!(await keepsAManager(db, { userId: id, newRoleId: newRole.id }))) {
+        error = LAST_MANAGER;
+      } else {
+        await db.prepare('UPDATE users SET role_id = ? WHERE id = ?').bind(newRole.id, id).run();
+        await logActivity(db, who, null, 'user.role',
+          `cambió el rol de ${target.name}: ${roleById.get(target.role_id)?.name ?? 'sin rol'} → ${newRole.name}`);
+        return Astro.redirect('/usuarios?ok=guardado', 303);
+      }
     } else if (input.intent === 'toggle') {
-      await db.prepare('UPDATE users SET active = ? WHERE id = ?').bind(target.active ? 0 : 1, id).run();
-      if (target.active) await deleteUserSessions(db, id); // fuera de la aplicación al momento
-      return Astro.redirect('/usuarios?ok=guardado', 303);
-    } else if (input.intent === 'role' && input.role in ROLES) {
-      await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(input.role, id).run();
-      return Astro.redirect('/usuarios?ok=guardado', 303);
+      if (target.active && !(await keepsAManager(db, { userId: id, active: false }))) {
+        error = LAST_MANAGER;
+      } else {
+        await db.prepare('UPDATE users SET active = ? WHERE id = ?').bind(target.active ? 0 : 1, id).run();
+        if (target.active) await deleteUserSessions(db, id); // fuera de la aplicación al momento
+        await logActivity(db, who, null, 'user.toggle', `${target.active ? 'desactivó' : 'activó'} la cuenta de ${target.name}`);
+        return Astro.redirect('/usuarios?ok=guardado', 303);
+      }
     } else if (input.intent === 'delete') {
-      await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
-      return Astro.redirect('/usuarios?ok=borrado', 303);
+      if (!(await keepsAManager(db, { userId: id, active: false }))) {
+        error = LAST_MANAGER;
+      } else {
+        await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+        await logActivity(db, who, null, 'user.delete', `borró la cuenta de ${target.name}`);
+        return Astro.redirect('/usuarios?ok=borrado', 303);
+      }
     }
   }
   if (error) Astro.response.status = 400;
@@ -67,19 +96,15 @@ if (Astro.request.method === 'POST') {
 
 const now = nowSeconds();
 const [users, invites] = await db.batch([
-  db.prepare('SELECT id, name, email, role, active, last_login_at FROM users ORDER BY active DESC, role, name'),
-  db.prepare('SELECT id, role, note, expires_at FROM invites WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > ? ORDER BY id DESC').bind(now),
+  db.prepare('SELECT id, name, email, role_id, active, last_login_at FROM users ORDER BY active DESC, role_id, name'),
+  db.prepare('SELECT id, role_id, note, expires_at FROM invites WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > ? ORDER BY id DESC').bind(now),
 ]);
 const when = (secs) => formatStamp(new Date(secs * 1000).toISOString());
 const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión de eventos de ${company}. Crea tu cuenta aquí:\n\n${inviteLink}\n\nEl enlace sólo sirve para una cuenta.` : '';
+const defaultRole = roles.find((r) => r.key === 'eventos')?.id ?? roles[0]?.id;
 ---
-<App title="Usuarios" section="usuarios" error={error}>
-  <div class="page-top">
-    <div>
-      <h1>Usuarios</h1>
-      <p>Quién puede entrar en la aplicación</p>
-    </div>
-  </div>
+<App title="Usuarios y permisos" section="usuarios" error={error}>
+  <UsersTabs tab="personas" />
 
   {inviteLink && (
     <div class="invite-link" role="status">
@@ -97,10 +122,9 @@ const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión d
     <h2><Icon name="user-plus" /> Invitar a una persona</h2>
     <div class="row row-3">
       <div class="field">
-        <label for="role">Tipo de cuenta</label>
-        <select id="role" name="role">
-          <option value="eventos">Gestión de eventos</option>
-          <option value="admin">Administración</option>
+        <label for="role_id">Rol</label>
+        <select id="role_id" name="role_id">
+          {roles.map((r) => <option value={r.id} selected={r.id === defaultRole}>{r.name}</option>)}
         </select>
       </div>
       <div class="field">
@@ -117,11 +141,11 @@ const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión d
       </div>
     </div>
     <details class="help">
-      <summary>¿Qué puede hacer cada tipo de cuenta?</summary>
+      <summary>¿Qué puede hacer cada rol?</summary>
       <ul>
-        <li><strong>Gestión de eventos</strong>: pedir expedientes, subir presupuestos, facturas de proveedores y PO, registrar pagos y pedir facturas al cliente.</li>
-        <li><strong>Administración</strong>: además, abre y cierra expedientes (les da número), emite y cobra las facturas al cliente y gestiona los usuarios.</li>
+        {roles.map((r) => <li><a href={`/usuarios/roles/${r.id}`}><strong>{r.name}</strong></a>{r.description && `: ${r.description}`} ({r.permissions.length} {r.permissions.length === 1 ? 'permiso' : 'permisos'})</li>)}
       </ul>
+      <p class="small mt"><a href="/usuarios/roles">Ver qué puede hacer cada rol, permiso a permiso</a></p>
     </details>
     <div><button class="btn btn-primary" type="submit" name="intent" value="invite"><Icon name="send" size={18} /> Crear enlace de invitación</button></div>
   </form>
@@ -129,12 +153,12 @@ const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión d
   <h2 class="section-title">Personas ({users.results.length})</h2>
   <ul class="list">
     {users.results.map((u) => (
-      <li class:list={['item is-row', { 'is-muted': !u.active }]}>
+      <li class:list={['item is-row', { 'is-muted': !u.active }]} id={`u${u.id}`}>
         <div class="item-body">
           <span class="item-title">{u.name}{u.id === me.id && <span class="muted"> (tú)</span>}</span>
           <span class="item-meta"><span>{u.email}</span><span>{u.last_login_at ? `Último acceso ${formatStamp(u.last_login_at)}` : 'Nunca ha entrado'}</span></span>
           <span class="item-flags">
-            <span class:list={['pill', u.role === 'admin' ? 'pill-accent' : 'pill-muted']}>{ROLES[u.role]}</span>
+            <a class="pill pill-accent" href={`/usuarios/roles/${u.role_id}`}>{roleById.get(u.role_id)?.name ?? 'Sin rol'}</a>
             {!u.active && <span class="pill pill-danger">Desactivada</span>}
           </span>
         </div>
@@ -143,11 +167,11 @@ const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión d
             <form method="post" class="quick-form">
               <input type="hidden" name="id" value={u.id} />
               <input type="hidden" name="intent" value="role" />
-              <label class="visually-hidden" for={`role-${u.id}`}>Tipo de cuenta</label>
-              <select id={`role-${u.id}`} name="role">
-                {Object.entries(ROLES).map(([k, v]) => <option value={k} selected={u.role === k}>{v}</option>)}
+              <label class="visually-hidden" for={`role-${u.id}`}>Rol de {u.name}</label>
+              <select id={`role-${u.id}`} name="role_id">
+                {roles.map((r) => <option value={r.id} selected={u.role_id === r.id}>{r.name}</option>)}
               </select>
-              <button class="btn btn-ghost btn-sm" type="submit">Cambiar</button>
+              <button class="btn btn-ghost btn-sm" type="submit">Cambiar rol</button>
             </form>
             <form method="post">
               <input type="hidden" name="id" value={u.id} />
@@ -155,7 +179,7 @@ const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión d
             </form>
             <form method="post">
               <input type="hidden" name="id" value={u.id} />
-              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar la cuenta de ${u.name}? Lo que hizo se mantiene en los expedientes.`}><Icon name="trash-2" size={16} /></button>
+              <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" aria-label={`Borrar la cuenta de ${u.name}`} data-confirm={`¿Borrar la cuenta de ${u.name}? Lo que hizo se mantiene en los expedientes.`}><Icon name="trash-2" size={16} /></button>
             </form>
           </div>
         )}
@@ -171,7 +195,7 @@ const mailBody = inviteLink ? `Hola:\n\nTe invito a la aplicación de gestión d
           <li class="item">
             <div class="item-body">
               <span class="item-title">{inv.note ?? 'Invitación'}</span>
-              <span class="item-meta"><span>{ROLES[inv.role]}</span><span>Caduca {when(inv.expires_at)}</span></span>
+              <span class="item-meta"><span>{roleById.get(inv.role_id)?.name ?? 'Sin rol'}</span><span>Caduca {when(inv.expires_at)}</span></span>
             </div>
             <form method="post">
               <input type="hidden" name="id" value={inv.id} />

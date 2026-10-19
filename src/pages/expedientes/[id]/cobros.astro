@@ -82,7 +82,7 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const { companies } = await suggestions(db);
+const { billed: companies } = await suggestions(db);
 const s = fin.summary;
 const poByInvoice = new Map();
 for (const a of fin.allocations) poByInvoice.set(a.invoice_id, [...(poByInvoice.get(a.invoice_id) ?? []), a.po_number]);

@@ -87,8 +87,9 @@ export async function getSession(db, token) {
   const id = await sha256Hex(token);
   const t = now();
   const row = await db.prepare(
-    `SELECT s.last_seen_at, u.id, u.name, u.email, u.role
-       FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT s.last_seen_at, u.id, u.name, u.email, u.role_id, r.name AS role_name,
+            (SELECT GROUP_CONCAT(rp.permission) FROM role_permissions rp WHERE rp.role_id = u.role_id) AS perms
+       FROM sessions s JOIN users u ON u.id = s.user_id LEFT JOIN roles r ON r.id = u.role_id
       WHERE s.id = ? AND s.expires_at > ? AND s.last_seen_at > ? AND u.active = 1`,
   ).bind(id, t, t - IDLE_TTL).first();
   if (!row) return null;
@@ -98,7 +99,9 @@ export async function getSession(db, token) {
     await db.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').bind(t, id).run();
     touched = true;
   }
-  const { last_seen_at, ...user } = row;
+  const { last_seen_at, perms, ...user } = row;
+  // Los permisos del rol se leen en cada petición: un cambio de rol o de permisos vale al momento
+  user.permissions = new Set(perms ? perms.split(',') : []);
   return { user, sessionId: id, touched };
 }
 

@@ -14,7 +14,7 @@ const href = fileUrl(p);
 const edit = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
 const invoice = supplierInvoiceState(p);
 const missingInvoice = !p.invoice_count && p.total_cents !== 0;
-const canPay = canEdit && p.status !== 'pagado';
+const canPay = canEdit && p.status !== 'pagado' && can(Astro.locals.user, 'pagos');
 // Eventos sólo marca pagados los pagos con tarjeta; las transferencias (con justificante) las marca Administración
 const cardOnly = !can(Astro.locals.user, 'payment.any_method');
 const canReceipt = can(Astro.locals.user, 'payment.receipt');

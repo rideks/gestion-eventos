@@ -5,6 +5,8 @@ import { env } from 'cloudflare:workers';
 import { getSession, SESSION_COOKIE, sessionCookieOptions } from './lib/auth.js';
 import { applySecurityHeaders, isTrustedMutation, rateLimit } from './lib/security.js';
 import { navCounts } from './lib/data.js';
+import { can } from './lib/app.js';
+import { sectionPermission } from './lib/permissions.js';
 import { today } from './lib/dates.js';
 
 const PUBLIC = new Set(['/login', '/registro']);
@@ -52,15 +54,24 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     return withHeaders(ctx.redirect(`/login${back}`, 302), url);
   }
 
-  // 3. Límite de escrituras por usuario (evita abusos si alguien roba una sesión)
+  // 3. Permiso de la sección: sin él no se llega ni a la página (ni por URL ni por formulario).
+  //    El acceso y el alta son públicos: cada una sabe qué hacer si ya hay sesión.
+  if (locals.user && !PUBLIC.has(path)) {
+    const need = sectionPermission(path);
+    if (need === null || (need && !can(locals.user, need))) {
+      return withHeaders(ctx.redirect('/?aviso=permiso', 303), url);
+    }
+  }
+
+  // 4. Límite de escrituras por usuario (evita abusos si alguien roba una sesión)
   if (locals.user && request.method === 'POST' && !(await rateLimit(env.RL_WRITE, `w:${locals.user.id}`))) {
     return withHeaders(new Response('Demasiadas acciones seguidas. Espera un minuto y vuelve a intentarlo.', {
       status: 429, headers: { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '60' },
     }), url);
   }
 
-  // 4. Los contadores del menú se piden ya, a la vez que los datos de la página (la plantilla los espera)
-  if (locals.user && request.method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
+  // 5. Los contadores del menú se piden ya, a la vez que los datos de la página (la plantilla los espera)
+  if (can(locals.user, 'expedientes') && request.method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
     locals.counts = navCounts(env.DB, today()).catch(() => null);
   }
 

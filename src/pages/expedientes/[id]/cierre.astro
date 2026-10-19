@@ -19,8 +19,11 @@ if (!exp) return Astro.rewrite('/404');
 
 const me = Astro.locals.user;
 const s = fin.summary;
+// Sin el permiso de cobros no se ven las facturas al cliente (sólo el total de ventas, para el beneficio)
+const cobros = can(me, 'cobros');
 const checks = closingChecks(s);
 const allOk = checks.every((c) => c.ok);
+const shownChecks = cobros ? checks : checks.filter((c) => c.area !== 'cobros');
 let error = null;
 
 if (Astro.request.method === 'POST') {
@@ -37,7 +40,7 @@ if (Astro.request.method === 'POST') {
     ]);
     return Astro.redirect(`/expedientes/${id}?ok=cerrado`, 303);
   }
-  error = 'Sólo Administración puede cerrar un expediente abierto.';
+  error = 'No tienes permiso para cerrar el expediente.';
   Astro.response.status = 400;
 }
 
@@ -92,14 +95,16 @@ const fromBudget = sales.length === 0;
         <caption>Cliente</caption>
         <thead><tr><th scope="col">Cliente</th><th scope="col">Nº factura</th><th scope="col" class="num">Importe sin IVA</th><th scope="col" class="num">Importe con IVA</th></tr></thead>
         <tbody>
-          {sales.map((i) => (
+          {cobros ? sales.map((i) => (
             <tr class:list={{ 'is-planned': i.status === 'por_emitir' }}>
               <td>{i.billed_to}</td>
               <td>{i.number ?? 'por emitir'}</td>
               <td class="num">{num(i.base_cents)} €</td>
               <td class="num">{num(i.total_cents)} €</td>
             </tr>
-          ))}
+          )) : !fromBudget && (
+            <tr><td>{exp.company}</td><td>{sales.length} {sales.length === 1 ? 'factura' : 'facturas'}</td><td class="num">{num(salesBase)} €</td><td class="num">{num(salesTotal)} €</td></tr>
+          )}
           {fromBudget && <tr class="is-planned"><td>{exp.company}</td><td>presupuesto v{fin.budget?.version ?? '—'}</td><td class="num">{num(s.sale.base)} €</td><td class="num">{num(s.sale.total)} €</td></tr>}
         </tbody>
         <tfoot><tr><td colspan="2">Total grupo</td><td class="num">{num(salesBase)} €</td><td class="num">{num(salesTotal)} €</td></tr></tfoot>
@@ -111,7 +116,7 @@ const fromBudget = sales.length === 0;
   <section class="card mt no-print">
     <h2>Antes de cerrar</h2>
     <ul class="checks">
-      {checks.map((c) => <li class={c.ok ? 'is-ok' : 'is-ko'}><Icon name={c.ok ? 'circle-check' : 'circle-alert'} /> {c.text}</li>)}
+      {shownChecks.map((c) => <li class={c.ok ? 'is-ok' : 'is-ko'}><Icon name={c.ok ? 'circle-check' : 'circle-alert'} /> {c.text}</li>)}
     </ul>
     {exp.status === 'abierto' && can(me, 'expediente.close') && (
       <form method="post" class="mt">
@@ -121,7 +126,9 @@ const fromBudget = sales.length === 0;
         </button>
       </form>
     )}
-    {exp.status === 'abierto' && !can(me, 'expediente.close') && <p class="muted mt">Cuando esté todo en verde, Administración lo cerrará.</p>}
+    {exp.status === 'abierto' && !can(me, 'expediente.close') && (
+      <p class="muted mt">Cuando esté todo en verde, Administración lo cerrará{!cobros && ' (antes revisa también la facturación y los cobros)'}.</p>
+    )}
   </section>
 </App>
 

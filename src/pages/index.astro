@@ -1,6 +1,7 @@
 ---
 // Inicio: lo que hay que hacer hoy. Cada persona ve primero lo suyo
-// (Administración: solicitudes por abrir y facturas por emitir; Eventos: sus expedientes).
+// (quien abre expedientes o lleva los cobros: todo lo abierto; Eventos: sus expedientes).
+// Quien no trabaja con expedientes (p. ej. Técnico) va directamente a su sección.
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
@@ -20,6 +21,10 @@ import { today, addDays, formatRange, formatStamp, formatDateLong } from '../lib
 
 const db = env.DB;
 const me = Astro.locals.user;
+if (!can(me, 'expedientes')) {
+  const home = can(me, 'users') ? '/usuarios' : can(me, 'settings') ? '/ajustes' : '/cuenta';
+  return Astro.redirect(`${home}${Astro.url.search}`, 303);
+}
 const admin = can(me, 'expediente.open');
 const now = today();
 let error = null;
@@ -43,8 +48,10 @@ if (Astro.request.method === 'POST') {
 
 const soon = addDays(now, SOON_DAYS);
 const reviewer = can(me, 'supplier.review');
-// Los cobros (facturas al cliente, PO, por facturar) sólo los ve Administración
+// Los cobros (facturas al cliente, PO, por facturar) sólo los ve quien tiene ese permiso
 const cobros = can(me, 'cobros');
+// Oficina (abre expedientes o lleva los cobros): ve todo lo abierto. Eventos: lo suyo y «Te toca».
+const office = admin || cobros;
 const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice, billing] = await Promise.all([
   reviewer ? invoicesToReview(db) : [],
   pendingPayments(db, '', { until: soon }),
@@ -53,8 +60,8 @@ const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: op
   // Administración ve las solicitudes en su propio bloque («Solicitudes por abrir»): aquí sólo las abiertas.
   // Eventos ve aquí todo lo suyo, también lo que ha pedido y aún no está abierto.
   db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id
-               WHERE ${admin ? "e.status = 'abierto'" : "e.status IN ('abierto', 'solicitado') AND e.manager_id = ?"}
-               ORDER BY e.start_date LIMIT 8`).bind(...(admin ? [] : [me.id])).all().then((r) => r.results),
+               WHERE ${office ? "e.status = 'abierto'" : "e.status IN ('abierto', 'solicitado') AND e.manager_id = ?"}
+               ORDER BY e.start_date LIMIT 8`).bind(...(office ? [] : [me.id])).all().then((r) => r.results),
   db.prepare(`SELECT e.*, u.name AS requested_by_name,
                      (SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1) AS budget_base
                 FROM expedientes e LEFT JOIN users u ON u.id = e.requested_by
@@ -66,7 +73,7 @@ const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: op
                ${cobros ? '' : "WHERE a.action NOT LIKE 'invoice.%' AND a.action NOT LIKE 'po.%'"}
                ORDER BY a.at DESC, a.id DESC LIMIT 12`).all().then((r) => r.results),
   db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
-  admin ? [] : paidWithoutInvoice(db),
+  office ? [] : paidWithoutInvoice(db),
   cobros ? toInvoiceByExpediente(db) : [],
 ]);
 // «Te toca» (Eventos): lo que depende de quien lleva el expediente
@@ -167,7 +174,7 @@ const firstName = me.name.split(' ')[0];
             <h2><Icon name="arrow-down-left" /> Facturas por emitir y cobros vencidos</h2>
             <a class="btn btn-ghost btn-sm" href="/cobros">Ver todos</a>
           </div>
-          <ul class="list">{[...toIssue, ...overdueInvoices].slice(0, 6).map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul>
+          <ul class="list">{[...toIssue, ...overdueInvoices].slice(0, 6).map((i) => <InvoiceItem i={i} now={now} showExp canIssue={can(me, 'invoice.issue')} />)}</ul>
         </section>
       )}
     </div>
@@ -175,8 +182,8 @@ const firstName = me.name.split(' ')[0];
     <div class="stack">
       <section class="card">
         <div class="sec-head">
-          <h2><Icon name="folder" /> {admin ? 'Expedientes en marcha' : 'Mis expedientes'}</h2>
-          <a class="btn btn-ghost btn-sm" href={admin ? '/expedientes' : '/expedientes?ver=mios'}>Ver todos</a>
+          <h2><Icon name="folder" /> {office ? 'Expedientes en marcha' : 'Mis expedientes'}</h2>
+          <a class="btn btn-ghost btn-sm" href={office ? '/expedientes' : '/expedientes?ver=mios'}>Ver todos</a>
         </div>
         {open.length ? (
           <ul class="list">

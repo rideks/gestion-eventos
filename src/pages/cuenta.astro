@@ -3,7 +3,7 @@ import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import { readForm, actor } from '../lib/app.js';
-import { AccountSchema, PasswordChangeSchema, ROLES, validate, formToObject } from '../lib/validate.js';
+import { AccountSchema, PasswordChangeSchema, validate, formToObject } from '../lib/validate.js';
 import { verifyPassword, hashPassword, deleteUserSessions, nowSeconds } from '../lib/auth.js';
 import { isPasswordPwned, rateLimit } from '../lib/security.js';
 
@@ -61,7 +61,7 @@ const { n: sessions } = await db.prepare('SELECT COUNT(*) AS n FROM sessions WHE
   <div class="page-top">
     <div>
       <h1>Mi cuenta</h1>
-      <p>{me.email} · {ROLES[me.role]}</p>
+      <p>{me.email} · {me.role_name}</p>
     </div>
   </div>
 

@@ -31,6 +31,7 @@ export function paidProblem({ method, hasReceipt, cardOnly = false }) {
  * @returns {Promise<{ ok: true, expedienteId: number } | { ok: false, message: string }>}
  */
 export async function markPaid(db, who, input, expedienteId = null, receipt = null) {
+  if (!can(who.user, 'pagos')) return { ok: false, message: 'No tienes permiso para registrar pagos.' };
   const id = Number(input.payment_id);
   const parsed = validate(PaySchema, input);
   if (!parsed.ok) return parsed;
@@ -42,8 +43,8 @@ export async function markPaid(db, who, input, expedienteId = null, receipt = nu
   if (isLocked({ status: p.exp_status })) return { ok: false, message: LOCKED_MSG };
   if (p.status === 'pagado') return { ok: true, expedienteId: p.expediente_id };
   const { paid_on, method } = parsed.data;
-  // El justificante sólo lo sube Administración (a Eventos no se le ofrece)
-  if (receipt?.file && !can(who.user, 'payment.receipt')) return { ok: false, message: 'El justificante lo sube Administración.' };
+  // El justificante sólo lo sube quien tiene ese permiso (a Eventos no se le ofrece)
+  if (receipt?.file && !can(who.user, 'payment.receipt')) return { ok: false, message: 'No tienes permiso para subir el justificante.' };
   const problem = paidProblem({ method, hasReceipt: !!(p.receipt_file_id || receipt?.file), cardOnly: !can(who.user, 'payment.any_method') });
   if (problem) return { ok: false, message: problem };
   if (receipt?.file) {
@@ -63,9 +64,9 @@ export async function markPaid(db, who, input, expedienteId = null, receipt = nu
   return { ok: true, expedienteId: p.expediente_id };
 }
 
-/** Marca una factura emitida como cobrada (sólo Administración) */
+/** Marca una factura emitida como cobrada (permiso invoice.issue) */
 export async function markCollected(db, who, input, expedienteId = null) {
-  if (!can(who.user, 'invoice.issue')) return { ok: false, message: 'Sólo Administración puede registrar cobros.' };
+  if (!can(who.user, 'invoice.issue')) return { ok: false, message: 'No tienes permiso para registrar cobros.' };
   const id = Number(input.invoice_id);
   const parsed = validate(CollectSchema, input);
   if (!parsed.ok) return parsed;

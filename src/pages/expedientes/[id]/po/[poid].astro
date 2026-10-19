@@ -127,7 +127,7 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const { companies } = await suggestions(db);
+const { billed: companies } = await suggestions(db);
 const state = left < 0 ? { label: `Facturado de más ${eur(-left)}`, tone: 'danger' }
   : left === 0 ? { label: 'Facturada', tone: 'ok' }
   : po.closed ? { label: 'Cerrada', tone: 'muted' }

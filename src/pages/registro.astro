@@ -50,7 +50,7 @@ if (Astro.request.method === 'POST') {
         const invite = await env.DB.prepare(
           `UPDATE invites SET used_at = ?
             WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
-          RETURNING id, role`,
+          RETURNING id, role_id`,
         ).bind(now, await hashInviteToken(token), now).first();
 
         if (!invite) {
@@ -58,8 +58,8 @@ if (Astro.request.method === 'POST') {
         } else {
           try {
             const user = await env.DB.prepare(
-              'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?) RETURNING id, name',
-            ).bind(name, email, await hashPassword(password), invite.role).first();
+              'INSERT INTO users (name, email, password_hash, role_id) VALUES (?, ?, ?, ?) RETURNING id, name',
+            ).bind(name, email, await hashPassword(password), invite.role_id).first();
             await env.DB.prepare('UPDATE invites SET used_by = ? WHERE id = ?').bind(user.id, invite.id).run();
             const sessionToken = await createSession(env.DB, user.id, { ip, userAgent: Astro.request.headers.get('user-agent') });
             Astro.cookies.set(SESSION_COOKIE, sessionToken, sessionCookieOptions());

@@ -5,20 +5,35 @@
 --   · EXP 1285 Jornadas de trabajo ELECNOR    → cerrado
 --   · EXP 1289 Convención anual ROCHE         → en curso, con pagos urgentes y una factura pedida
 --   · Lanzamiento Winlevi GLENMARK            → solicitud pendiente de abrir
--- Cuentas (contraseña de las dos: demo-gestion-2026):
---   tania@example.com (Administración) · marta@example.com (Gestión de eventos)
+-- Cuentas, una por rol (contraseña de todas: demo-gestion-2026):
+--   tania@example.com (Administración) · marta@example.com (Eventos) · direccion@example.com (Jefes)
+--   tesoreria@example.com (Tesorería) · tecnico@example.com (Técnico)
+-- Los roles vuelven al reparto inicial de permisos (los roles creados a mano se borran).
 -- ════════════════════════════════════════════════════════════════════════════
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
 DELETE FROM sessions; DELETE FROM invites; DELETE FROM login_attempts; DELETE FROM users;
+DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
+-- Reparto inicial (el mismo que migrations/0008_roles_y_permisos.sql)
+INSERT INTO role_permissions (role_id, permission)
+SELECT r.id, p.value FROM roles r, json_each(CASE r.key
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings"]'
+  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage"]'
+  WHEN 'eventos' THEN '["expedientes","pagos"]'
+  WHEN 'tecnico' THEN '["users"]'
+END) p;
 DELETE FROM vat_rates;
 INSERT INTO vat_rates (label, rate_bp, is_default) VALUES
   ('IVA 21 %', 2100, 1), ('IVA 10 %', 1000, 0), ('IGIC 7 %', 700, 0), ('IVA 4 %', 400, 0), ('Exento 0 %', 0, 0);
 
-INSERT INTO users (id, name, email, password_hash, role) VALUES
-  (1, 'Tania Ruiz', 'tania@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', 'admin'),
-  (2, 'Marta López', 'marta@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', 'eventos');
+INSERT INTO users (id, name, email, password_hash, role_id) VALUES
+  (1, 'Tania Ruiz', 'tania@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', (SELECT id FROM roles WHERE key = 'administracion')),
+  (2, 'Marta López', 'marta@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', (SELECT id FROM roles WHERE key = 'eventos')),
+  (3, 'Carlos Vidal', 'direccion@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', (SELECT id FROM roles WHERE key = 'jefes')),
+  (4, 'Elena Martín', 'tesoreria@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', (SELECT id FROM roles WHERE key = 'tesoreria')),
+  (5, 'Soporte técnico', 'tecnico@example.com', 'pbkdf2_sha256$100000$__QfineYgXfs8JUGqQApDA$jbnAas9k3TpwoirVVEFv0zAry4JzQmwl9irBZYiV78o', (SELECT id FROM roles WHERE key = 'tecnico'));
 
 INSERT INTO expedientes (id, number, name, company, contact_name, contact_email, contact_phone, destination, start_date, end_date, attendees, notes,
                          status, manager_id, requested_by, requested_at, opened_by, opened_at, closed_by, closed_at) VALUES

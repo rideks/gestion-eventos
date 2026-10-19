@@ -19,31 +19,30 @@ const { title = 'Inicio', section = '', error = null, notice = null, wide = fals
 const fieldErrorsJson = fieldErrors && Object.keys(fieldErrors).length ? JSON.stringify(fieldErrors) : undefined;
 const user = Astro.locals.user;
 const company = env.COMPANY_NAME || 'Seven Worlds';
-// Ya pedidos en el middleware (en paralelo con la página); si no, aquí
-const counts = (await Astro.locals.counts) ?? await navCounts(env.DB, today());
-const admin = can(user, 'expediente.open');
+const work = can(user, 'expedientes');
+// Ya pedidos en el middleware (en paralelo con la página); si no, aquí. Sin expedientes no hay contadores.
+const counts = work ? ((await Astro.locals.counts) ?? await navCounts(env.DB, today())) : {};
+const canOpen = can(user, 'expediente.open');
 const reviewer = can(user, 'supplier.review');
 const toReview = reviewer ? counts.to_review : 0;
 
 const ok = FLASH[Astro.url.searchParams.get('ok') ?? ''];
-const warn = Astro.url.searchParams.get('aviso') === 'permiso' ? 'Eso sólo lo puede hacer Administración.' : null;
+const warn = Astro.url.searchParams.get('aviso') === 'permiso' ? 'No tienes permiso para eso. Si lo necesitas, pídeselo a quien gestiona los usuarios.' : null;
 
 const nav = [
-  { key: 'inicio', href: '/', label: 'Inicio', icon: 'house' },
-  { key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: admin ? counts.requests : 0, tone: 'warn' },
-  { key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' },
+  ...(work ? [{ key: 'inicio', href: '/', label: 'Inicio', icon: 'house' }] : []),
+  ...(work ? [{ key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: canOpen ? counts.requests : 0, tone: 'warn' }] : []),
+  ...(can(user, 'pagos') ? [{ key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' }] : []),
   ...(can(user, 'cobros') ? [{ key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: counts.to_issue, tone: 'warn' }] : []),
-  { key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true },
-  ...(admin ? [
-    { key: 'usuarios', href: '/usuarios', label: 'Usuarios', icon: 'user-plus' },
-    { key: 'ajustes', href: '/ajustes', label: 'Ajustes', icon: 'settings' },
-  ] : []),
+  ...(work ? [{ key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true }] : []),
+  ...(can(user, 'users') ? [{ key: 'usuarios', href: '/usuarios', label: 'Usuarios y permisos', icon: 'user-plus', sep: !work }] : []),
+  ...(can(user, 'settings') ? [{ key: 'ajustes', href: '/ajustes', label: 'Ajustes', icon: 'settings' }] : []),
   { key: 'cuenta', href: '/cuenta', label: 'Mi cuenta', icon: 'user-round' },
 ];
 const MAIN = ['inicio', 'expedientes', 'pagos', 'cobros'];
 const tabs = nav.filter((n) => MAIN.includes(n.key));
 const more = nav.filter((n) => !MAIN.includes(n.key));
-const roleLabel = admin ? 'Administración' : 'Eventos';
+const roleLabel = user?.role_name ?? '';
 ---
 <!doctype html>
 <html lang="es">
@@ -64,12 +63,14 @@ const roleLabel = admin ? 'Administración' : 'Eventos';
         <span class="app-name">Gestión<br />de eventos</span>
       </a>
       <span class="spacer"></span>
-      <form class="a-search" method="get" action="/buscar" role="search">
-        <label class="visually-hidden" for="a-search-q">Buscar en todo</label>
-        <Icon name="search" size={16} />
-        <input id="a-search-q" name="q" type="search" placeholder="Buscar: nº, cliente, proveedor, factura…" autocomplete="off" />
-      </form>
-      <a class="a-search-btn" href="/buscar" aria-label="Buscar" title="Buscar"><Icon name="search" size={22} /></a>
+      {work && (<>
+        <form class="a-search" method="get" action="/buscar" role="search">
+          <label class="visually-hidden" for="a-search-q">Buscar en todo</label>
+          <Icon name="search" size={16} />
+          <input id="a-search-q" name="q" type="search" placeholder="Buscar: nº, cliente, proveedor, factura…" autocomplete="off" />
+        </form>
+        <a class="a-search-btn" href="/buscar" aria-label="Buscar" title="Buscar"><Icon name="search" size={22} /></a>
+      </>)}
       {user && <span class="a-user">{user.name} · {roleLabel}</span>}
       {reviewer && (
         <a class:list={['bell', { 'has-news': toReview > 0 }]} href="/pagos?ver=revisar"

@@ -167,7 +167,7 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ companies }, clients, next] = await Promise.all([
+const [{ billed: companies }, clients, next] = await Promise.all([
   suggestions(db),
   editable ? knownClients(db) : [],
   editable && admin ? peekInvoiceNumber(db, Number(now.slice(0, 4))) : null,

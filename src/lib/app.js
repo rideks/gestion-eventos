@@ -2,24 +2,10 @@
 import { getClientIp } from './security.js';
 
 // ── Permisos ───────────────────────────────────────────────────────────────
-// Lo que no aparece aquí lo pueden hacer los dos roles (subir facturas de proveedor, presupuestos…).
-// Para cambiar quién hace qué, basta con tocar esta tabla.
-const ONLY = {
-  'expediente.open': ['admin'],      // dar número al expediente
-  'expediente.close': ['admin'],     // cerrar, reabrir y cancelar
-  'invoice.issue': ['admin'],        // poner nº a una factura, marcarla cobrada o anularla
-  'supplier.review': ['admin'],      // revisar y dar por buena una factura de proveedor
-  'payment.unpay': ['admin'],        // «Deshacer pagado» (un pago hecho no se puede modificar)
-  'payment.any_method': ['admin'],   // marcar pagado por transferencia u otro medio (Eventos: sólo con tarjeta)
-  'payment.receipt': ['admin'],      // subir o quitar el justificante bancario de un pago
-  'po.manage': ['admin'],            // subir, editar, cerrar y borrar las PO del cliente, y facturar desde ellas
-  'cobros': ['admin'],               // ver los cobros: bandeja, pestaña del expediente, facturas al cliente y PO
-  'delete': ['admin'],               // borrar filas de otras personas
-  'users': ['admin'],
-  'settings': ['admin'],             // tipos de IVA y numeración
-};
-
-export const can = (user, action) => !!user && (ONLY[action] ?? ['admin', 'eventos']).includes(user.role);
+// Cada rol tiene su lista de permisos en la base de datos (role_permissions) y llega con la sesión
+// (src/lib/auth.js). Lista blanca: lo que el rol no tiene marcado, no lo puede hacer.
+// El catálogo de permisos y su descripción están en src/lib/permissions.js.
+export const can = (user, action) => !!user?.permissions?.has(action);
 
 /** Si no tiene permiso, redirección al inicio con aviso; si lo tiene, null */
 export function deny(Astro, action) {

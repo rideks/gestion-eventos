@@ -437,7 +437,7 @@ const flow = [
         )}
       </div>
     )}
-    {!locked && !paid && (
+    {!locked && !paid && can(me, 'pagos') && (
       <form method="post" enctype="multipart/form-data" class="form mt" data-has-receipt={p.receipt_file_id ? '1' : '0'}>
         <input type="hidden" name="payment_id" value={p.id} />
         {canReceipt && (

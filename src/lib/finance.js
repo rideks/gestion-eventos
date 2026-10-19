@@ -255,26 +255,28 @@ export function nextSteps(e, s, now, { po = true } = {}) {
 export function closingChecks(s) {
   const billing = billingStatus({ budget_base: s.sale.base, invoiced_base: s.sales.base }, s.poLeft);
   const checks = [];
+  // area: 'proveedores' o 'cobros' (los de cobros sólo los ve quien tiene ese permiso)
+  const push = (area, c) => checks.push({ ...c, area });
   // Proveedores
   if (!s.payments.length) {
-    checks.push({ ok: false, text: 'Aún no hay ningún coste apuntado' });
+    push('proveedores', { ok: false, text: 'Aún no hay ningún coste apuntado' });
   } else {
-    checks.push({ ok: !s.pending.length, text: s.pending.length ? `Quedan ${eur(s.toPay)} por pagar a proveedores` : 'Todos los proveedores están pagados' });
-    checks.push({ ok: s.withoutInvoice.length === 0, text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor` : 'Todos los costes tienen factura' });
-    checks.push({ ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' });
+    push('proveedores', { ok: !s.pending.length, text: s.pending.length ? `Quedan ${eur(s.toPay)} por pagar a proveedores` : 'Todos los proveedores están pagados' });
+    push('proveedores', { ok: s.withoutInvoice.length === 0, text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor` : 'Todos los costes tienen factura' });
+    push('proveedores', { ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' });
   }
   // Cliente: todo el presupuesto facturado, emitido y cobrado
-  checks.push(billing.overInvoiced > 0
+  push('cobros', billing.overInvoiced > 0
     ? { ok: false, text: `Se ha facturado ${eur(billing.overInvoiced)} más que el presupuesto vigente` }
     : !s.sales.base && !s.sale.base ? { ok: false, text: 'Aún no hay presupuesto ni facturas al cliente' }
     : { ok: billing.left === 0, text: billing.left ? `Falta por facturar ${eur(billing.left)} del presupuesto` : 'Todo el presupuesto está facturado' });
-  if (s.toIssue.length) checks.push({ ok: false, text: `${s.toIssue.length} ${s.toIssue.length === 1 ? 'factura' : 'facturas'} al cliente por emitir` });
-  checks.push(!s.invoiced.total
+  if (s.toIssue.length) push('cobros', { ok: false, text: `${s.toIssue.length} ${s.toIssue.length === 1 ? 'factura' : 'facturas'} al cliente por emitir` });
+  push('cobros', !s.invoiced.total
     ? { ok: false, text: 'Aún no hay ninguna factura emitida al cliente' }
     : { ok: s.toCollect === 0, text: s.toCollect ? `Quedan ${eur(s.toCollect)} por cobrar` : 'Todo lo facturado está cobrado' });
   // PO (sólo si el cliente trabaja con ellas)
   if (s.poRows.length) {
-    checks.push({
+    push('cobros', {
       ok: s.poLeft === 0,
       text: s.poLeft ? `Hay ${eur(s.poLeft)} en PO sin facturar`
         : s.poClosedLeft ? `Las PO están facturadas o cerradas (${eur(s.poClosedLeft)} de PO cerradas no se facturan)` : 'Las PO están facturadas',

@@ -78,27 +78,37 @@ export async function loadFinance(db, id, now) {
   return { budgets, budget, payments, pos, invoices, allocations, documents, summary };
 }
 
-/** Nombres ya usados (para autocompletar empresas, clientes y proveedores) */
+/**
+ * Nombres ya usados para autocompletar:
+ *   companies → clientes de los expedientes · billed → además, a quién se ha facturado (facturas y PO:
+ *   sólo para los formularios de cobros) · suppliers → proveedores
+ */
 // Cambian poco y salen en todos los formularios: se guardan unos minutos en la memoria del servidor
 // para no recorrer todo el histórico en cada página (un nombre nuevo aparece como mucho a los 5 minutos).
 const SUGGESTIONS_TTL = 5 * 60 * 1000;
 let suggestionsCache = null;
 export async function suggestions(db) {
   if (suggestionsCache && suggestionsCache.until > Date.now()) return suggestionsCache.value;
-  const [companies, suppliers] = await db.batch([
+  const [companies, billed, suppliers] = await db.batch([
+    db.prepare('SELECT DISTINCT company AS name FROM expedientes ORDER BY company COLLATE NOCASE LIMIT 300'),
     db.prepare(`SELECT name FROM (
                   SELECT company AS name FROM expedientes UNION SELECT billed_to FROM invoices UNION SELECT billed_to FROM purchase_orders
                 ) WHERE name IS NOT NULL ORDER BY name COLLATE NOCASE LIMIT 300`),
     db.prepare('SELECT DISTINCT supplier AS name FROM payments ORDER BY supplier COLLATE NOCASE LIMIT 300'),
   ]);
-  const value = { companies: companies.results.map((r) => r.name), suppliers: suppliers.results.map((r) => r.name) };
+  const names = (r) => r.results.map((x) => x.name);
+  const value = { companies: names(companies), billed: names(billed), suppliers: names(suppliers) };
   suggestionsCache = { value, until: Date.now() + SUGGESTIONS_TTL };
   return value;
 }
 
-/** Personas que pueden llevar un evento (para el «responsable») */
+/** Personas que pueden llevar un evento (para el «responsable»): activas y con acceso a los expedientes */
 export async function activeUsers(db) {
-  const { results } = await db.prepare('SELECT id, name, role FROM users WHERE active = 1 ORDER BY name').all();
+  const { results } = await db.prepare(
+    `SELECT u.id, u.name FROM users u
+       JOIN role_permissions rp ON rp.role_id = u.role_id AND rp.permission = 'expedientes'
+      WHERE u.active = 1 ORDER BY u.name`,
+  ).all();
   return results;
 }
 

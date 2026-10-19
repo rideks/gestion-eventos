@@ -1,0 +1,145 @@
+---
+// Usuarios y permisos · Roles: los roles, cuántas personas tiene cada uno, la tabla de quién puede
+// hacer qué y los últimos cambios. Un rol nuevo puede empezar con los permisos de otro.
+import { env } from 'cloudflare:workers';
+import App from '../../../layouts/App.astro';
+import Icon from '../../../components/Icon.astro';
+import UsersTabs from '../../../components/UsersTabs.astro';
+import { deny, readForm, actor, logActivity } from '../../../lib/app.js';
+import { RoleSchema, validate, formToObject } from '../../../lib/validate.js';
+import { AREAS, normalizePermissions, roleKey } from '../../../lib/permissions.js';
+import { loadRoles, accessLog } from '../../../lib/users.js';
+import { formatStamp } from '../../../lib/dates.js';
+
+const denied = deny(Astro, 'users');
+if (denied) return denied;
+
+const db = env.DB;
+let error = null;
+let errors = {};
+let v = {};
+let roles = await loadRoles(db);
+
+if (Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  const input = form ? formToObject(form) : {};
+  v = input;
+  const parsed = validate(RoleSchema, input);
+  if (input.intent !== 'create') {
+    error = 'Acción no válida.';
+  } else if (!parsed.ok) {
+    error = parsed.message;
+    errors = parsed.errors;
+  } else if (roles.some((r) => r.name.toLowerCase() === parsed.data.name.toLowerCase())) {
+    error = 'Ya hay un rol con ese nombre.';
+    errors = { name: error };
+  } else {
+    // Clave estable y única a partir del nombre («Ventas» → ventas, ventas_2…)
+    const base = roleKey(parsed.data.name);
+    let key = base;
+    for (let n = 2; roles.some((r) => r.key === key); n++) key = `${base}_${n}`;
+    const from = roles.find((r) => r.id === Number(input.copy_from));
+    const { permissions } = normalizePermissions(from?.permissions ?? []);
+    const role = await db.prepare('INSERT INTO roles (key, name, description) VALUES (?, ?, ?) RETURNING id')
+      .bind(key, parsed.data.name, parsed.data.description).first();
+    if (permissions.length) {
+      await db.batch(permissions.map((p) => db.prepare('INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)').bind(role.id, p)));
+    }
+    await logActivity(db, actor(Astro), null, 'role.create',
+      `creó el rol ${parsed.data.name}${from ? ` con los permisos de ${from.name}` : ' sin permisos'}`);
+    return Astro.redirect(`/usuarios/roles/${role.id}?ok=creado`, 303);
+  }
+  Astro.response.status = 400;
+}
+
+const log = await accessLog(db);
+const has = (role, key) => role.permissions.includes(key);
+---
+<App title="Roles y permisos" section="usuarios" error={error} fieldErrors={errors}>
+  <UsersTabs tab="roles" />
+
+  <ul class="list">
+    {roles.map((r) => (
+      <li>
+        <a class="item is-row" href={`/usuarios/roles/${r.id}`}>
+          <div class="item-body">
+            <span class="item-title">{r.name}{r.system ? <span class="pill pill-muted">Inicial</span> : <span class="pill pill-accent">Nuevo</span>}</span>
+            {r.description && <span class="item-meta"><span>{r.description}</span></span>}
+            <span class="item-meta">
+              <span>{r.activeUsers} {r.activeUsers === 1 ? 'persona' : 'personas'}{r.users > r.activeUsers && ` (+${r.users - r.activeUsers} desactivadas)`}</span>
+              <span>{r.permissions.length} {r.permissions.length === 1 ? 'permiso' : 'permisos'}</span>
+            </span>
+          </div>
+          <Icon name="chevron-right" size={20} class="chev" />
+        </a>
+      </li>
+    ))}
+  </ul>
+
+  <details class="add mt" open={!!error}>
+    <summary class="btn btn-primary"><Icon name="plus" size={18} /> <span class="when-closed">Nuevo rol</span><span class="when-open">Cerrar formulario</span></summary>
+    <form method="post" class="form-section">
+      <h2><Icon name="key-round" /> Nuevo rol</h2>
+      <p class="muted">Un rol es un conjunto de permisos. Después se asigna a las personas desde «Personas».</p>
+      <div class="row row-2">
+        <div class="field">
+          <label for="name">Nombre</label>
+          <input id="name" name="name" type="text" maxlength="40" required value={v.name ?? ''} placeholder="Comercial" />
+        </div>
+        <div class="field">
+          <label for="copy_from">Empezar con los permisos de</label>
+          <select id="copy_from" name="copy_from">
+            <option value="">Ninguno (sin permisos)</option>
+            {roles.map((r) => <option value={r.id} selected={Number(v.copy_from) === r.id}>{r.name}</option>)}
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="description">Para qué sirve <span class="opt">(opcional)</span></label>
+        <input id="description" name="description" type="text" maxlength="160" value={v.description ?? ''} placeholder="Ventas y relación con clientes" />
+      </div>
+      <div><button class="btn btn-primary" type="submit" name="intent" value="create" data-busy="Creando…"><Icon name="check" size={18} /> Crear rol</button></div>
+    </form>
+  </details>
+
+  <h2 class="section-title">Quién puede hacer qué</h2>
+  <div class="table-scroll">
+    <table class="dtable matrix">
+      <thead>
+        <tr>
+          <th scope="col">Permiso</th>
+          {roles.map((r) => <th scope="col" class="c"><a href={`/usuarios/roles/${r.id}`}>{r.name}</a></th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {AREAS.map((area) => (
+          <>
+            <tr class="area"><th scope="rowgroup" colspan={roles.length + 1}>{area.label}</th></tr>
+            {area.permissions.map((p) => (
+              <tr>
+                <th scope="row">{p.label}</th>
+                {roles.map((r) => (
+                  <td class="c">{has(r, p.key)
+                    ? <span class="yes" title={`${r.name}: sí`}><Icon name="check" size={18} /><span class="visually-hidden">Sí</span></span>
+                    : <span class="no" title={`${r.name}: no`}>–<span class="visually-hidden">No</span></span>}</td>
+                ))}
+              </tr>
+            ))}
+          </>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="section-title">Últimos cambios</h2>
+  {log.length ? (
+    <section class="card"><ul class="activity">
+      {log.map((a) => (
+        <li>
+          <time datetime={a.at}>{formatStamp(a.at)}</time>
+          <span><strong>{a.user_name ?? 'Alguien'}</strong> {a.text}</span>
+        </li>
+      ))}
+    </ul></section>
+  ) : <p class="muted">Todavía no hay cambios de usuarios ni de permisos.</p>}
+</App>

@@ -1,0 +1,15 @@
+---
+// Cabecera de «Usuarios y permisos»: personas · roles y permisos
+interface Props { tab: 'personas' | 'roles' }
+const { tab } = Astro.props;
+---
+<div class="page-top">
+  <div>
+    <h1>Usuarios y permisos</h1>
+    <p>Quién entra en la aplicación y qué puede hacer cada rol</p>
+  </div>
+</div>
+<nav class="x-tabs users-tabs" aria-label="Usuarios y permisos">
+  <a href="/usuarios" aria-current={tab === 'personas' ? 'page' : undefined}>Personas</a>
+  <a href="/usuarios/roles" aria-current={tab === 'roles' ? 'page' : undefined}>Roles y permisos</a>
+</nav>

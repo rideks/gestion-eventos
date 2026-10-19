@@ -104,7 +104,7 @@ if (Astro.request.method === 'POST') {
   Astro.response.status = 400;
 }
 
-const [{ companies }, next] = await Promise.all([suggestions(db), admin ? peekInvoiceNumber(db, Number(now.slice(0, 4))) : null]);
+const [{ billed: companies }, next] = await Promise.all([suggestions(db), admin ? peekInvoiceNumber(db, Number(now.slice(0, 4))) : null]);
 ---
 <App title="Nueva factura" section="expedientes" error={error} fieldErrors={errors}>
   <ExpHeader exp={exp} tab="cobros" current={admin ? 'Nueva factura' : 'Pedir factura'} />

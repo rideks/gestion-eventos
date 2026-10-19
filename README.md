@@ -24,24 +24,38 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Facturas al cliente | Correo a Tania con las PO | Un expediente puede tener **una o varias facturas**, con o sin PO (una factura puede llevar varias PO y una PO puede facturarse en varias veces). La factura se hace **en la aplicación**, en su propia página: cliente con sus **datos fiscales** (NIF/CIF, dirección fiscal y email de facturación, que se rellenan solos si ya se le ha facturado), PO que cubre, concepto e importe por tipo de IVA. Eventos la **pide** (queda «Por emitir»); Administración la **emite** y recibe sola el **número siguiente**, correlativo y **único** (`G/000904/26/01`; formato y próximo número en Ajustes). Una factura emitida **no se modifica**: si tiene un error, se anula y se hace otra. Después se **envía al cliente**: de momento el envío es **simulado** (se enseña el correo tal y como saldría y queda apuntado a quién, cuándo y quién lo envió, pero no sale ningún correo). «Ver la factura» la enseña lista para imprimir o guardar en PDF (hasta tener la plantilla de contabilidad). Después, **Cobrada**. |
 | Cierre | Excel de cierre hecho a mano | **Pestaña Cierre** con las dos tablas del Excel (proveedores \| cliente), total neto grupo, total grupo, beneficio y % sobre ventas, calculado solo. Comprobaciones antes de cerrar, **descarga para Excel** (mismo formato) e impresión/PDF. Al cerrar queda en sólo lectura. |
 
-### Quién hace qué
+### Quién hace qué (roles y permisos)
 
-| | Gestión de eventos | Administración |
-|---|:-:|:-:|
-| Pedir expedientes, subir presupuestos y facturas o proformas de proveedor | ✔ | ✔ |
-| Añadir pagos y marcar pagados los hechos **con tarjeta** | ✔ | ✔ |
-| Ver **Cobros** (bandeja, pestaña del expediente, facturas al cliente, PO y sus documentos) y crear las facturas | | ✔ |
-| Modificar un pago mientras no esté pagado («Modificar pago», en su ficha) | ✔ | ✔ |
-| Subir el justificante bancario y marcar pagadas las transferencias y los demás pagos | | ✔ |
-| Subir y gestionar las **PO** del cliente (editar, cerrar, facturar desde ellas) | | ✔ |
-| Dar número (abrir), cerrar, reabrir y cancelar expedientes | | ✔ |
-| Revisar y dar por buenas las facturas de proveedor (con el pago ya hecho) | | ✔ |
-| «Deshacer pagado» para corregir un pago hecho | | ✔ |
-| Borrar facturas o proformas de proveedor de otras personas (nunca una factura conforme) | | ✔ |
-| Emitir facturas al cliente (número automático), enviarlas, registrar cobros, anular | | ✔ |
-| Usuarios y Ajustes (tipos de IVA, numeración) | | ✔ |
+Cada persona tiene **un rol** y cada rol, una lista de **permisos** (lista blanca: lo que no tiene marcado, no
+lo puede hacer). Se gestionan desde **Usuarios y permisos** (sólo el rol Técnico): invitar a personas, cambiarles
+el rol, crear roles nuevos (en blanco o copiando otro) y marcar sus permisos. Los cambios valen al momento y
+quedan registrados. Siempre tiene que quedar al menos una persona activa que pueda gestionar usuarios.
 
-Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es tocar una línea.
+Reparto inicial:
+
+| Permiso | Jefes | Administración | Tesorería | Eventos | Técnico |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Ver y trabajar en los expedientes (pedirlos, presupuesto, pagos previstos, documentos, notas) | ✔ | ✔ | ✔ | ✔ | |
+| Abrir expedientes (darles número) | ✔ | ✔ | | | |
+| Cerrar, reabrir y cancelar expedientes | ✔ | ✔ | | | |
+| Borrar lo que han subido otras personas (nunca una factura conforme) | ✔ | ✔ | | | |
+| Bandeja de pagos y marcar pagado **con tarjeta** | ✔ | ✔ | ✔ | ✔ | |
+| Marcar pagado por transferencia u otro medio · justificante bancario · «Deshacer pagado» | ✔ | ✔ | ✔ | | |
+| Dar por conformes las facturas de proveedor (con el pago ya hecho) | ✔ | ✔ | ✔ | | |
+| Ver **Cobros** (bandeja, pestaña del expediente, facturas al cliente, PO y sus documentos) | ✔ | ✔ | ✔ | | |
+| Emitir, enviar, cobrar y anular facturas al cliente | ✔ | ✔ | ✔ | | |
+| Subir, editar y cerrar las **PO** del cliente | ✔ | ✔ | ✔ | | |
+| Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
+| Usuarios, roles y permisos | | | | | ✔ |
+
+- **Sin «Ver los cobros»** no se ve ninguna factura al cliente: tampoco en el **Cierre** ni en su **CSV**, que
+  enseñan sólo el total de ventas y el beneficio (Eventos lo ve, porque es quien cuida que sea bueno).
+- **Dónde se comprueba:**
+  - en el **servidor**, en tres capas: la sección (`src/middleware.js` con `sectionPermission()`: una ruta que no
+    esté en la lista queda cerrada), cada acción (`can()`) y las consultas;
+  - en la interfaz sólo se esconde lo que no se puede usar.
+- **Dónde está cada cosa:** el catálogo de permisos y de qué depende cada uno, en `src/lib/permissions.js`; quién
+  tiene cada uno, en la base de datos (`roles`, `role_permissions`).
 
 ## Pantallas
 
@@ -90,7 +104,9 @@ Los permisos están en una tabla en `src/lib/app.js` (`ONLY`): cambiarlos es toc
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
-- **Usuarios** (invitación por enlace, sin registro abierto) y **Mi cuenta**.
+- **Usuarios y permisos** (sólo Técnico): personas (invitación por enlace, sin registro abierto; rol; activar o
+  desactivar), roles (crear, permisos por áreas, quién tiene cada uno, tabla de quién puede hacer qué) y el
+  registro de cambios. **Mi cuenta** para todos.
 
 Importes: se pueden escribir como en el Excel (`21.400`, `1.983,47`, `-232,55`). Cada importe tiene **una línea
 por tipo de IVA** (p. ej. alojamiento al 10 % y servicios al 21 %): en cada línea se escribe el importe sin IVA o
@@ -112,11 +128,14 @@ npm run db:demo                  # (opcional) datos de ejemplo: EXP 1287 BMW, EL
 npm run dev                      # http://localhost:4321
 ```
 
-Con los datos de ejemplo se entra con `tania@example.com` (Administración) o `marta@example.com`
-(Eventos), contraseña `demo-gestion-2026`. Sin datos de ejemplo, crea tu cuenta con
-`npm run invite -- --local` (imprime el enlace de alta).
+Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-gestion-2026`:
+`tania@example.com` (Administración), `marta@example.com` (Eventos), `direccion@example.com` (Jefes),
+`tesoreria@example.com` (Tesorería) y `tecnico@example.com` (Técnico). Sin datos de ejemplo, crea tu cuenta con
+`npm run invite -- --local` (imprime el enlace de alta de una cuenta Técnico, que después invita a los demás;
+`--role eventos`, `--role jefes`… para otro rol).
 
-`npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados y la validación.
+`npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
+(lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios).
 
 ## Puesta en producción (Cloudflare)
 
@@ -125,8 +144,18 @@ npx wrangler d1 create gestion-eventos-db         # copia el database_id en wran
 npx wrangler r2 bucket create gestion-eventos-docs
 npx wrangler secret put TURNSTILE_SECRET_KEY      # y la clave pública en "vars" de wrangler.jsonc
 npm run deploy                                    # compila, aplica migraciones y publica
-npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera cuenta (Administración)
+npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera cuenta (Técnico)
 ```
+
+**Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Al pasar a roles y permisos (migración 0008)** no se pierde nada:
+- las cuentas de Administración pasan al rol Administración y las de Eventos, al rol Eventos;
+- la tabla de usuarios no se recrea, así que se conservan responsables, autores, actividad y sesiones.
+
+Como nadie tiene todavía el rol Técnico, nadie puede gestionar usuarios hasta crear esa cuenta:
+`npm run invite -- --url https://TU-DOMINIO` (por defecto, rol Técnico). Desde ella se asignan los Jefes y la
+Tesorería en «Usuarios y permisos».
 
 El primer número de expediente sale de la tabla `settings` (`first_number`, 1001 por defecto);
 después siempre se propone el mayor + 1.

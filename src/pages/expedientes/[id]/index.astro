@@ -78,7 +78,10 @@ const [fin, { results: activity }, suggested, { results: admins }] = await Promi
                ${can(me, 'cobros') ? '' : "AND action NOT LIKE 'invoice.%' AND action NOT LIKE 'po.%'"}
                ORDER BY at DESC, id DESC LIMIT 60`).bind(id).all(),
   exp.status === 'solicitado' && admin ? suggestNumber(db) : null,
-  exp.status === 'solicitado' && !admin ? db.prepare("SELECT email FROM users WHERE role = 'admin' AND active = 1").all() : { results: [] },
+  exp.status === 'solicitado' && !admin ? db.prepare(
+    `SELECT u.email FROM users u JOIN role_permissions rp ON rp.role_id = u.role_id AND rp.permission = 'expediente.open'
+      WHERE u.active = 1`,
+  ).all() : { results: [] },
 ]);
 const s = fin.summary;
 // Los cobros (facturas al cliente, PO) sólo los ve Administración: a Eventos no le salen sus pasos ni sus cifras

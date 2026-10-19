@@ -61,12 +61,20 @@ export const PasswordChangeSchema = z.object({
   password2: z.string(),
 }).refine((d) => d.password === d.password2, { path: ['password2'], message: 'Las contraseñas no coinciden' });
 
-export const ROLES = { admin: 'Administración', eventos: 'Gestión de eventos' };
+// El rol se comprueba además contra la base de datos (roles)
+const roleId = z.preprocess((v) => Number(v), z.number({ error: 'Elige el rol' }).int('Elige el rol').positive('Elige el rol'));
 
 export const InviteSchema = z.object({
-  role: z.enum(Object.keys(ROLES), { error: 'Elige el tipo de cuenta' }),
+  role_id: roleId,
   note: optText('Nota', 100),
   days: z.preprocess((v) => Number(v || 7), z.number().int().min(1).max(30)),
+});
+
+export const UserRoleSchema = z.object({ role_id: roleId });
+
+export const RoleSchema = z.object({
+  name: reqText('Nombre del rol', 2, 40),
+  description: optText('Descripción', 160),
 });
 
 // ── Expediente ─────────────────────────────────────────────────────────────
