@@ -3,8 +3,7 @@
 //  · Nunca hay URL pública: se sirven desde /archivos/<id>/<nombre> y sólo con sesión.
 //  · Se comprueba el tipo real del fichero por sus primeros bytes (no basta con la extensión).
 //  · El nombre en R2 es aleatorio; el nombre original sólo se guarda para mostrarlo.
-
-import { randomToken } from './crypto.js';
+// Aquí, lo puro (tipos, nombres, comprobaciones, enlaces). Guardar y borrar: src/services/files.js.
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
@@ -63,51 +62,31 @@ export function getFile(form, name) {
 }
 
 /**
- * Comprueba el fichero, lo sube a R2 y crea su fila en `files`.
- * @returns {Promise<number>} id del documento
+ * Antes de leer un fichero: ¿tipo admitido y tamaño razonable? (puro; lo usa src/services/files.js)
+ * @param {string} rawName nombre original
+ * @param {number} size bytes
+ * @returns {{ name: string, ext: string, mime: string, sig: string }}
+ * @throws {UploadError}
  */
-/**
- * folder: carpeta en R2 si el documento no es de un expediente (p. ej. el contrato de un proveedor: `prov/12`)
- * @param {{ db: any, bucket: any, file: File, expedienteId?: number | null, userId?: number | null, folder?: string | null }} args
- * @returns {Promise<number>} id del archivo
- */
-export async function storeFile({ db, bucket, file, expedienteId = null, userId, folder = null }) {
-  const name = cleanName(file.name);
+export function uploadInfo(rawName, size) {
+  const name = cleanName(rawName);
   const ext = extensionOf(name);
   const type = TYPES[ext];
   if (!type) throw new UploadError(`«${name}»: tipo de archivo no admitido (PDF, foto, Excel, Word o correo).`);
-  if (file.size > MAX_FILE_BYTES) throw new UploadError(`«${name}» ocupa demasiado (máximo ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  if (signatureOf(bytes) !== type.sig) {
-    throw new UploadError(`«${name}» no parece un ${ext.toUpperCase()} válido. Vuelve a exportarlo o súbelo en PDF.`);
-  }
-  const key = `${folder ?? `exp/${expedienteId}`}/${randomToken(16)}.${ext}`;
-  await bucket.put(key, bytes, { httpMetadata: { contentType: type.mime } });
-  try {
-    const row = await db.prepare(
-      'INSERT INTO files (expediente_id, key, name, mime, size, uploaded_by) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
-    ).bind(expedienteId, key, name, type.mime, bytes.length, userId ?? null).first();
-    return row.id;
-  } catch (err) {
-    await bucket.delete(key).catch(() => {});
-    throw err;
-  }
+  if (size > MAX_FILE_BYTES) throw new UploadError(`«${name}» ocupa demasiado (máximo ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
+  return { name, ext, mime: type.mime, sig: type.sig };
 }
 
-/** Sube el fichero del campo `field` si lo hay. Devuelve su id, null si no hay fichero, o lanza UploadError */
-export async function fileFromForm({ db, bucket, form, field = 'file', expedienteId, userId }) {
-  const file = getFile(form, field);
-  return file ? storeFile({ db, bucket, file, expedienteId, userId }) : null;
-}
-
-/** Borra documentos (R2 + fila) que ya no usa nadie */
-export async function deleteFiles(db, bucket, ids) {
-  const list = ids.filter((id) => Number.isInteger(id));
-  if (!list.length) return;
-  const { results } = await db.prepare(`SELECT id, key FROM files WHERE id IN (${list.map(() => '?').join(',')})`).bind(...list).all();
-  if (!results.length) return;
-  await bucket.delete(results.map((r) => r.key)).catch((err) => console.error('[archivos]', err));
-  await db.prepare(`DELETE FROM files WHERE id IN (${results.map(() => '?').join(',')})`).bind(...results.map((r) => r.id)).run();
+/**
+ * Después de leerlo: ¿sus primeros bytes son de ese tipo? (no basta con la extensión)
+ * @param {{ name: string, ext: string, sig: string }} info lo que devuelve uploadInfo
+ * @param {Uint8Array} bytes
+ * @throws {UploadError}
+ */
+export function checkSignature(info, bytes) {
+  if (signatureOf(bytes) !== info.sig) {
+    throw new UploadError(`«${info.name}» no parece un ${info.ext.toUpperCase()} válido. Vuelve a exportarlo o súbelo en PDF.`);
+  }
 }
 
 /** ¿Se puede ver en el navegador (PDF, foto) o hay que descargarlo (Excel, Word)? */

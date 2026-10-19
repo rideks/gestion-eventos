@@ -8,7 +8,8 @@ import * as suppliersRepo from '../repos/suppliers.js';
 import { can, activityStmt } from '../lib/app.js';
 import { contractState, contractOn, contractDiff, renewalDraft, byUrgency, RENEWAL } from '../lib/contracts.js';
 import { ContractSchema, RenewalSchema, validate } from '../lib/validate.js';
-import { storeFile, deleteFiles, UploadError } from '../lib/files.js';
+import { UploadError } from '../lib/files.js';
+import { storeFile, deleteFiles } from './files.js';
 import { addDays, formatDate } from '../lib/dates.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
 

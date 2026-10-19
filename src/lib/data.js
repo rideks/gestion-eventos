@@ -2,46 +2,17 @@
 import { summarize, nextNumber, SOON_DAYS } from './finance.js';
 import { addDays } from './dates.js';
 import { contractDue } from '../repos/contracts.js';
+import { PAYMENT_SELECT, PAYMENT_JOINS, DOCS_OF, likeTerm } from '../repos/payments.js';
+import { READY_TO_CONFORM } from '../repos/supplier-docs.js';
 
-// Documentos del proveedor de un pago (facturas y proformas; uno puede cubrir varios pagos)
-const DOCS_OF = (where) => `FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id WHERE pd.payment_id = p.id AND ${where}`;
-// Archivo del último documento del pago (factura si hay; si no, proforma), para el enlace de las listas
-const LAST_DOC_FILE = `(SELECT d.file_id FROM payment_documents pd JOIN supplier_invoices d ON d.id = pd.document_id
-  WHERE pd.payment_id = p.id AND d.file_id IS NOT NULL ORDER BY d.kind = 'factura' DESC, d.id DESC LIMIT 1)`;
+// Las columnas de un pago y la búsqueda están en el repositorio de pagos (aquí, para el cierre y el buscador)
+export { PAYMENT_SELECT, PAYMENT_JOINS };
+// Las bandejas de pagos están en sus repositorios; se re-exportan para el inicio (aún no está en capas)
+export { pending as pendingPayments, paidWithoutInvoice, paid as paidPayments } from '../repos/payments.js';
+export { toReview as invoicesToReview } from '../repos/supplier-docs.js';
 
-/**
- * Columnas de un pago con el resumen de sus documentos y su justificante:
- *  invoice_count / invoice_pending (facturas y cuántas sin revisar), proforma_count,
- *  invoice_number (los números de sus facturas), file_id / file_name (el último documento: factura si hay).
- */
-export const PAYMENT_SELECT = `
-  p.id, p.expediente_id, p.supplier, p.supplier_id, p.concept, p.base_cents, p.total_cents, p.vat, p.vat_lines, p.due_date, p.status,
-  p.paid_on, p.method, p.planned, p.notes, p.created_by, p.created_at, p.updated_at,
-  p.receipt_file_id, rf.name AS receipt_name,
-  (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura'")}) AS invoice_count,
-  (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura' AND d.review = 'pendiente'")}) AS invoice_pending,
-  (SELECT COUNT(*) ${DOCS_OF("d.kind = 'proforma'")}) AS proforma_count,
-  (SELECT group_concat(number, ', ') FROM (SELECT d.number ${DOCS_OF("d.kind = 'factura' AND d.number IS NOT NULL")} ORDER BY pd.document_id)) AS invoice_number,
-  df.id AS file_id, df.name AS file_name`;
-export const PAYMENT_JOINS = `LEFT JOIN files rf ON rf.id = p.receipt_file_id LEFT JOIN files df ON df.id = ${LAST_DOC_FILE}`;
-
-/** Texto de búsqueda para LIKE (sin comodines del usuario); '%%' = sin búsqueda */
-const likeTerm = (q) => `%${String(q ?? '').trim().slice(0, 80).replace(/[%_]/g, '')}%`;
-const PAYMENT_SEARCH = `(?1 = '%%' OR p.supplier LIKE ?1 OR p.concept LIKE ?1 OR e.name LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1
-  OR EXISTS (SELECT 1 ${DOCS_OF('d.number LIKE ?1')}))`;
-
-/** Expediente con los nombres del responsable y de quien lo pidió */
-export function getExpediente(db, id) {
-  return db.prepare(
-    `SELECT e.*, m.name AS manager_name, r.name AS requested_by_name, o.name AS opened_by_name, c.name AS closed_by_name
-       FROM expedientes e
-       LEFT JOIN users m ON m.id = e.manager_id
-       LEFT JOIN users r ON r.id = e.requested_by
-       LEFT JOIN users o ON o.id = e.opened_by
-       LEFT JOIN users c ON c.id = e.closed_by
-      WHERE e.id = ?`,
-  ).bind(id).first();
-}
+/** Expediente con los nombres del responsable y de quien lo pidió (la consulta está en src/repos/expedientes.js) */
+export { header as getExpediente } from '../repos/expedientes.js';
 
 /** Todo lo económico de un expediente + sus totales */
 export async function loadFinance(db, id, now) {
@@ -112,11 +83,6 @@ export async function activeUsers(db) {
   return results;
 }
 
-// Factura (alias si) lista para conformar: está en algún pago y todos los que cubre están hechos
-const READY_TO_CONFORM = `EXISTS (SELECT 1 FROM payment_documents pd WHERE pd.document_id = si.id)
-  AND NOT EXISTS (SELECT 1 FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id
-                   WHERE pd.document_id = si.id AND p.status != 'pagado')`;
-
 /**
  * Contadores de la navegación: solicitudes por abrir, pagos urgentes, facturas por emitir, facturas
  * de proveedor por conformar (sólo las que ya se pueden: con el pago hecho) y contratos de proveedor
@@ -146,54 +112,6 @@ export const LIST_COLUMNS = `
   (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status = 'emitida') AS to_collect,
   (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status = 'cobrada') AS collected,
   (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status IN ('emitida', 'cobrada')) AS invoiced_total`;
-
-/** Pagos pendientes de todos los expedientes, por fecha límite; con búsqueda opcional */
-export function pendingPayments(db, q = '', { until = null } = {}) {
-  // until: sólo los que vencen hasta esa fecha (inicio: lo urgente)
-  return db.prepare(
-    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, e.manager_id AS exp_manager_id
-       FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
-      WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND ${PAYMENT_SEARCH}
-        AND (?2 IS NULL OR p.due_date <= ?2)
-      ORDER BY p.due_date IS NULL, p.due_date, e.number, p.id`,
-  ).bind(likeTerm(q), until).all().then((r) => r.results);
-}
-
-/** Pagos ya hechos para los que falta la factura del proveedor; con búsqueda opcional */
-export function paidWithoutInvoice(db, q = '') {
-  return db.prepare(
-    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, e.manager_id AS exp_manager_id
-       FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
-      WHERE p.status = 'pagado' AND p.total_cents != 0 AND e.status != 'cancelado' AND ${PAYMENT_SEARCH}
-        AND NOT EXISTS (SELECT 1 ${DOCS_OF("d.kind = 'factura'")})
-      ORDER BY p.paid_on, p.id`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
-}
-
-/**
- * Facturas de proveedor pendientes de revisar por Administración (las más antiguas primero),
- * con los pagos que cubren. Las proformas no se revisan.
- * unpaid_count: pagos que cubre aún sin hacer (hasta que se hagan, la factura espera: no se puede conformar).
- * replaces_conforme: el pago ya tenía otra factura conforme (se ha subido otra; su motivo va en notes).
- */
-export function invoicesToReview(db, q = '') {
-  return db.prepare(
-    `SELECT si.*, f.name AS file_name, u.name AS uploaded_by_name, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status,
-            (SELECT COUNT(*) FROM payment_documents pd WHERE pd.document_id = si.id) AS payment_count,
-            (SELECT COALESCE(SUM(p.total_cents), 0) FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id WHERE pd.document_id = si.id) AS payments_total,
-            (SELECT MIN(pd.payment_id) FROM payment_documents pd WHERE pd.document_id = si.id) AS first_payment_id,
-            (SELECT COUNT(*) FROM payment_documents pd JOIN payments p ON p.id = pd.payment_id
-              WHERE pd.document_id = si.id AND p.status != 'pagado') AS unpaid_count,
-            EXISTS (SELECT 1 FROM payment_documents pd JOIN payment_documents o ON o.payment_id = pd.payment_id AND o.document_id != si.id
-                      JOIN supplier_invoices od ON od.id = o.document_id
-                     WHERE pd.document_id = si.id AND od.kind = 'factura' AND od.review = 'conforme') AS replaces_conforme
-       FROM supplier_invoices si JOIN expedientes e ON e.id = si.expediente_id
-       LEFT JOIN files f ON f.id = si.file_id LEFT JOIN users u ON u.id = si.uploaded_by
-      WHERE si.kind = 'factura' AND si.review = 'pendiente' AND e.status != 'cancelado'
-        AND (?1 = '%%' OR si.supplier LIKE ?1 OR si.number LIKE ?1 OR e.name LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)
-      ORDER BY si.uploaded_at, si.id`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
-}
 
 /** Facturas a cliente por emitir y pendientes de cobro, con sus PO; con búsqueda opcional */
 export function openInvoices(db, q = '') {
@@ -264,16 +182,6 @@ export async function numberTaken(db, number, exceptId = 0) {
   return !!(await db.prepare('SELECT 1 FROM expedientes WHERE number = ? AND id != ?').bind(number, exceptId).first());
 }
 
-/** Pagos ya hechos (historial), los más recientes primero; con búsqueda opcional */
-export function paidPayments(db, q = '') {
-  return db.prepare(
-    `SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
-       FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
-      WHERE p.status = 'pagado' AND ${PAYMENT_SEARCH}
-      ORDER BY p.paid_on DESC, p.id DESC LIMIT 300`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
-}
-
 /** Facturas a cliente ya cobradas (historial), las más recientes primero; con búsqueda opcional */
 export function collectedInvoices(db, q = '') {
   return db.prepare(
@@ -286,17 +194,7 @@ export function collectedInvoices(db, q = '') {
   ).bind(likeTerm(q)).all().then((r) => r.results);
 }
 
-/** Agrupa filas por mes de una fecha 'YYYY-MM-DD': [{ key: '2026-10', rows }] */
-export function byMonth(rows, field) {
-  const groups = [];
-  for (const r of rows) {
-    const key = String(r[field] ?? '').slice(0, 7) || 'sin-fecha';
-    const last = groups[groups.length - 1];
-    if (last?.key === key) last.rows.push(r);
-    else groups.push({ key, rows: [r] });
-  }
-  return groups;
-}
+export { byMonth } from './dates.js';
 
 /**
  * Búsqueda en todo (cabecera): expedientes, proveedores, pagos a proveedores (también por el nº de sus

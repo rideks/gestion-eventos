@@ -86,3 +86,15 @@ export function formatMonth(key) {
   if (!/^\d{4}-\d{2}$/.test(key)) return 'Sin fecha';
   return new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(new Date(`${key}-01T00:00:00Z`));
 }
+
+/** Agrupa filas por mes de una fecha 'YYYY-MM-DD': [{ key: '2026-10', rows }] */
+export function byMonth(rows, field) {
+  const groups = [];
+  for (const r of rows) {
+    const key = String(r[field] ?? '').slice(0, 7) || 'sin-fecha';
+    const last = groups[groups.length - 1];
+    if (last?.key === key) last.rows.push(r);
+    else groups.push({ key, rows: [r] });
+  }
+  return groups;
+}

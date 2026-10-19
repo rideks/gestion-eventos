@@ -4,24 +4,22 @@
 //  · Por revisar: facturas de proveedor subidas que Administración aún no ha dado por buenas.
 //  · Pagados: el historial por meses.
 // Las tres con buscador (proveedor, nº de factura, expediente).
-import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
 import PaymentItem from '../components/PaymentItem.astro';
 import ReviewItem from '../components/ReviewItem.astro';
 import SearchBox from '../components/SearchBox.astro';
-import { actor, readForm, can } from '../lib/app.js';
-import { pendingPayments, paidWithoutInvoice, paidPayments, invoicesToReview, byMonth } from '../lib/data.js';
-import { markPaid } from '../lib/actions.js';
+import { readForm, can } from '../lib/app.js';
 import { getFile } from '../lib/files.js';
-import { conformInvoice } from '../lib/supplier.js';
-import { ConformSchema, validate, formToObject } from '../lib/validate.js';
+import { formToObject } from '../lib/validate.js';
 import { plural, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
-import { today, addDays, formatMonth } from '../lib/dates.js';
+import { addDays, formatMonth, byMonth } from '../lib/dates.js';
+import { serviceContext, failure } from '../services/context.js';
+import * as payments from '../services/payments.js';
 
-const db = env.DB;
-const now = today();
+const ctx = serviceContext(Astro);
+const now = ctx.now;
 const VIEWS = ['pendientes', 'revisar', 'pagados'];
 const view = VIEWS.includes(Astro.url.searchParams.get('ver')) ? Astro.url.searchParams.get('ver') : 'pendientes';
 const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
@@ -32,27 +30,26 @@ if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
   if (input.intent === 'pay') {
-    const r = await markPaid(db, actor(Astro), input, null, { bucket: env.DOCS, file: getFile(form, 'receipt') });
+    const r = await payments.markPaid(ctx, input, { receipt: getFile(form, 'receipt') });
     if (r.ok) return Astro.redirect(`/pagos${q ? `?q=${encodeURIComponent(q)}&ok=pagado` : '?ok=pagado'}`, 303);
+    const back = failure(Astro, r, '/pagos');
+    if (back) return back;
     error = r.message;
   } else if (input.intent === 'conform') {
-    const parsed = validate(ConformSchema, input);
-    const r = parsed.ok
-      ? await conformInvoice({ db, who: actor(Astro), invoiceId: Number(input.supplier_invoice_id), data: parsed.data })
-      : parsed;
+    const r = await payments.conform(ctx, Number(input.supplier_invoice_id), input);
     if (r.ok) return Astro.redirect('/pagos?ver=revisar&ok=revisada', 303);
+    const back = failure(Astro, r, '/pagos?ver=revisar');
+    if (back) return back;
     error = r.message;
+  } else {
+    Astro.response.status = 400;
   }
-  Astro.response.status = 400;
 }
 
 const total = (rows) => rows.reduce((a, p) => a + p.total_cents, 0);
-const [pending, noInvoice, review, paid] = await Promise.all([
-  view === 'pendientes' ? pendingPayments(db, q) : [],
-  view === 'pendientes' ? paidWithoutInvoice(db, q) : [],
-  invoicesToReview(db, view === 'revisar' ? q : ''),
-  view === 'pagados' ? paidPayments(db, q) : [],
-]);
+const box = await payments.inbox(ctx, view, q);
+if (!box.ok) return failure(Astro, box, '/');
+const { pending, noInvoice, review, paid } = box.value;
 // Se conforman las de pagos ya hechos; las demás esperan a su pago
 const ready = review.filter((si) => !si.unpaid_count);
 const waiting = review.filter((si) => si.unpaid_count > 0);

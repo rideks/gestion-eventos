@@ -335,6 +335,11 @@ export const NoteSchema = z.object({
 /**
  * Filas repetidas de un formulario (previsión de pagos): cada campo llega como lista
  * (name="fc_supplier", name="fc_total"…). Las filas vacías se ignoran.
+ * @param {FormData} form
+ * @param {string} prefix
+ * @param {string[]} fields
+ * @param {any} schema
+ * @param {{ max?: number, ignore?: string[] }} [options] ignore: campos que no cuentan para saber si una fila está vacía
  * @returns {{ ok: true, rows: any[] } | { ok: false, message: string }}
  */
 export function parseRows(form, prefix, fields, schema, { max = 40, ignore = [] } = {}) {

@@ -19,12 +19,13 @@ export const totalFromBaseBp = (base, bp) => Math.round((base * (10000 + bp)) / 
 /** Total con IVA → base sin IVA */
 export const baseFromTotalBp = (total, bp) => Math.round((total * 10000) / (10000 + bp));
 
-/** Tipos de la lista, el de por defecto primero */
-export async function loadRates(db) {
-  const { results } = await db.prepare('SELECT id, label, rate_bp, is_default FROM vat_rates ORDER BY is_default DESC, rate_bp DESC, id').all();
-  return results;
-}
+/**
+ * Tipos de la lista, el de por defecto primero. La consulta está en src/repos/rates.js; se re-exporta aquí
+ * para las páginas que aún no están en capas.
+ */
+export { list as loadRates } from '../repos/rates.js';
 
+/** El tipo de por defecto */
 export const defaultRate = (rates) => rates.find((r) => r.is_default)?.rate_bp ?? rates[0]?.rate_bp ?? 2100;
 
 /** Nombre de un tipo: el de la lista si está; si no, '21 %' */

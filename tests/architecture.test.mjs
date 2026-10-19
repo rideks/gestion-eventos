@@ -22,11 +22,11 @@ const imports = (code, what) => new RegExp(`from\\s+['"][^'"]*${what}`).test(cod
 const all = files(SRC);
 
 // Deuda conocida: módulos y páginas que aún hacen SQL directamente (se irán pasando a repos y servicios)
-const LEGACY_LIB = ['lib/actions.js', 'lib/app.js', 'lib/auth.js', 'lib/data.js', 'lib/files.js', 'lib/invoicing.js', 'lib/supplier.js', 'lib/users.js', 'lib/vat.js'];
+const LEGACY_LIB = ['lib/actions.js', 'lib/app.js', 'lib/auth.js', 'lib/data.js', 'lib/invoicing.js', 'lib/users.js'];
 const LEGACY_PAGES = [
   'ajustes.astro', 'archivos/[id]/[name].js', 'buscar.astro', 'cuenta.astro', 'expedientes/[id]/cierre.astro', 'expedientes/[id]/cobros.astro',
   'expedientes/[id]/editar.astro', 'expedientes/[id]/facturas/[fid].astro', 'expedientes/[id]/facturas/[fid]/documento.astro',
-  'expedientes/[id]/facturas/nueva.astro', 'expedientes/[id]/index.astro', 'expedientes/[id]/pagos.astro', 'expedientes/[id]/pagos/[pid].astro',
+  'expedientes/[id]/facturas/nueva.astro', 'expedientes/[id]/index.astro',
   'expedientes/[id]/po/[poid].astro', 'expedientes/[id]/presupuesto.astro', 'expedientes/index.astro', 'expedientes/nuevo.astro', 'index.astro',
   'login.astro', 'registro.astro', 'usuarios/index.astro', 'usuarios/roles/[id].astro', 'usuarios/roles/index.astro',
 ].map((p) => `pages/${p}`);
@@ -53,12 +53,12 @@ test('los repositorios no deciden permisos ni dependen de los servicios', () => 
 });
 
 // Áreas ya en capas: sus páginas sólo usan servicios (cada área nueva se añade aquí)
-const LAYERED = ['pages/proveedores/', 'pages/clientes/'];
+const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/expedientes/[id]/pagos'];
 
-test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes) sólo hablan con los servicios', () => {
+test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes, Pagos) sólo hablan con los servicios', () => {
   for (const p of all.filter((f) => LAYERED.some((dir) => rel(f).startsWith(dir)))) {
     const code = read(p);
-    assert.ok(!SQL.test(code) && !code.includes('env.DB') && !imports(code, '/repos/'), `${rel(p)}: usa src/services/`);
+    assert.ok(!SQL.test(code) && !code.includes('cloudflare:workers') && !imports(code, '/repos/') && !imports(code, 'lib/data.js'), `${rel(p)}: usa src/services/`);
   }
 });
 

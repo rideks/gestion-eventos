@@ -3,7 +3,6 @@
 // Las previsiones de la solicitud ya están aquí: al llegar la factura se le añade y se marca pagada.
 // Se pueden ir añadiendo pagos en cualquier momento: uno con su factura o proforma, o varios de golpe
 // (al mismo proveedor o a varios).
-import { env } from 'cloudflare:workers';
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
@@ -12,145 +11,65 @@ import SupplierDocFields from '../../../components/SupplierDocFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
 import EntityPickerKit from '../../../components/EntityPickerKit.astro';
-import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
-import { getExpediente, loadFinance } from '../../../lib/data.js';
-import { PaymentSchema, SupplierDocSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../../lib/validate.js';
-import { attachDocument } from '../../../lib/supplier.js';
-import { serviceContext } from '../../../services/context.js';
-import * as suppliers from '../../../services/suppliers.js';
-import { loadRates, parseVatLines, rawVatLines } from '../../../lib/vat.js';
-import { getFile, storeFile, UploadError } from '../../../lib/files.js';
+import { parseId, readForm, can } from '../../../lib/app.js';
+import { formToObject } from '../../../lib/validate.js';
+import { rawVatLines } from '../../../lib/vat.js';
+import { getFile } from '../../../lib/files.js';
 import { eur } from '../../../lib/money.js';
 import { plural } from '../../../lib/finance.js';
-import { today } from '../../../lib/dates.js';
-import { isLocked, LOCKED_MSG, markPaid, paidProblem, CARD_ONLY } from '../../../lib/actions.js';
+import { serviceContext, failure } from '../../../services/context.js';
+import * as payments from '../../../services/payments.js';
 
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
-const [exp, rates] = id ? await Promise.all([getExpediente(db, id), loadRates(db)]) : [];
-if (!exp) return Astro.rewrite('/404');
-
 const me = Astro.locals.user;
-const now = today();
-const locked = isLocked(exp);
+const now = ctx.now;
+const self = `/expedientes/${id}/pagos`;
 // ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?proveedor=<id> lo rellena
 const params = Astro.url.searchParams;
 let open = params.has('nuevo') ? (params.get('nuevo') === 'varios' ? 'varios' : 'uno') : null;
-const presetId = parseId(params.get('proveedor'));
-const ctx = serviceContext(Astro);
-const presetPick = presetId ? await suppliers.resolveForPayment(ctx, { id: presetId }) : null;
-const preset = presetPick?.ok ? presetPick.value : null;
 let error = null;
 let errors = {};
-let v = { supplier: preset?.name, supplier_id: preset?.id };
+let v = null;
 let lines = [];
 let many = [];
 
-if (Astro.request.method === 'POST') {
-  const who = actor(Astro);
+if (id && Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
-
-  if (locked) {
-    error = LOCKED_MSG;
-  } else if (input.intent === 'pay') {
-    const r = await markPaid(db, who, input, id, { bucket: env.DOCS, file: getFile(form, 'receipt') });
-    if (r.ok) return Astro.redirect(`/expedientes/${id}/pagos?ok=pagado`, 303);
-    error = r.message;
+  let r;
+  if (input.intent === 'pay') {
+    r = await payments.markPaid(ctx, input, { expedienteId: id, receipt: getFile(form, 'receipt') });
+    if (r.ok) return Astro.redirect(`${self}?ok=pagado`, 303);
   } else if (input.intent === 'add') {
     v = input;
     open = 'uno';
-    lines = rawVatLines(form);
-    const parsed = validate(PaymentSchema, input);
-    // El proveedor tiene que ser uno de la lista (no se crea al escribirlo)
-    const picked = parsed.ok ? await suppliers.resolveForPayment(ctx, { id: parsed.data.supplier_id, name: parsed.data.supplier }) : null;
-    const doc = validate(SupplierDocSchema, input);
-    const amounts = parseVatLines(form, rates);
-    const file = form ? getFile(form, 'file') : null;
-    // El justificante sólo lo sube Administración
-    const receipt = form && can(me, 'payment.receipt') ? getFile(form, 'receipt') : null;
-    const paidIssue = parsed.ok && parsed.data.status === 'pagado'
-      ? paidProblem({ method: parsed.data.method, hasReceipt: !!receipt, cardOnly: !can(me, 'payment.any_method') })
-      : null;
-    if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-    } else if (!picked.ok) {
-      error = picked.message;
-      errors = picked.fields;
-    } else if (!amounts.ok) {
-      error = amounts.message;
-      errors = { amount: amounts.message };
-    } else if (paidIssue) {
-      error = paidIssue;
-      errors = parsed.data.method && paidIssue !== CARD_ONLY ? { receipt: paidIssue } : { method: paidIssue };
-    } else if (!doc.ok) {
-      error = doc.message;
-      errors = doc.errors;
-    } else if ((file || doc.data.number) && !doc.data.kind) {
-      error = 'Indica si el documento es una factura o una proforma.';
-      errors = { doc_kind: error };
-    } else {
-      const d = parsed.data;
-      const paid = d.status === 'pagado';
-      try {
-        // El justificante se guarda antes: si no se puede subir, no se crea nada
-        const receiptId = paid && receipt ? await storeFile({ db, bucket: env.DOCS, file: receipt, expedienteId: id, userId: me.id }) : null;
-        const sup = picked.value;
-        const payment = await db.prepare(
-          `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines,
-                                 due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, status`,
-        ).bind(id, sup.name, sup.id, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
-          d.due_date, d.status, paid ? d.paid_on : null, paid ? d.method : null, receiptId, d.notes, me.id).first();
-        await activityStmt(db, who, id, 'payment.add', `añadió un pago a ${sup.name} (${eur(amounts.total)})${paid ? ' ya pagado' : ''}`).run();
-        // El documento (si se ha adjuntado o se sabe su número): la factura queda pendiente de revisar
-        try {
-          if (file || doc.data.number) await attachDocument({ db, bucket: env.DOCS, who, payment, file, data: doc.data });
-          return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
-        } catch (err) {
-          if (!(err instanceof UploadError)) throw err;
-          // El pago ya está guardado: se lleva a su ficha para volver a intentar subir el documento
-          return Astro.redirect(`/expedientes/${id}/pagos/${payment.id}?aviso_doc=${encodeURIComponent(err.message)}`, 303);
-        }
-      } catch (err) {
-        if (!(err instanceof UploadError)) throw err;
-        error = `Justificante · ${err.message}`;
-        errors = { receipt: error };
-      }
-    }
+    lines = form ? rawVatLines(form) : [];
+    r = await payments.create(ctx, id, form ?? new FormData());
+    // El pago ya está guardado aunque su documento no se haya podido subir: se lleva a su ficha para reintentarlo
+    if (r.ok && r.value.docError) return Astro.redirect(`${self}/${r.value.id}?aviso_doc=${encodeURIComponent(r.value.docError)}`, 303);
+    if (r.ok) return Astro.redirect(`${self}?ok=creado`, 303);
   } else if (input.intent === 'add_many') {
     open = 'varios';
     const col = (f) => form.getAll(`fc_${f}`).map(String);
     many = col('supplier').map((supplier, i) => ({ supplier, supplier_id: col('supplier_id')[i], concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
-      .filter((r) => r.supplier || r.total);
-    const rows = parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] });
-    const sups = rows.ok && rows.rows.length ? await suppliers.resolveRowsForPayment(ctx, rows.rows) : null;
-    if (!rows.ok) {
-      error = rows.message;
-    } else if (!rows.rows.length) {
-      error = 'Escribe al menos un pago (proveedor e importe).';
-    } else if (!sups.ok) {
-      error = sups.message;
-    } else {
-      const sum = rows.rows.reduce((a, r) => a + r.total, 0);
-      const supOf = sups.value.of;
-      await db.batch([
-        ...rows.rows.map((r) => db.prepare(
-          `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-        ).bind(id, supOf(r).name, supOf(r).id, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
-        activityStmt(db, who, id, 'payment.add',
-          `añadió ${plural(rows.rows.length, 'pago previsto', 'pagos previstos')} (${eur(sum)}): ${[...new Set(rows.rows.map((r) => supOf(r).name))].join(', ')}`),
-      ]);
-      return Astro.redirect(`/expedientes/${id}/pagos?ok=creado`, 303);
-    }
+      .filter((x) => x.supplier || x.total);
+    r = await payments.createPlanned(ctx, id, form ?? new FormData());
+    if (r.ok) return Astro.redirect(`${self}?ok=creado`, 303);
+  } else {
+    r = { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
   }
-  Astro.response.status = 400;
+  const back = failure(Astro, r, self);
+  if (back) return back;
+  error = r.message;
+  errors = r.fields ?? {};
 }
 
-const [fin, picker] = await Promise.all([loadFinance(db, id, now), locked ? null : suppliers.pickerData(ctx)]);
-const { options = [], types = [] } = picker?.ok ? picker.value : {};
+const tab = id ? await payments.tab(ctx, id, { supplierId: parseId(params.get('proveedor')) }) : { ok: false, code: 'not_found' };
+if (!tab.ok) return failure(Astro, tab, '/expedientes');
+const { exp, fin, rates, editable, options, types, preset } = tab.value;
+const locked = !editable;
+v ??= { supplier: preset?.name, supplier_id: preset?.id };
 const s = fin.summary;
 const pending = fin.payments.filter((p) => p.status !== 'pagado');
 const paid = fin.payments.filter((p) => p.status === 'pagado');

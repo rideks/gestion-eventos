@@ -5,7 +5,6 @@
 // única factura). Una factura conforme ya no se puede borrar.
 // El orden: ① justificante → ② pagado → ③ factura conforme. Un pago hecho ya no se modifica
 // (Administración puede «Deshacer pagado» para corregirlo) y la factura se conforma después del pago.
-import { env } from 'cloudflare:workers';
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
 import ExpHeader from '../../../../components/ExpHeader.astro';
@@ -14,39 +13,67 @@ import SupplierDocFields from '../../../../components/SupplierDocFields.astro';
 import FileField from '../../../../components/FileField.astro';
 import Pill from '../../../../components/Pill.astro';
 import EntityPickerKit from '../../../../components/EntityPickerKit.astro';
-import { parseId, readForm, actor, can, activityStmt } from '../../../../lib/app.js';
-import { getExpediente, PAYMENT_SELECT, PAYMENT_JOINS } from '../../../../lib/data.js';
-import { PaymentSchema, SupplierDocSchema, ConformSchema, validate, formToObject } from '../../../../lib/validate.js';
-import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../../lib/vat.js';
-import {
-  paymentDocuments, documentsCoverage, expedienteDocuments, docName, isConforme, hasConformeInvoice, canRemoveDocument,
-  attachDocument, linkDocument, removeDocument, conformInvoice, dropIfOrphan, saveReceipt, removeReceipt,
-} from '../../../../lib/supplier.js';
-import { getFile, fileUrl, deleteFiles, UploadError } from '../../../../lib/files.js';
-import { paymentState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, PAYMENT_METHODS, DOC_KINDS, PAID_LOCKED } from '../../../../lib/finance.js';
+import { parseId, readForm, can } from '../../../../lib/app.js';
+import { formToObject } from '../../../../lib/validate.js';
+import { rawVatLines, linesOf } from '../../../../lib/vat.js';
+import { docName, isConforme, hasConformeInvoice, canRemoveDocument } from '../../../../lib/supplier.js';
+import { getFile, fileUrl } from '../../../../lib/files.js';
+import { paymentState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, PAYMENT_METHODS, DOC_KINDS } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
-import { today, nowIso, formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
-import { isLocked, LOCKED_MSG, markPaid } from '../../../../lib/actions.js';
-import { serviceContext } from '../../../../services/context.js';
-import * as suppliers from '../../../../services/suppliers.js';
+import { formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
+import { isLocked } from '../../../../lib/actions.js';
+import { serviceContext, failure } from '../../../../services/context.js';
+import * as payments from '../../../../services/payments.js';
 
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
 const pid = parseId(Astro.params.pid);
-// Todo a la vez (una sola espera a la base de datos)
-const [exp, p, docs, rates] = id && pid ? await Promise.all([
-  getExpediente(db, id),
-  db.prepare(
-    `SELECT ${PAYMENT_SELECT}, u.name AS created_by_name FROM payments p ${PAYMENT_JOINS} LEFT JOIN users u ON u.id = p.created_by
-      WHERE p.id = ? AND p.expediente_id = ?`,
-  ).bind(pid, id).first(),
-  paymentDocuments(db, pid),
-  loadRates(db),
-]) : [];
-if (!exp || !p) return Astro.rewrite('/404');
-
 const me = Astro.locals.user;
-const now = today();
+const now = ctx.now;
+const back = `/expedientes/${id}/pagos`;
+const self = `/expedientes/${id}/pagos/${pid}`;
+const docWarning = Astro.url.searchParams.get('aviso_doc');
+let error = docWarning ? `El pago se ha guardado, pero no el documento: ${docWarning.slice(0, 300)}` : null;
+let errors = {};
+let input = null;
+let lines = null;
+let openEdit = Astro.url.searchParams.has('editar');
+let openUpload = false;
+
+if (id && pid && Astro.request.method === 'POST') {
+  const form = await readForm(Astro.request);
+  input = form ? formToObject(form) : {};
+  const documentId = Number(input.document_id);
+  // Cada acción, a dónde vuelve si sale bien
+  const ACTIONS = {
+    // Se puede subir el justificante y marcarlo pagado de una vez
+    pay: [() => payments.markPaid(ctx, input, { expedienteId: id, receipt: getFile(form, 'receipt') }), `${self}?ok=pagado`],
+    receipt: [() => payments.saveReceipt(ctx, id, pid, getFile(form, 'receipt')), `${self}?ok=justificante#justificante`],
+    receipt_remove: [() => payments.removeReceipt(ctx, id, pid), `${self}?ok=guardado#justificante`],
+    unpay: [() => payments.unpay(ctx, id, pid), `${self}?ok=deshecho#justificante`],
+    delete: [() => payments.remove(ctx, id, pid), `${back}?ok=borrado`],
+    doc_new: [() => payments.addDocument(ctx, id, pid, input, getFile(form, 'file')), (v) => `${self}?ok=${v.kind === 'factura' ? 'subida' : 'proforma'}#factura`],
+    doc_link: [() => payments.linkDocument(ctx, id, pid, documentId), `${self}?ok=guardado#factura`],
+    doc_remove: [() => payments.removeDocument(ctx, id, pid, documentId), `${self}?ok=quitada#factura`],
+    doc_conform: [() => payments.conform(ctx, documentId, input), `${self}?ok=revisada#factura`],
+    // Sólo los datos del pago (proveedor, importe, fecha límite…); se paga en su paso, no aquí
+    save: [() => payments.update(ctx, id, pid, form ?? new FormData()), `${self}?ok=guardado`],
+  };
+  const action = Object.hasOwn(ACTIONS, input.intent) ? ACTIONS[input.intent] : null;
+  const r = action ? await action[0]() : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
+  if (r.ok) return Astro.redirect(typeof action[1] === 'function' ? action[1](r.value) : action[1], 303);
+  const bounce = failure(Astro, r, self);
+  if (bounce) return bounce;
+  error = r.message;
+  errors = r.fields ?? {};
+  openEdit = input.intent === 'save';
+  openUpload = input.intent === 'doc_new';
+  if (openEdit && form) lines = rawVatLines(form);
+}
+
+const f = id && pid ? await payments.ficha(ctx, id, pid) : { ok: false, code: 'not_found' };
+if (!f.ok) return failure(Astro, f, back);
+const { exp, payment: p, docs, choices, coverage: shared, rates, editable, options, types } = f.value;
 const locked = isLocked(exp);
 const admin = can(me, 'supplier.review');
 const withConforme = hasConformeInvoice(docs);
@@ -60,176 +87,13 @@ const cardOnly = !can(me, 'payment.any_method');
 const canReceipt = can(me, 'payment.receipt');
 // Al justificante de un pago hecho por transferencia no se le puede quitar
 const receiptLocked = paid && needsReceipt(p.method);
-const back = `/expedientes/${id}/pagos`;
-const self = `/expedientes/${id}/pagos/${pid}`;
-const docWarning = Astro.url.searchParams.get('aviso_doc');
-let error = docWarning ? `El pago se ha guardado, pero no el documento: ${docWarning.slice(0, 300)}` : null;
-let errors = {};
-let v = { ...p };
-let docValues = {};
-let lines = linesOf(p);
-let openEdit = Astro.url.searchParams.has('editar');
-let openUpload = false;
-
-if (Astro.request.method === 'POST') {
-  const who = actor(Astro);
-  const form = await readForm(Astro.request);
-  const input = form ? formToObject(form) : {};
-  const doc = docs.find((d) => d.id === Number(input.document_id));
-  error = null;
-
-  try {
-    if (locked) {
-      error = LOCKED_MSG;
-    } else if (input.intent === 'pay') {
-      // Se puede subir el justificante y marcarlo pagado de una vez
-      const r = await markPaid(db, who, input, id, { bucket: env.DOCS, file: getFile(form, 'receipt') });
-      if (r.ok) return Astro.redirect(`${self}?ok=pagado`, 303);
-      error = r.message;
-    } else if ((input.intent === 'receipt' || input.intent === 'receipt_remove') && !canReceipt) {
-      error = 'El justificante lo sube Administración.';
-    } else if (input.intent === 'receipt') {
-      const receipt = getFile(form, 'receipt');
-      // En un pago hecho se puede añadir el justificante que falte, pero no cambiarlo
-      if (paid && p.receipt_file_id) {
-        error = PAID_LOCKED;
-      } else if (!receipt) {
-        error = 'Elige el justificante (PDF o foto).';
-        errors = { receipt: error };
-      } else {
-        await saveReceipt({ db, bucket: env.DOCS, who, payment: p, file: receipt });
-        return Astro.redirect(`${self}?ok=justificante#justificante`, 303);
-      }
-    } else if (input.intent === 'receipt_remove' && p.receipt_file_id) {
-      if (paid) {
-        error = PAID_LOCKED;
-      } else {
-        await removeReceipt({ db, bucket: env.DOCS, who, payment: p });
-        return Astro.redirect(`${self}?ok=guardado#justificante`, 303);
-      }
-    } else if (input.intent === 'unpay') {
-      if (!canUnpay) {
-        error = 'Sólo Administración puede deshacer un pago hecho.';
-      } else {
-        await db.batch([
-          db.prepare("UPDATE payments SET status = 'pendiente', paid_on = NULL, method = NULL, updated_at = ? WHERE id = ?").bind(nowIso(), pid),
-          activityStmt(db, who, id, 'payment.unpaid',
-            `deshizo el pago a ${p.supplier} (${eur(p.total_cents)}) del ${formatDate(p.paid_on)}: vuelve a estar por pagar`),
-        ]);
-        return Astro.redirect(`${self}?ok=deshecho#justificante`, 303);
-      }
-    } else if (input.intent === 'delete') {
-      if (paid) {
-        error = PAID_LOCKED;
-      } else if (withConforme) {
-        error = 'Este pago tiene una factura conforme: no se puede borrar.';
-      } else if (canDelete) {
-        await db.batch([
-          db.prepare('DELETE FROM payment_documents WHERE payment_id = ?').bind(pid),
-          db.prepare('DELETE FROM payments WHERE id = ?').bind(pid),
-          activityStmt(db, who, id, 'payment.delete', `borró el pago a ${p.supplier} (${eur(p.total_cents)})`),
-        ]);
-        // Los documentos que no cubrían otros pagos se borran también (con su archivo)
-        for (const d of docs) await dropIfOrphan(db, env.DOCS, d.id);
-        if (p.receipt_file_id) await deleteFiles(db, env.DOCS, [p.receipt_file_id]);
-        return Astro.redirect(`${back}?ok=borrado`, 303);
-      } else {
-        error = 'Sólo Administración o quien añadió el pago puede borrarlo.';
-      }
-    } else if (input.intent === 'doc_new') {
-      openUpload = true;
-      docValues = input;
-      const parsed = validate(SupplierDocSchema, input);
-      const file = getFile(form, 'file');
-      if (!parsed.ok) {
-        error = parsed.message;
-        errors = parsed.errors;
-      } else if (!parsed.data.kind) {
-        error = 'Indica si el documento es una factura o una proforma.';
-        errors = { doc_kind: error };
-      } else if (!file && !parsed.data.number) {
-        error = 'Adjunta el documento (o escribe al menos su número).';
-      } else if (parsed.data.kind === 'factura' && withConforme && !parsed.data.comment) {
-        error = 'Este pago ya tiene una factura conforme: explica en el comentario por qué se sube otra.';
-        errors = { doc_comment: error };
-      } else {
-        await attachDocument({ db, bucket: env.DOCS, who, payment: p, file, data: parsed.data });
-        return Astro.redirect(`${self}?ok=${parsed.data.kind === 'factura' ? 'subida' : 'proforma'}#factura`, 303);
-      }
-    } else if (input.intent === 'doc_link') {
-      const r = await linkDocument({ db, who, payment: p, documentId: Number(input.document_id) });
-      if (r.ok) return Astro.redirect(`${self}?ok=guardado#factura`, 303);
-      error = r.message;
-    } else if (input.intent === 'doc_remove' && doc) {
-      const r = await removeDocument({ db, bucket: env.DOCS, who, payment: p, document: doc });
-      if (r.ok) return Astro.redirect(`${self}?ok=quitada#factura`, 303);
-      error = r.message;
-    } else if (input.intent === 'doc_conform' && doc) {
-      const parsed = validate(ConformSchema, input);
-      if (!parsed.ok) {
-        error = parsed.message;
-      } else {
-        const r = await conformInvoice({ db, who, invoiceId: doc.id, data: parsed.data });
-        if (r.ok) return Astro.redirect(`${self}?ok=revisada#factura`, 303);
-        error = r.message;
-      }
-    } else if (input.intent === 'save') {
-      // Sólo los datos del pago (proveedor, importe, fecha límite…); se paga en su paso, no aquí
-      openEdit = true;
-      v = { ...p, ...input };
-      lines = rawVatLines(form);
-      const parsed = validate(PaymentSchema, { ...input, status: 'pendiente' });
-      const amounts = parseVatLines(form, rates);
-      // Uno de la lista; el que ya tenía se puede mantener aunque ahora esté en «No contratar»
-      const picked = parsed.ok ? await suppliers.resolveForPayment(serviceContext(Astro), { id: parsed.data.supplier_id, name: parsed.data.supplier }, { keepId: p.supplier_id }) : null;
-      if (paid) {
-        error = PAID_LOCKED;
-      } else if (!parsed.ok) {
-        error = parsed.message;
-        errors = parsed.errors;
-      } else if (!picked.ok) {
-        error = picked.message;
-        errors = picked.fields;
-      } else if (!amounts.ok) {
-        error = amounts.message;
-        errors = { amount: amounts.message };
-      } else {
-        const d = parsed.data;
-        const sup = picked.value;
-        await db.batch([
-          db.prepare(
-            `UPDATE payments SET supplier = ?, supplier_id = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
-                    due_date = ?, notes = ?, updated_at = ? WHERE id = ?`,
-          ).bind(sup.name, sup.id, d.concept, amounts.base, amounts.total, amounts.vat, JSON.stringify(amounts.lines),
-            d.due_date, d.notes, nowIso(), pid),
-          activityStmt(db, who, id, 'payment.update',
-            `${amounts.total !== p.total_cents ? `importe ${eur(p.total_cents)} → ${eur(amounts.total)}` : 'editó el pago'} · ${sup.name}`),
-        ]);
-        return Astro.redirect(`${self}?ok=guardado`, 303);
-      }
-    } else {
-      error = 'Esa acción no está permitida.';
-    }
-  } catch (err) {
-    if (!(err instanceof UploadError)) throw err;
-    error = err.message;
-  }
-  Astro.response.status = 400;
-}
-
-// Pagos que cubre cada documento (para los compartidos con otros pagos)
-const editable = !locked && !paid;
-const [picker, all, shared] = await Promise.all([
-  editable ? suppliers.pickerData(serviceContext(Astro)) : null, expedienteDocuments(db, id), documentsCoverage(db, pid),
-]);
-const { options = [], types = [] } = picker?.ok ? picker.value : {};
+const v = openEdit && input ? { ...p, ...input } : { ...p };
+const docValues = openUpload && input ? input : {};
+lines ??= linesOf(p);
 const state = paymentState(p, now);
 const invState = supplierInvoiceState(p);
 const saved = linesOf(p);
 const receiptHref = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name });
-// Documentos ya subidos en el expediente que no están en este pago (los del mismo proveedor, primero)
-const linked = new Set(docs.map((d) => d.id));
-const choices = all.filter((d) => !linked.has(d.id)).sort((a, b) => (b.supplier === p.supplier) - (a.supplier === p.supplier));
 const sameSupplier = `/expedientes/${id}/pagos?nuevo${p.supplier_id ? `&proveedor=${p.supplier_id}` : ''}`;
 const showUpload = openUpload || !docs.length;
 // ¿Están hechos todos los pagos que cubre el documento? (para conformar la factura)

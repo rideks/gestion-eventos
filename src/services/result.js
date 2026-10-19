@@ -29,8 +29,8 @@ export const done = (value) => ({ ok: true, value });
  */
 export const fail = (code, message, extra = {}) => ({ ok: false, code, message, fields: {}, ...extra });
 
-/** @returns {Fail} */
-export const forbidden = () => fail('forbidden', 'No tienes permiso para eso.');
+/** @param {string} [message] @returns {Fail} */
+export const forbidden = (message = 'No tienes permiso para eso.') => fail('forbidden', message);
 
 /** @returns {Fail} */
 export const notFound = () => fail('not_found', 'No encontrado.');

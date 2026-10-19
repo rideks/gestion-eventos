@@ -71,6 +71,7 @@ errors = r.fields;      // debajo de cada campo
 |---|---|---|
 | **Selector de una lista** (cliente, proveedor…) | `src/components/EntityPicker.astro` (el campo) y `EntityPickerKit.astro` (la lista, la ventana de alta y el script; uno por tipo y página) | Elegir de la lista sin escribir a mano; si no está, «Dar de alta» con aviso de nombres parecidos. El alta va a `/<área>/alta`, que responde `{ ok, item }` o `{ ok: false, similar }`. Un tipo nuevo se añade en `KINDS` del kit. |
 | **Nombres parecidos** | `src/lib/name-match.js` | Sin tildes, mayúsculas, forma jurídica (S.L., S.A.…) ni palabras de relleno (hotel, group, España…) |
+| **Archivos** | `src/services/files.js` (guardar y borrar: R2 + tabla `files`), `src/repos/files.js` (su SQL) y `src/lib/files.js` (lo puro: tipos admitidos, comprobar los primeros bytes, nombres, enlaces) | Todos los documentos (facturas y proformas de proveedor, justificantes, PO, presupuestos, contratos). `storeFile` lanza `UploadError` si el archivo no vale; el servicio lo convierte en un error del campo. |
 | **Historial de cambios** | tabla `change_log`, `src/repos/changes.js` y `src/lib/changes.js` (`diffFields`) | Qué cambió en una ficha (antes y después), quién y cuándo, con un resumen ya redactado (`Fee: 8 % → 10 %`). Lo usan los clientes; un área nueva sólo añade su `entity`. |
 
 ## Pruebas
@@ -102,8 +103,14 @@ Así se hizo Clientes (v24), y así se hará la siguiente (p. ej. Incidencias):
 
 ## Lo que aún no está en capas
 
-Proveedores, Contratos y Clientes ya están en capas. El resto (expedientes, pagos, cobros, facturas, usuarios,
-ajustes) todavía hace SQL en las páginas o en `src/lib`: está en las listas `LEGACY_*` de
-`tests/architecture.test.mjs`, que **sólo pueden encoger**. Orden propuesto, de más a menos riesgo:
-pagos (y facturas de proveedor) → cobros (facturas al cliente y PO) → expedientes → usuarios y ajustes.
-Cada paso, sin cambios para quien usa la aplicación y con sus pruebas de servicio.
+Ya están en capas Proveedores, Contratos, Clientes y **Pagos** (la pestaña Pagos del expediente, la ficha de cada
+pago con sus facturas, proformas y justificante, y la bandeja `/pagos`; `src/services/payments.js`). El resto
+(cobros, facturas al cliente, expedientes, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está
+en las listas `LEGACY_*` de `tests/architecture.test.mjs`, que **sólo pueden encoger**. Orden propuesto:
+cobros (facturas al cliente y PO) → expedientes → usuarios y ajustes. Cada paso, sin cambios para quien usa la
+aplicación y con sus pruebas de servicio.
+
+Mientras tanto, dos puentes (se quitan al pasar Expedientes a capas):
+- `src/services/payments.js` usa `loadFinance` de `src/lib/data.js` para los importes del expediente.
+- `src/lib/data.js` re-exporta las consultas de las bandejas de pagos (`src/repos/payments.js`,
+  `src/repos/supplier-docs.js`) para el Inicio, y `src/lib/vat.js` la de los tipos de IVA (`src/repos/rates.js`).

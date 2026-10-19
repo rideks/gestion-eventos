@@ -240,7 +240,7 @@ Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-
 
 `npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
 (lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios);
-también los **servicios** de Proveedores, Contratos y Clientes contra una base SQLite en memoria con las migraciones y los
+también los **servicios** de Proveedores, Contratos, Clientes y Pagos contra una base SQLite en memoria con las migraciones y los
 datos de ejemplo (permisos de cada rol, datos que se devuelven, cambios en la base; necesita Node 22.13 o superior)
 y las **reglas de la arquitectura**. `npm run typecheck` comprueba los tipos de servicios y repositorios y
 `npm run check` hace las dos cosas. Cómo está organizado el código: [ARQUITECTURA.md](ARQUITECTURA.md).
@@ -318,12 +318,15 @@ un sandbox). Se comprueba el tipo real de cada archivo por sus primeros bytes.
 src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
-  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients; result y context
-  repos/            El SQL de cada área: suppliers, contracts, clients y changes (historial común de cambios)
+  services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients, payments
+                    y files (guardar y borrar documentos); result y context
+  repos/            El SQL de cada área: suppliers, contracts, clients, payments, supplier-docs (facturas y proformas
+                    de proveedor), files, rates (tipos de IVA), expedientes (su cabecera) y changes (historial común)
   lib/              Reglas puras: money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
                     suppliers (volumen de negocio), clients (relación económica, antigüedad), changes (qué cambió),
-                    name-match (nombres parecidos), validate (formularios), permissions… y lo que aún no está en capas:
-                    data (consultas), actions (pagar/cobrar), invoicing (nº de factura y envío), auth, files (R2)…
+                    name-match (nombres parecidos), supplier (reglas de las facturas de proveedor), files (comprobar
+                    archivos), validate (formularios), permissions… y lo que aún no está en capas: data (consultas),
+                    actions (cobrar), invoicing (nº de factura y envío), auth…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)
   components/       Cabecera y pestañas del expediente, filas de pagos/PO/facturas, formularios, selector de cliente o proveedor (EntityPicker)
   pages/            Inicio, expedientes, bandejas de pagos y cobros, clientes, proveedores y contratos, usuarios, cuenta, acceso
