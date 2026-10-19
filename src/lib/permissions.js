@@ -50,6 +50,7 @@ export const AREAS = [
     permissions: [
       { key: 'viajes', label: 'Ver y gestionar las reservas de Business Travel', help: 'Reservas de viajes de empresa de cada cliente: pasajeros, transporte, alojamiento, inscripciones y otros servicios, con sus importes y el PVP. Aparte de los expedientes.' },
       { key: 'viajes.fee', label: 'Ver y cambiar el fee interno de los viajes', help: 'El fee oculto de cada servicio y el total de fees de cada reserva. Nunca sale en los documentos del cliente.' },
+      { key: 'viajes.close', label: 'Cerrar y reabrir reservas de Business Travel', help: 'Cuando el viaje ha terminado y está todo (pasajeros y localizadores). Una reserva cerrada ya no se cambia hasta reabrirla.' },
     ],
   },
   {
@@ -102,6 +103,7 @@ export const REQUIRES = {
   contratos: 'proveedores',
   'contratos.edit': 'contratos',
   'viajes.fee': 'viajes',
+  'viajes.close': 'viajes',
 };
 
 /**

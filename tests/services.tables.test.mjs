@@ -80,12 +80,12 @@ test('Business Travel: páginas, filtro de cliente y totales sin las canceladas;
   const { as } = await setup();
   const adm = as('administracion');
   const all = (await travel.list(adm, { limit: 100 })).value;
-  assert.equal(all.total, 5);
-  assert.deepEqual(all.rows.map((r) => r.reference), ['BT-2026-0005', 'BT-2026-0004', 'BT-2026-0003', 'BT-2026-0002', 'BT-2026-0001']);
-  assert.equal(all.sums.pvp_cents, 274050 + 45240 + 146400 + 47600); // sin la cancelada (11300)
+  assert.equal(all.total, 7);
+  assert.deepEqual(all.rows.map((r) => r.reference), ['BT-2026-0007', 'BT-2026-0006', 'BT-2026-0005', 'BT-2026-0004', 'BT-2026-0003', 'BT-2026-0002', 'BT-2026-0001']);
+  assert.equal(all.sums.pvp_cents, 274050 + 45240 + 146400 + 47600 + 4300 + 52400); // sin la cancelada (11300)
   const roche = (await travel.list(adm, { clientId: 2, order: 'pvp', limit: 2 })).value;
   assert.deepEqual([roche.total, roche.rows.length, roche.rows[0].reference], [3, 2, 'BT-2026-0001']);
-  assert.deepEqual(all.clients.map((c) => c.name), ['BMW Ibérica', 'GLENMARK', 'ROCHE FARMA']);
+  assert.deepEqual(all.clients.map((c) => c.name), ['BMW Ibérica', 'ELECNOR', 'GLENMARK', 'ROCHE FARMA']);
   const ev = (await travel.list(as('eventos'), { order: 'fee' })).value;
   assert.equal(ev.order, 'reserva');
   assert.ok(!('fee_cents' in ev.sums) && ev.rows.every((r) => !('fee_cents' in r)));
@@ -103,5 +103,13 @@ test('columnas de cada persona: se guardan (sólo las que puede ver) y se vuelve
   assert.ok((await prefs.saveTable(ev, 'clientes', { reset: true })).ok);
   assert.equal(await prefs.forTable(ev, 'clientes'), null);
   assert.equal((await prefs.saveTable(ev, 'inventada', { columns: [] })).code, 'invalid');
+  // La vista (tarjetas o tabla), sólo en las tablas que la tienen; se conserva al cambiar las columnas o volver a las de siempre
+  assert.equal((await prefs.saveTable(ev, 'clientes', { view: 'tabla' })).code, 'invalid');
+  assert.equal((await prefs.saveTable(ev, 'viajes', { view: 'otra' })).code, 'invalid');
+  assert.deepEqual((await prefs.saveTable(ev, 'viajes', { view: 'tabla' })).value, { view: 'tabla' });
+  assert.deepEqual((await prefs.saveTable(ev, 'viajes', { columns: ['estado', 'fee'], per: '50' })).value, { columns: ['estado'], per: 50, view: 'tabla' });
+  assert.ok((await prefs.saveTable(ev, 'viajes', { reset: true })).ok);
+  assert.deepEqual(await prefs.forTable(ev, 'viajes'), { view: 'tabla' });
+  db.raw.exec('DELETE FROM user_prefs');
   assert.equal(db.one('SELECT COUNT(*) n FROM user_prefs').n, 0);
 });

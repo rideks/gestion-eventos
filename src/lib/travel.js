@@ -12,6 +12,7 @@
 // es un servicio con un importe).
 import { resolveLine } from './vat.js';
 import { parseAmount } from './money.js';
+import { formatDate } from './dates.js';
 
 /**
  * Los cuatro bloques de una reserva y lo que se pide en cada uno (las etiquetas de sus campos).
@@ -58,6 +59,63 @@ export function suggestedVat(kind, rates, fallback) {
 }
 
 export const BOOKING_STATUS = { abierta: 'Abierta', cancelada: 'Cancelada' };
+
+// ── Estado de una reserva, pestañas y cierre ────────────────────────────────
+// Una reserva nace abierta. Cuando pasa la fecha de su último servicio queda «por cerrar» y se cierra a mano
+// (comprobando antes lo de closeChecks); se puede reabrir. Cerrada y cancelada son de sólo lectura. Cerrada no es
+// un estado aparte en la base: es una reserva abierta con fecha de cierre (closed_at).
+
+/** Las pestañas de Business Travel (como las de Expedientes) */
+export const BOOKING_TABS = {
+  curso: 'En curso', cerrar: 'Por cerrar', mias: 'Mías', cerradas: 'Cerradas', canceladas: 'Canceladas', todas: 'Todas',
+};
+
+/**
+ * El estado de una reserva para enseñarlo: { key, label, tone } (tone: el color de la etiqueta)
+ * @param {{ status: string, closed_at?: string | null, lines?: number, first_date?: string | null, last_date?: string | null }} b
+ * @param {string} today 'YYYY-MM-DD'
+ */
+export function bookingState(b, today) {
+  if (b.status === 'cancelada') return { key: 'cancelada', label: 'Cancelada', tone: 'muted' };
+  if (b.closed_at) return { key: 'cerrada', label: 'Cerrada', tone: 'accent' };
+  if (!b.lines) return { key: 'vacia', label: 'Sin servicios', tone: 'warn' };
+  if (b.last_date && b.last_date < today) return { key: 'por_cerrar', label: 'Viaje hecho · por cerrar', tone: 'info' };
+  if (b.first_date && b.first_date <= today) return { key: 'de_viaje', label: 'De viaje', tone: 'ok' };
+  return { key: 'en_curso', label: 'En curso', tone: 'ok' };
+}
+
+/** Los servicios que necesitan su localizador (o nº de reserva o de inscripción) para cerrar; en «otros» (un taxi…) no siempre hay */
+export const NEEDS_LOCATOR = ['transporte', 'alojamiento', 'inscripcion'];
+
+/**
+ * Antes de cerrar una reserva: lo que está hecho y lo que falta. Se cierra sólo con todo en verde.
+ * @param {{ passengers: any[], lines: { kind: string, locator?: string | null, description?: string | null, start_date?: string | null, end_date?: string | null, passenger_ids?: number[] }[] }} booking
+ * @param {string} today 'YYYY-MM-DD'
+ * @returns {{ key: string, ok: boolean, label: string, missing?: string[] }[]}
+ */
+export function closeChecks({ passengers, lines }, today) {
+  const { to } = bookingDates(lines);
+  const name = (l) => l.description || LINE_KINDS[l.kind]?.label || 'Servicio';
+  const noLocator = lines.filter((l) => NEEDS_LOCATOR.includes(l.kind) && !String(l.locator ?? '').trim());
+  const alone = lines.filter((l) => !(l.passenger_ids ?? []).length);
+  return [
+    { key: 'servicios', ok: lines.length > 0, label: lines.length ? 'Tiene sus servicios' : 'Todavía no tiene servicios' },
+    {
+      key: 'terminado', ok: !!to && to < today,
+      label: !to ? 'Sus servicios no tienen fechas' : to < today ? `El viaje terminó el ${formatDate(to)}` : `El viaje termina el ${formatDate(to)}: se cierra después`,
+    },
+    {
+      key: 'pasajeros', ok: passengers.length > 0 && !alone.length,
+      label: !passengers.length ? 'No tiene pasajeros' : alone.length ? 'Hay servicios sin pasajeros' : 'Cada servicio tiene sus pasajeros',
+      missing: alone.map(name),
+    },
+    {
+      key: 'localizadores', ok: !noLocator.length,
+      label: noLocator.length ? 'Faltan localizadores' : 'Todos los servicios tienen su localizador',
+      missing: noLocator.map(name),
+    },
+  ];
+}
 export const TITLES = ['Dr.', 'Dra.'];
 
 /** 'Dra. María López' · 'Carlos García' */

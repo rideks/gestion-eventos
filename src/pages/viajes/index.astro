@@ -1,7 +1,9 @@
 ---
-// Business Travel: las reservas de viajes de empresa, con buscador (referencia, cliente, pasajero, proveedor o
-// localizador), estado y mes (el de sus servicios). Aquí se crea una reserva nueva: el cliente de la lista y una
-// descripción; los pasajeros y los servicios se añaden en su ficha. Todo pasa por src/services/travel.js.
+// Business Travel: las reservas de viajes de empresa en pestañas, como los expedientes (en curso, por cerrar, mías,
+// cerradas, canceladas y todas), con buscador (referencia, cliente, pasajero, proveedor o localizador), cliente y mes
+// (el de sus servicios). Se ven como tarjetas o como tabla (con columnas a elegir); cada persona elige y se recuerda.
+// Aquí se crea una reserva nueva: el cliente de la lista y una descripción; los pasajeros y los servicios se añaden
+// en su ficha. Todo pasa por src/services/travel.js.
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import EntityPicker from '../../components/EntityPicker.astro';
@@ -13,8 +15,9 @@ import { readForm, can, parseId } from '../../lib/app.js';
 import { TABLES } from '../../lib/tables.js';
 import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
 import { formToObject } from '../../lib/validate.js';
-import { BOOKING_STATUS } from '../../lib/travel.js';
+import { BOOKING_TABS } from '../../lib/travel.js';
 import { eur } from '../../lib/money.js';
+import { plural } from '../../lib/finance.js';
 import { formatRange, formatMonth, formatStamp } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as travel from '../../services/travel.js';
@@ -39,22 +42,27 @@ if (Astro.request.method === 'POST') {
   v = input;
 }
 
-// La tabla: buscador, filtros, orden, página y las columnas que ha elegido cada persona
+// La pestaña, el buscador, los filtros, el orden, la página, la vista y las columnas que ha elegido cada persona
+const params = Astro.url.searchParams;
+const tab = Object.hasOwn(BOOKING_TABS, params.get('ver') ?? '') ? params.get('ver') : 'curso';
 const def = TABLES.viajes;
-const state = tableState(def, Astro.url.searchParams, { prefs: await prefs.forTable(ctx, 'viajes'), can: (p) => can(Astro.locals.user, p) });
+const state = tableState(def, params, { prefs: await prefs.forTable(ctx, 'viajes'), can: (p) => can(Astro.locals.user, p) });
+// «Por cerrar», por número de reserva de la más antigua a la más reciente (lo que lleva más tiempo esperando, primero)
+if (tab === 'cerrar' && state.sort === 'reserva' && !params.get('dir')) state.dir = 'asc';
 const [res, picker] = await Promise.all([
   travel.list(ctx, {
-    q: state.q, status: state.filters.estado ?? '', month: state.filters.mes ?? '', clientId: parseId(state.filters.cliente),
+    q: state.q, view: tab, month: state.filters.mes ?? '', clientId: parseId(state.filters.cliente),
     order: state.sort, dir: state.dir, limit: state.per, offset: state.offset,
   }),
   travel.draft(ctx),
 ]);
 if (!res.ok) return failure(Astro, res, '/');
-const { rows, total, sums, clients, fee } = res.value;
+const { rows, total, counts, sums, clients, fee } = res.value;
 const info = pageInfo(total, state);
 if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
 const filtered = isFiltered(state);
 const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
 // Los meses para el filtro: de dentro de dos meses hacia atrás (el mes de sus servicios)
 const months = Array.from({ length: 15 }, (_, i) => {
   const d = new Date(Date.UTC(Number(ctx.now.slice(0, 4)), Number(ctx.now.slice(5, 7)) - 1 + 2 - i, 1));
@@ -64,8 +72,13 @@ const clientLabel = (r) => [r.client_title, r.client_name].filter(Boolean).join(
 const filters = [
   { ...def.filters[0], options: clients.map((c) => [c.id, [c.title, c.name].filter(Boolean).join(' ')]) },
   { ...def.filters[1], options: months.map((m) => [m, formatMonth(m)]) },
-  { ...def.filters[2], options: Object.entries(BOOKING_STATUS) },
 ];
+const EMPTY = {
+  curso: 'No hay reservas en curso.', cerrar: 'No hay reservas por cerrar: los viajes terminados ya están cerrados.',
+  mias: 'No tienes reservas abiertas creadas por ti.', cerradas: 'Todavía no hay reservas cerradas.',
+  canceladas: 'No hay reservas canceladas.', todas: 'Todavía no hay reservas. Crea la primera con «Nueva reserva».',
+};
+const pill = (s) => `pill pill-${s.tone}`;
 ---
 <App title="Business Travel" section="viajes" error={error} fieldErrors={errors} origin="Business Travel">
   <div class="page-top">
@@ -99,16 +112,53 @@ const filters = [
   </details>
   <EntityPickerKit kind="client" options={picker.ok ? picker.value.clients : []} />
 
-  <TableTools def={def} state={state} filters={filters} url={Astro.url} />
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} keep={['ver']}>
+    <nav class="x-tabs mt" aria-label="Ver reservas" slot="tabs">
+      {Object.entries(BOOKING_TABS).map(([k, label]) => (
+        <a href={hrefWith(Astro.url, { ver: k === 'curso' ? null : k, orden: null, dir: null })} aria-current={tab === k ? 'page' : undefined}>
+          {label}{counts[k] > 0 && ['curso', 'cerrar', 'mias'].includes(k) && <small class:list={{ 'is-alert': k === 'cerrar' }}>{counts[k]}</small>}
+        </a>
+      ))}
+    </nav>
+    {plural(total, 'reserva', 'reservas')}{filtered && ' con esos filtros'}
+    {total > 0 && tab !== 'canceladas' && <> · PVP: <b class="money">{eur(sums.pvp_cents)}</b>{fee && <> · fees: <b class="money">{eur(sums.fee_cents)}</b></>}{tab === 'todas' && <span class="small"> (sin las canceladas)</span>}</>}
+  </TableTools>
 
-  <p class="muted mt">
-    {total} {total === 1 ? 'reserva' : 'reservas'}{filtered && ' con esos filtros'}
-    {total > 0 && <> · PVP: <b class="money">{eur(sums.pvp_cents)}</b>{fee && <> · fees: <b class="money">{eur(sums.fee_cents)}</b></>} <span class="small">(sin las canceladas)</span></>}
-  </p>
-
-  {rows.length ? (
+  {!rows.length ? (
+    <div class="empty mt">
+      <p>{filtered ? 'Ninguna reserva con esos filtros en esta pestaña.' : EMPTY[tab]}</p>
+    </div>
+  ) : state.view === 'tarjetas' ? (
+    <ul class="list mt bookings-list">
+      {rows.map((r) => (
+        <li>
+          <a class="item is-row" href={`/viajes/${r.id}`}>
+            <div class="item-body">
+              <span class="item-title"><span class="exp-num">{r.reference}</span> {r.title ?? <span class="muted">Sin descripción</span>}</span>
+              <span class="item-meta">
+                <span><strong>{clientLabel(r)}</strong></span>
+                {r.first_date && <span>{formatRange(r.first_date, r.last_date)}</span>}
+                <span>{plural(r.passengers, 'pasajero', 'pasajeros')}</span>
+                <span>{plural(r.lines, 'servicio', 'servicios')}</span>
+                {r.created_by_name && <span>{r.created_by_name}</span>}
+              </span>
+              <span class="item-flags">
+                <span class={pill(r.state)}>{r.state.label}</span>
+                {r.status === 'abierta' && !r.closed_at && r.lines > 0 && !r.passengers && <span class="pill pill-warn">Sin pasajeros</span>}
+                {r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <span class="pill pill-warn">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</span>}
+              </span>
+            </div>
+            <div class="item-amount">
+              <span class="big-money money">{eur(r.pvp_cents)}</span>
+              <small>PVP{fee && r.fee_cents > 0 && ` · fee ${eur(r.fee_cents)}`}</small>
+            </div>
+          </a>
+        </li>
+      ))}
+    </ul>
+  ) : (
     <div class="table-scroll mt">
-      <table class="dtable bookings">
+      <table class="dtable bookings is-listing">
         <thead>
           <tr>
             {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
@@ -116,31 +166,27 @@ const filters = [
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr class:list={{ 'is-planned': r.status === 'cancelada' }}>
+            <tr class:list={{ 'is-planned': r.status === 'cancelada' }} data-href={`/viajes/${r.id}`}>
               <td>
                 <a href={`/viajes/${r.id}`}><strong>{r.reference}</strong></a>
-                {r.status === 'cancelada' && !has('estado') && <span class="pill pill-muted">Cancelada</span>}
+                {!has('estado') && r.state.key !== 'en_curso' && <span class={pill(r.state)}>{r.state.label}</span>}
                 {r.title && <div class="small muted">{r.title}</div>}
               </td>
-              {has('cliente') && <td>{clientLabel(r)}</td>}
-              {has('fechas') && <td>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>}
-              {has('pasajeros') && <td class="num">{r.passengers}</td>}
-              {has('servicios') && <td class="num">{r.lines}</td>}
-              {has('base') && <td class="num money">{eur(r.base_cents)}</td>}
-              {has('total') && <td class="num money">{eur(r.total_cents)}</td>}
-              {has('fee') && <td class="num money">{eur(r.fee_cents)}</td>}
-              {has('pvp') && <td class="num money"><strong>{eur(r.pvp_cents)}</strong></td>}
-              {has('estado') && <td><span class:list={['pill', r.status === 'cancelada' ? 'pill-muted' : 'pill-ok']}>{BOOKING_STATUS[r.status]}</span></td>}
-              {has('creada') && <td>{formatStamp(r.created_at, { year: true })}</td>}
-              {has('creador') && <td>{r.created_by_name ?? '—'}</td>}
+              {has('cliente') && <td data-label={L.cliente}>{clientLabel(r)}</td>}
+              {has('fechas') && <td data-label={L.fechas}>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>}
+              {has('pasajeros') && <td data-label={L.pasajeros} class="num">{r.passengers}</td>}
+              {has('servicios') && <td data-label={L.servicios} class="num">{r.lines}</td>}
+              {has('base') && <td data-label={L.base} class="num money">{eur(r.base_cents)}</td>}
+              {has('total') && <td data-label={L.total} class="num money">{eur(r.total_cents)}</td>}
+              {has('fee') && <td data-label={L.fee} class="num money">{eur(r.fee_cents)}</td>}
+              {has('pvp') && <td data-label={L.pvp} class="num money"><strong>{eur(r.pvp_cents)}</strong></td>}
+              {has('estado') && <td data-label={L.estado}><span class={pill(r.state)}>{r.state.label}</span>{r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <div class="small neg">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</div>}</td>}
+              {has('creada') && <td data-label={L.creada}>{formatStamp(r.created_at, { year: true })}</td>}
+              {has('creador') && <td data-label={L.creador}>{r.created_by_name ?? '—'}</td>}
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
-  ) : (
-    <div class="empty mt">
-      <p>{filtered ? 'Ninguna reserva con esos filtros.' : 'Todavía no hay reservas. Crea la primera con «Nueva reserva».'}</p>
     </div>
   )}
   <Pager info={info} url={Astro.url} noun={def.noun} />

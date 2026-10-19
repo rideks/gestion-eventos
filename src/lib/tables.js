@@ -5,6 +5,7 @@
 //   hidden: true          → no se ve hasta que se añade en «Columnas»
 //   fixed: true           → siempre se ve (la que identifica la fila)
 //   need                  → el permiso (o permisos) para verla
+// views: la tabla se puede ver también como tarjetas (como los expedientes); view: la vista por defecto.
 
 const ECONOMY = 'clientes.economia';
 const BILLING = ['clientes.economia', 'cobros'];
@@ -84,10 +85,10 @@ export const TABLES = {
   },
 
   viajes: {
-    key: 'viajes', sort: 'reserva', noun: ['reserva', 'reservas'],
+    key: 'viajes', sort: 'reserva', noun: ['reserva', 'reservas'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
     search: 'Referencia, cliente, pasajero, proveedor o localizador',
     columns: [
-      { key: 'reserva', label: 'Reserva', fixed: true, sort: 'desc' },
+      { key: 'reserva', label: 'Nº de reserva', fixed: true, sort: 'desc' },
       { key: 'cliente', label: 'Cliente', sort: 'asc' },
       { key: 'fechas', label: 'Fechas', sort: 'asc' },
       { key: 'pasajeros', label: 'Pasajeros', num: true, sort: 'desc' },
@@ -96,14 +97,14 @@ export const TABLES = {
       { key: 'total', label: 'Con IVA', num: true, sort: 'desc' },
       { key: 'fee', label: 'Fee', num: true, need: 'viajes.fee', sort: 'desc' },
       { key: 'pvp', label: 'PVP', num: true, sort: 'desc' },
-      { key: 'estado', label: 'Estado', hidden: true, sort: 'asc' },
+      { key: 'estado', label: 'Estado', sort: 'asc' },
       { key: 'creada', label: 'Creada', hidden: true, sort: 'desc' },
       { key: 'creador', label: 'Creada por', hidden: true, sort: 'asc' },
     ],
+    // El estado va en pestañas encima de la lista (en curso, por cerrar, mías, cerradas, canceladas, todas)
     filters: [
       { key: 'cliente', label: 'Cliente', all: 'Todos los clientes' },
       { key: 'mes', label: 'Mes', all: 'Todos los meses' },
-      { key: 'estado', label: 'Estado', all: 'Todos los estados' },
     ],
   },
 };

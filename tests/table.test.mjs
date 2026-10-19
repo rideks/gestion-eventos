@@ -86,3 +86,11 @@ test('las cuatro tablas: claves únicas, una columna fija y el orden por defecto
     assert.ok(t.columns.find((c) => c.key === t.sort)?.sort, t.key);
   }
 });
+
+test('vista: tarjetas o tabla sólo en las tablas que la tienen (la elegida o la de por defecto)', () => {
+  const bt = TABLES.viajes;
+  assert.equal(tableState(bt, P('')).view, 'tarjetas');
+  assert.equal(tableState(bt, P(''), { prefs: { view: 'tabla' } }).view, 'tabla');
+  assert.equal(tableState(bt, P(''), { prefs: { view: 'otra' } }).view, 'tarjetas');
+  assert.equal(tableState(def, P(''), { prefs: { view: 'tarjetas' } }).view, 'tabla'); // Clientes no tiene tarjetas
+});

@@ -830,9 +830,26 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
 .bt-money .is-pvp dd { font-weight: 800; }
 
 /* ── Tablas de listado: buscador, filtros, columnas, orden y páginas ─────── */
-.table-tools { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 16px; }
-.table-tools .table-filters { flex: 1 1 520px; margin: 0; }
-.table-columns { position: relative; margin-left: auto; } /* siempre a la derecha: el desplegable se abre hacia dentro */
+/* Buscador y filtros: en una línea (el buscador se estira) y, en el móvil, el buscador entero y dos por fila */
+.table-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+.table-filters input[type='search'] { flex: 1 1 240px; width: auto; min-width: 0; }
+.table-filters select { flex: 0 1 auto; width: auto; max-width: 220px; min-width: 0; }
+@media (max-width: 640px) {
+  .table-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .table-filters input[type='search'] { grid-column: 1 / -1; }
+  .table-filters select { max-width: none; width: 100%; }
+  .table-filters .btn { justify-content: center; }
+}
+/* Barra de resultados: el resumen a la izquierda; la vista y «Columnas», a la derecha */
+.table-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 14px; }
+.table-summary { margin: 0; color: var(--muted); }
+.table-bar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.view-switch { display: inline-flex; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.view-switch button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 0; background: none; font: inherit;
+  font-size: 0.85rem; font-weight: 700; color: var(--muted); cursor: pointer; }
+.view-switch button + button { border-left: 1px solid var(--line-2); }
+.view-switch button[aria-pressed='true'] { background: var(--text); color: #fff; }
+.table-columns { position: relative; } /* a la derecha de la barra: el desplegable se abre hacia dentro */
 .table-columns > summary { list-style: none; }
 .table-columns > summary::-webkit-details-marker { display: none; }
 .table-columns-pop { position: absolute; right: 0; z-index: 30; margin-top: 6px; width: min(320px, calc(100vw - 32px)); background: var(--surface);
@@ -844,12 +861,31 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
 .table-columns-per select { width: auto; }
 .dtable th .sort-link { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .dtable th .sort-link:hover, .dtable th .sort-link:focus-visible { text-decoration: underline; }
-.dtable th .sort-link::after { content: '↕'; content: '↕' / ''; font-size: 0.7rem; opacity: 0.55; }
+/* La flecha: siempre en la columna ordenada; en las demás, al pasar por encima (sin ruido en cada cabecera) */
+.dtable th .sort-link::after { content: '↕'; content: '↕' / ''; font-size: 0.7rem; opacity: 0; transition: opacity 0.15s; }
+.dtable th:hover .sort-link::after, .dtable th .sort-link:focus-visible::after { opacity: 0.6; }
 .dtable th .sort-link[data-dir]::after { opacity: 1; color: var(--c2); }
 .dtable th .sort-link[data-dir='asc']::after { content: '▲'; content: '▲' / ''; }
 .dtable th .sort-link[data-dir='desc']::after { content: '▼'; content: '▼' / ''; }
 .dtable th.is-sorted { color: var(--c2); }
 .dtable.bookings td:first-child strong { white-space: nowrap; }
+/* Tablas de listado: la primera columna no se parte en dos líneas; la fila se resalta y se puede pulsar entera */
+.dtable.is-listing td:first-child { min-width: 11rem; }
+.dtable.is-listing tbody tr[data-href] { cursor: pointer; }
+.dtable.is-listing tbody tr:hover td { background: color-mix(in srgb, var(--c2) 9%, var(--surface)); }
+/* En el móvil cada fila es una tarjeta: la primera columna de título y el resto «Etiqueta … valor» */
+@media (max-width: 720px) {
+  .table-scroll:has(> .dtable.is-listing) { overflow: visible; border: 0; background: none; border-radius: 0; }
+  .dtable.is-listing thead { display: none; }
+  .dtable.is-listing, .dtable.is-listing tbody, .dtable.is-listing tr, .dtable.is-listing td { display: block; width: 100%; }
+  .dtable.is-listing tr { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; }
+  .dtable.is-listing tbody tr:hover td { background: none; }
+  .dtable.is-listing td { padding: 4px 0; border: 0; text-align: right; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .dtable.is-listing td::after { content: ''; display: block; clear: both; }
+  .dtable.is-listing td::before { content: attr(data-label); float: left; margin-right: 12px; color: var(--muted); font-size: 0.8rem; font-weight: 600; text-align: left; }
+  .dtable.is-listing td:first-child { display: block; text-align: left; padding: 0 0 6px; margin-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 1rem; }
+  .dtable.is-listing td:first-child::before { content: none; }
+}
 .dtable th.num .sort-link { justify-content: flex-end; }
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
 .pager-count { color: var(--muted); }

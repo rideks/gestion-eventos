@@ -16,6 +16,7 @@ import { readForm, can, parseId } from '../../lib/app.js';
 import { SUPPLIER_STATUS, formToObject } from '../../lib/validate.js';
 import { cleanName } from '../../lib/suppliers.js';
 import { eur } from '../../lib/money.js';
+import { plural } from '../../lib/finance.js';
 import { formatDate } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as suppliers from '../../services/suppliers.js';
@@ -68,6 +69,7 @@ const { rows, total, sums, types, cities, year, money } = dir.value;
 const info = pageInfo(total, state);
 if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
 const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
 const contractList = seesContracts && has('contrato') ? await contracts.list(ctx) : seesContracts ? await contracts.due(ctx) : null;
 const allContracts = contractList?.ok ? contractList.value : [];
 // El contrato que más importa de cada proveedor (vienen ordenados: primero lo que requiere atención, luego lo vigente)
@@ -124,16 +126,14 @@ const filters = [
     </details>
   )}
 
-  <TableTools def={def} state={state} filters={filters} url={Astro.url} />
-
-  <p class="muted mt">
-    {total} {total === 1 ? 'proveedor' : 'proveedores'}{filtered && ' con esos filtros'}
+  <TableTools def={def} state={state} filters={filters} url={Astro.url}>
+    {plural(total, 'proveedor', 'proveedores')}{filtered && ' con esos filtros'}
     {money && total > 0 && <> · contratado en {year}: <b class="money">{eur(sums.this_year)}</b> · en total: <b class="money">{eur(sums.contracted)}</b> <span class="small">(sin IVA, eventos no cancelados)</span></>}
-  </p>
+  </TableTools>
 
   {rows.length ? (
     <div class="table-scroll mt">
-      <table class="dtable suppliers">
+      <table class="dtable suppliers is-listing">
         <thead>
           <tr>
             {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
@@ -141,22 +141,22 @@ const filters = [
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr class:list={{ 'is-planned': r.status !== 'activo' }}>
+            <tr class:list={{ 'is-planned': r.status !== 'activo' }} data-href={`/proveedores/${r.id}`}>
               <td>
                 <a href={`/proveedores/${r.id}`}><strong>{r.name}</strong></a>
                 {r.status !== 'activo' && <span class:list={['pill', r.status === 'bloqueado' ? 'pill-danger' : 'pill-muted']}>{SUPPLIER_STATUS[r.status]}</span>}
               </td>
-              {has('tipo') && <td>{r.type ?? '—'}</td>}
-              {has('ciudad') && <td>{r.city ?? '—'}</td>}
-              {has('contacto') && <td>{r.contact_name ?? '—'}</td>}
-              {has('telefono') && <td>{r.phone ?? '—'}</td>}
-              {has('email') && <td>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
-              {has('expedientes') && <td class="num">{r.exps}</td>}
-              {has('uso') && <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
-              {has('contrato') && <td>{(() => { const c = contractOf.get(r.id); return c ? <a class="contract-cell" href={`/proveedores/${r.id}/contratos/${c.id}`}><Pill state={c.state} /><span class="small muted">{c.state.text}</span></a> : <span class="muted">—</span>; })()}</td>}
-              {has('altas') && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
-              {has('year') && <td class="num money">{eur(r.this_year)}</td>}
-              {has('gasto') && <td class="num money">{eur(r.contracted)}</td>}
+              {has('tipo') && <td data-label={L.tipo}>{r.type ?? '—'}</td>}
+              {has('ciudad') && <td data-label={L.ciudad}>{r.city ?? '—'}</td>}
+              {has('contacto') && <td data-label={L.contacto}>{r.contact_name ?? '—'}</td>}
+              {has('telefono') && <td data-label={L.telefono}>{r.phone ?? '—'}</td>}
+              {has('email') && <td data-label={L.email}>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
+              {has('expedientes') && <td data-label={L.expedientes} class="num">{r.exps}</td>}
+              {has('uso') && <td data-label={L.uso}>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
+              {has('contrato') && <td data-label={L.contrato}>{(() => { const c = contractOf.get(r.id); return c ? <a class="contract-cell" href={`/proveedores/${r.id}/contratos/${c.id}`}><Pill state={c.state} /><span class="small muted">{c.state.text}</span></a> : <span class="muted">—</span>; })()}</td>}
+              {has('altas') && <td data-label={L.altas}>{formatDate(r.created_at.slice(0, 10))}</td>}
+              {has('year') && <td data-label={L.year} class="num money">{eur(r.this_year)}</td>}
+              {has('gasto') && <td data-label={L.gasto} class="num money">{eur(r.contracted)}</td>}
             </tr>
           ))}
         </tbody>

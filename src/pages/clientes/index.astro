@@ -16,6 +16,7 @@ import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/tab
 import { cleanName } from '../../lib/suppliers.js';
 import { feeLabel } from '../../lib/clients.js';
 import { eur } from '../../lib/money.js';
+import { plural } from '../../lib/finance.js';
 import { formatDate } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as clients from '../../services/clients.js';
@@ -58,6 +59,7 @@ const info = pageInfo(total, state);
 if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
 const filtered = isFiltered(state);
 const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
 const filters = [
   { ...def.filters[0], options: Object.entries(CLIENT_STATUS) },
   { ...def.filters[1], options: Object.entries(CLIENT_KINDS) },
@@ -98,17 +100,15 @@ const filters = [
     </details>
   )}
 
-  <TableTools def={def} state={state} filters={filters} url={Astro.url} />
-
-  <p class="muted mt">
-    {total} {total === 1 ? 'cliente' : 'clientes'}{filtered && ' con esos filtros'}
+  <TableTools def={def} state={state} filters={filters} url={Astro.url}>
+    {plural(total, 'cliente', 'clientes')}{filtered && ' con esos filtros'}
     {economy && total > 0 && <> · presupuestado en {year}: <b class="money">{eur(sums.this_year)}</b> · en total: <b class="money">{eur(sums.budget)}</b> <span class="small">(sin IVA, sin cancelados)</span></>}
     {billing && sums.pending > 0 && <> · pendiente de cobro: <b class="money">{eur(sums.pending)}</b> <span class="small">(con IVA)</span></>}
-  </p>
+  </TableTools>
 
   {rows.length ? (
     <div class="table-scroll mt">
-      <table class="dtable clients">
+      <table class="dtable clients is-listing">
         <thead>
           <tr>
             {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
@@ -116,26 +116,26 @@ const filters = [
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr class:list={{ 'is-planned': r.status !== 'activo' }}>
+            <tr class:list={{ 'is-planned': r.status !== 'activo' }} data-href={`/clientes/${r.id}`}>
               <td>
                 <a href={`/clientes/${r.id}`}><strong>{[r.title, r.name].filter(Boolean).join(' ')}</strong></a>
                 {r.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[r.status]}</span>}
               </td>
-              {has('tipo') && <td>{CLIENT_KINDS[r.kind] ?? '—'}</td>}
-              {has('ciudad') && <td>{r.city ?? '—'}</td>}
-              {has('nif') && <td>{r.tax_id ?? '—'}</td>}
-              {has('email') && <td>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
-              {has('telefono') && <td>{r.phone ?? '—'}</td>}
-              {has('expedientes') && <td class="num">{r.exps}</td>}
-              {has('viajes') && <td class="num">{r.bookings}</td>}
-              {has('proximo') && <td>{r.next_date ? formatDate(r.next_date) : '—'}</td>}
-              {has('uso') && <td>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
-              {has('fee') && <td class="num">{feeLabel(r.fee_bp) ?? '—'}</td>}
-              {has('volumen') && <td class="num money">{eur(r.budget)}</td>}
-              {has('year') && <td class="num money">{eur(r.this_year)}</td>}
-              {has('facturado') && <td class="num money">{eur(r.invoiced)}</td>}
-              {has('pendiente') && <td class:list={['num', 'money', { neg: r.pending > 0 }]}>{eur(r.pending)}</td>}
-              {has('altas') && <td>{formatDate(r.created_at.slice(0, 10))}</td>}
+              {has('tipo') && <td data-label={L.tipo}>{CLIENT_KINDS[r.kind] ?? '—'}</td>}
+              {has('ciudad') && <td data-label={L.ciudad}>{r.city ?? '—'}</td>}
+              {has('nif') && <td data-label={L.nif}>{r.tax_id ?? '—'}</td>}
+              {has('email') && <td data-label={L.email}>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
+              {has('telefono') && <td data-label={L.telefono}>{r.phone ?? '—'}</td>}
+              {has('expedientes') && <td data-label={L.expedientes} class="num">{r.exps}</td>}
+              {has('viajes') && <td data-label={L.viajes} class="num">{r.bookings}</td>}
+              {has('proximo') && <td data-label={L.proximo}>{r.next_date ? formatDate(r.next_date) : '—'}</td>}
+              {has('uso') && <td data-label={L.uso}>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
+              {has('fee') && <td data-label={L.fee} class="num">{feeLabel(r.fee_bp) ?? '—'}</td>}
+              {has('volumen') && <td data-label={L.volumen} class="num money">{eur(r.budget)}</td>}
+              {has('year') && <td data-label={L.year} class="num money">{eur(r.this_year)}</td>}
+              {has('facturado') && <td data-label={L.facturado} class="num money">{eur(r.invoiced)}</td>}
+              {has('pendiente') && <td data-label={L.pendiente} class:list={['num', 'money', { neg: r.pending > 0 }]}>{eur(r.pending)}</td>}
+              {has('altas') && <td data-label={L.altas}>{formatDate(r.created_at.slice(0, 10))}</td>}
             </tr>
           ))}
         </tbody>

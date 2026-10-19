@@ -13,16 +13,18 @@ const db = env.DB;
 const now = today();
 const me = Astro.locals.user;
 const cobros = can(me, 'cobros');
+// En curso: los abiertos que aún no se han celebrado y, primero, las solicitudes por abrir
 const FILTERS = {
-  curso: { label: 'En curso', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) >= ?", args: [now] },
+  curso: { label: 'En curso', where: "(e.status = 'solicitado' OR (e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) >= ?))", args: [now] },
   cerrar: { label: 'Por cerrar', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) < ?", args: [now] },
-  solicitudes: { label: 'Por abrir', where: "e.status = 'solicitado'", args: [] },
   mios: { label: 'Míos', where: "e.manager_id = ? AND e.status IN ('solicitado', 'abierto')", args: [me.id] },
-  cerrados: { label: 'Cerrados', where: "e.status IN ('cerrado', 'cancelado')", args: [] },
+  cerrados: { label: 'Cerrados', where: "e.status = 'cerrado'", args: [] },
+  cancelados: { label: 'Cancelados', where: "e.status = 'cancelado'", args: [] },
   todos: { label: 'Todos', where: '1 = 1', args: [] },
 };
-const key = Astro.url.searchParams.get('ver') ?? 'curso';
-const filter = FILTERS[key] ?? FILTERS.curso;
+const asked = Astro.url.searchParams.get('ver') ?? '';
+const key = Object.hasOwn(FILTERS, asked) ? asked : 'curso'; // los enlaces antiguos (?ver=solicitudes) van a «En curso»
+const filter = FILTERS[key];
 const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
 const search = q
   ? { where: " AND (e.name LIKE ?1 OR e.company LIKE ?1 OR e.destination LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)", term: `%${q.replace(/[%_]/g, '')}%` }
@@ -31,11 +33,11 @@ const search = q
 // Con búsqueda se busca en todos; sin ella, en la pestaña elegida
 const where = search ? search.where.replace(' AND ', '') : filter.where;
 const args = search ? [search.term] : filter.args;
-const order = key === 'cerrados' ? 'e.closed_at DESC' : "e.status = 'solicitado' DESC, e.start_date, e.id";
+const order = key === 'cerrados' || key === 'cancelados' ? 'e.closed_at DESC' : "e.status = 'solicitado' DESC, e.start_date, e.id";
 const { results } = await db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id WHERE ${where} ORDER BY ${order} LIMIT 200`)
   .bind(...args).all();
 const counts = await db.prepare(
-  `SELECT SUM(status = 'abierto' AND COALESCE(end_date, start_date) >= ?1) AS curso,
+  `SELECT SUM(status = 'solicitado' OR (status = 'abierto' AND COALESCE(end_date, start_date) >= ?1)) AS curso,
           SUM(status = 'abierto' AND COALESCE(end_date, start_date) < ?1) AS cerrar,
           SUM(status = 'solicitado') AS solicitudes,
           SUM(manager_id = ?2 AND status IN ('solicitado', 'abierto')) AS mios
@@ -62,7 +64,7 @@ const counts = await db.prepare(
     <nav class="x-tabs mt" aria-label="Filtrar expedientes">
       {Object.entries(FILTERS).map(([k, f]) => (
         <a href={`/expedientes?ver=${k}`} aria-current={key === k ? 'page' : undefined}>
-          {f.label}{counts[k] > 0 && <small class:list={{ 'is-alert': k === 'solicitudes' }}>{counts[k]}</small>}
+          {f.label}{counts[k] > 0 && <small class:list={{ 'is-alert': k === 'curso' && counts.solicitudes > 0 }} title={k === 'curso' && counts.solicitudes > 0 ? `${counts.solicitudes} por abrir` : undefined}>{counts[k]}</small>}
         </a>
       ))}
     </nav>

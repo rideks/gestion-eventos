@@ -9,6 +9,7 @@
 //                 num?: true (cifras: a la derecha) }],
 //     filters: [{ key, label }] }   ← el nombre del parámetro en la URL; sus opciones las da cada página
 // En la URL: q (buscador), un parámetro por filtro, orden + dir (columna y sentido), pagina y por (filas por página).
+// Si la tabla tiene vistas (def.views: tarjetas o tabla), la que eligió cada persona; si no, la de por defecto.
 
 export const PER_PAGE = [25, 50, 100];
 export const DEFAULT_PER = 25;
@@ -22,7 +23,7 @@ export function allowedColumns(def, can) {
  * Estado de la tabla a partir de la URL y las preferencias guardadas.
  * @param {any} def
  * @param {URLSearchParams} params
- * @param {{ prefs?: { columns?: string[], per?: number } | null, can?: (permission: string) => boolean }} [options]
+ * @param {{ prefs?: { columns?: string[], per?: number, view?: string } | null, can?: (permission: string) => boolean }} [options]
  */
 export function tableState(def, params, { prefs = null, can = () => true } = {}) {
   const columns = allowedColumns(def, can);
@@ -50,7 +51,9 @@ export function tableState(def, params, { prefs = null, can = () => true } = {})
   const perParam = Number(params.get('por'));
   const per = PER_PAGE.includes(perParam) ? perParam : PER_PAGE.includes(Number(prefs?.per)) ? Number(prefs?.per) : DEFAULT_PER;
   const page = Math.min(100000, Math.max(1, Math.floor(Number(params.get('pagina'))) || 1));
-  return { key: def.key, q, filters, sort, dir, per, page, offset: (page - 1) * per, limit: per, columns, chosen, visible };
+  const views = def.views ?? [];
+  const view = views.includes(prefs?.view) ? prefs.view : def.view ?? 'tabla';
+  return { key: def.key, q, filters, sort, dir, per, page, offset: (page - 1) * per, limit: per, columns, chosen, visible, view };
 }
 
 /** ¿Se ve esa columna? */

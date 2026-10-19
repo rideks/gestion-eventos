@@ -26,12 +26,12 @@ test('reserva nueva: cliente de la lista y referencia correlativa que no se repi
   const { db, as, clientId } = await setup();
   const ctx = as('eventos');
   const r = await travel.create(ctx, { client: 'ELECNOR', client_id: String(clientId('ELECNOR')), title: 'Viaje a Bilbao' });
-  assert.deepEqual(r.value.reference, 'BT-2026-0006'); // en la demo ya hay cinco
+  assert.deepEqual(r.value.reference, 'BT-2026-0008'); // en la demo ya hay siete
   const r2 = await travel.create(ctx, { client: 'elecnor' }); // sin JavaScript: el nombre exacto, sin distinguir mayúsculas
-  assert.equal(r2.value.reference, 'BT-2026-0007');
+  assert.equal(r2.value.reference, 'BT-2026-0009');
   // Borrar una reserva vacía no libera su número
   assert.ok((await travel.remove(ctx, r2.value.id)).ok);
-  assert.equal((await travel.create(ctx, { client: 'ELECNOR' })).value.reference, 'BT-2026-0008');
+  assert.equal((await travel.create(ctx, { client: 'ELECNOR' })).value.reference, 'BT-2026-0010');
   const unknown = await travel.create(ctx, { client: 'Roche' });
   assert.equal(unknown.code, 'invalid');
   assert.match(unknown.fields.client, /«Roche» no está dado de alta\. ¿Es «ROCHE FARMA»\?/);
@@ -119,7 +119,7 @@ test('cancelada: sólo lectura hasta reabrirla; una reserva con servicios no se 
   assert.ok((await travel.addPassenger(ctx, 5, { first_name: 'X', last_name: 'Y' })).ok);
   assert.equal((await travel.remove(ctx, 5)).code, 'conflict');
   assert.ok((await travel.setStatus(ctx, 5, 'cancelada')).ok);
-  assert.equal((await travel.list(ctx, { status: 'cancelada' })).value.rows.length, 1);
+  assert.equal((await travel.list(ctx, { view: 'canceladas' })).value.rows.length, 1);
 });
 
 test('listado: buscar por pasajero, localizador o proveedor y filtrar por mes', { skip }, async () => {
@@ -128,9 +128,9 @@ test('listado: buscar por pasajero, localizador o proveedor y filtrar por mes', 
   const refs = async (f) => (await travel.list(ctx, f)).value.rows.map((r) => r.reference).sort();
   assert.deepEqual(await refs({ q: 'López Serrano' }), ['BT-2026-0001', 'BT-2026-0002']);
   assert.deepEqual(await refs({ q: 'IB9HQ3' }), ['BT-2026-0003']);
-  assert.deepEqual(await refs({ q: 'iryo' }), ['BT-2026-0001', 'BT-2026-0004']);
-  assert.deepEqual(await refs({ month: '2026-10' }), ['BT-2026-0002']);
-  assert.deepEqual(await refs({ month: 'mal' }), ['BT-2026-0001', 'BT-2026-0002', 'BT-2026-0003', 'BT-2026-0004', 'BT-2026-0005']);
+  assert.deepEqual(await refs({ q: 'iryo' }), ['BT-2026-0001', 'BT-2026-0004', 'BT-2026-0006']);
+  assert.deepEqual(await refs({ month: '2026-10' }), ['BT-2026-0002', 'BT-2026-0006', 'BT-2026-0007']);
+  assert.equal((await refs({ month: 'mal' })).length, 7);
   assert.equal((await travel.forClient(ctx, 2)).value.length, 3); // ROCHE FARMA: tres reservas
 });
 
@@ -145,4 +145,65 @@ test('cambiar el cliente o la descripción queda en el historial; los expediente
   assert.deepEqual(db.rows('SELECT id, company, client_id, fee_bp FROM expedientes ORDER BY id'), exps);
   assert.equal((await travel.detail(ctx, 999)).code, 'not_found');
   assert.equal((await travel.detail(as('tecnico'), 1)).code, 'forbidden');
+});
+
+test('pestañas como en Expedientes: en curso, por cerrar (viaje terminado), mías, cerradas, canceladas y todas', { skip }, async () => {
+  const { as } = await setup();
+  const ctx = as('eventos'); // Marta creó las reservas de ejemplo
+  const refs = async (view) => (await travel.list(ctx, { view })).value.rows.map((r) => r.reference).sort();
+  assert.deepEqual(await refs('curso'), ['BT-2026-0001', 'BT-2026-0002', 'BT-2026-0003', 'BT-2026-0004']);
+  assert.deepEqual(await refs('cerrar'), ['BT-2026-0007']);
+  assert.deepEqual(await refs('mias'), ['BT-2026-0001', 'BT-2026-0002', 'BT-2026-0003', 'BT-2026-0004', 'BT-2026-0007']);
+  assert.deepEqual(await refs('cerradas'), ['BT-2026-0006']);
+  assert.deepEqual(await refs('canceladas'), ['BT-2026-0005']);
+  assert.equal((await refs('inventada')).length, 7); // una pestaña que no existe: todas
+  const all = (await travel.list(ctx, {})).value;
+  assert.deepEqual(all.counts, { curso: 4, cerrar: 1, mias: 5, cerradas: 1, canceladas: 1, todas: 7 });
+  assert.deepEqual(Object.fromEntries(all.rows.map((r) => [r.reference, r.state.key])), {
+    'BT-2026-0007': 'por_cerrar', 'BT-2026-0006': 'cerrada', 'BT-2026-0005': 'cancelada', 'BT-2026-0004': 'en_curso',
+    'BT-2026-0003': 'en_curso', 'BT-2026-0002': 'en_curso', 'BT-2026-0001': 'en_curso',
+  });
+  assert.equal(all.rows.find((r) => r.reference === 'BT-2026-0007').missing_locators, 1);
+  // Los recuentos de las pestañas siguen al buscador y a los filtros
+  assert.deepEqual((await travel.list(ctx, { q: 'elecnor' })).value.counts, { curso: 0, cerrar: 1, mias: 1, cerradas: 1, canceladas: 0, todas: 2 });
+  // Los totales son de la pestaña
+  assert.equal((await travel.list(ctx, { view: 'cerrar' })).value.sums.pvp_cents, 30600 + 21800);
+  assert.deepEqual((await travel.list(as('administracion'), { view: 'mias' })).value.rows, []); // Tania no ha creado ninguna
+});
+
+test('cerrar: con el viaje terminado, pasajeros y localizadores; sólo con «viajes.close»; cerrada = sólo lectura hasta reabrirla', { skip }, async () => {
+  const { db, as } = await setup();
+  const adm = as('administracion');
+  // A la 0007 le falta el nº de reserva del hotel
+  const d = (await travel.detail(adm, 7)).value;
+  assert.deepEqual([d.state.key, d.canClose, d.editable], ['por_cerrar', true, true]);
+  assert.deepEqual(d.checks.map((c) => [c.key, c.ok]), [['servicios', true], ['terminado', true], ['pasajeros', true], ['localizadores', false]]);
+  assert.deepEqual(d.checks.at(-1).missing, ['NH Collection Gran Hotel de Zaragoza']);
+  const no = await travel.close(adm, 7);
+  assert.equal(no.code, 'conflict');
+  assert.match(no.message, /faltan localizadores \(NH Collection Gran Hotel de Zaragoza\)/);
+  // Eventos no cierra
+  assert.equal((await travel.close(as('eventos'), 7)).code, 'forbidden');
+  assert.equal((await travel.detail(as('eventos'), 7)).value.canClose, false);
+  // Con el localizador, se cierra
+  db.raw.exec("UPDATE bt_lines SET locator = 'NH-55102' WHERE id = 15");
+  assert.ok((await travel.close(adm, 7)).ok);
+  const closed = db.one('SELECT closed_at, closed_by FROM bt_bookings WHERE id = 7');
+  assert.ok(closed.closed_at && closed.closed_by === db.one("SELECT id FROM users WHERE email = 'tania@example.com'").id);
+  assert.equal(db.one("SELECT summary FROM change_log WHERE entity = 'bt_booking' AND entity_id = 7 ORDER BY id DESC LIMIT 1").summary, 'Reserva cerrada');
+  const after = (await travel.detail(adm, 7)).value;
+  assert.deepEqual([after.state.key, after.editable, after.checks], ['cerrada', false, []]);
+  // Cerrada: no se cambia, no se cancela y no se vuelve a cerrar
+  assert.equal((await travel.addPassenger(adm, 7, { first_name: 'X', last_name: 'Y' })).code, 'conflict');
+  assert.equal((await travel.setStatus(adm, 7, 'cancelada')).code, 'conflict');
+  assert.equal((await travel.close(adm, 7)).code, 'conflict');
+  // Reabrir: sólo con el permiso; vuelve a «por cerrar»
+  assert.equal((await travel.reopenClosed(as('eventos'), 7)).code, 'forbidden');
+  assert.ok((await travel.reopenClosed(as('jefes'), 7)).ok);
+  assert.equal(db.one('SELECT closed_at FROM bt_bookings WHERE id = 7').closed_at, null);
+  assert.equal((await travel.list(adm, { view: 'cerrar' })).value.total, 1);
+  // Un viaje que aún no ha terminado no se cierra
+  assert.match((await travel.close(adm, 1)).message, /termina el 20\/11\/2026/);
+  // Una cancelada, tampoco
+  assert.equal((await travel.close(adm, 5)).code, 'conflict');
 });

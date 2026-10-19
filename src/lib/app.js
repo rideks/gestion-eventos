@@ -92,6 +92,7 @@ export const FLASH = {
   creada: 'Reserva creada: añade sus pasajeros y servicios',
   cancelada: 'Reserva cancelada: se conserva y se puede reabrir',
   reabierta: 'Reserva reabierta',
+  cerrada: 'Reserva cerrada: queda en sólo lectura',
   pasajero: 'Pasajero añadido',
   servicio: 'Servicio añadido',
   quitado: 'Quitado de la reserva',

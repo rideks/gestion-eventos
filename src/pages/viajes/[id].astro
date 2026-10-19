@@ -11,7 +11,7 @@ import PassengerFields from '../../components/PassengerFields.astro';
 import TravelLineFields from '../../components/TravelLineFields.astro';
 import { parseId, readForm, can } from '../../lib/app.js';
 import { formToObject } from '../../lib/validate.js';
-import { LINE_KINDS, KIND_KEYS, BOOKING_STATUS, personName } from '../../lib/travel.js';
+import { LINE_KINDS, KIND_KEYS, personName } from '../../lib/travel.js';
 import { pctText } from '../../lib/vat.js';
 import { eur } from '../../lib/money.js';
 import { formatDate, formatRange, formatStamp } from '../../lib/dates.js';
@@ -39,6 +39,8 @@ if (id && Astro.request.method === 'POST') {
     save: [() => travel.update(ctx, id, input), `${self}?ok=guardado`, 'datos'],
     cancel: [() => travel.setStatus(ctx, id, 'cancelada'), `${self}?ok=cancelada`],
     reopen: [() => travel.setStatus(ctx, id, 'abierta'), `${self}?ok=reabierta`],
+    close: [() => travel.close(ctx, id), `${self}?ok=cerrada#estado`],
+    reopen_closed: [() => travel.reopenClosed(ctx, id), `${self}?ok=reabierta#estado`],
     delete: [() => travel.remove(ctx, id), '/viajes?ok=borrado'],
     passenger_add: [() => travel.addPassenger(ctx, id, input), `${self}?ok=pasajero#pasajeros`, 'pasajero:new'],
     passenger_save: [() => travel.updatePassenger(ctx, id, pid, input), `${self}?ok=guardado#pasajeros`, `pasajero:${pid}`],
@@ -59,7 +61,8 @@ if (id && Astro.request.method === 'POST') {
 
 const f = id ? await travel.detail(ctx, id) : { ok: false, code: 'not_found' };
 if (!f.ok) return failure(Astro, f, '/viajes');
-const { booking: b, passengers, lines, summary, dates, history, rates, options, types, clients, known, fee, editable } = f.value;
+const { booking: b, passengers, lines, summary, dates, state, checks, canClose, history, rates, options, types, clients, known, fee, editable } = f.value;
+const ready = checks.length > 0 && checks.every((c) => c.ok);
 const clientLabel = [b.client_title, b.client_name].filter(Boolean).join(' ');
 const seesClient = can(Astro.locals.user, 'clientes');
 const nameOf = new Map(passengers.map((p) => [p.id, personName(p)]));
@@ -85,7 +88,7 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
     <div>
       <h1>{b.reference}{b.title && <span class="muted"> · {b.title}</span>}</h1>
       <p class="exp-meta">
-        {b.status === 'cancelada' && <span class="pill pill-danger">Cancelada</span>}
+        <span class={`pill pill-${state.tone}`}>{state.label}</span>
         <span><Icon name="building" size={16} />{seesClient ? <a href={`/clientes/${b.client_id}`}>{clientLabel}</a> : clientLabel}</span>
         {dates.from && <span><Icon name="calendar-days" size={16} />{formatRange(dates.from, dates.to)}</span>}
         <span><Icon name="users" size={16} />{plural(passengers.length, 'pasajero', 'pasajeros')}</span>
@@ -93,6 +96,14 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
       </p>
     </div>
   </div>
+
+  {state.key === 'por_cerrar' && (
+    <a class="banner-link" href="#estado">
+      <Icon name="triangle-alert" />
+      <span><strong>El viaje ya se hizo: falta cerrar la reserva</strong> · {ready ? 'está todo, se puede cerrar' : checks.filter((c) => !c.ok).map((c) => c.label.toLowerCase()).join(' · ')}</span>
+      <Icon name="chevron-right" class="chev" />
+    </a>
+  )}
 
   <div class:list={['kpis', { 'is-3': !fee }]}>
     <div class="kpi"><span>Total sin IVA</span><b class="money">{eur(summary.base)}</b><small>{plural(summary.count, 'servicio', 'servicios')}</small></div>
@@ -249,15 +260,36 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
     </section>
   )}
 
-  <section class="card mt">
-    <div class="sec-head"><h2>Estado de la reserva: {BOOKING_STATUS[b.status]}</h2></div>
-    <form method="post" class="actions-inline">
-      {b.status === 'abierta'
+  <section class="card mt" id="estado">
+    <div class="sec-head"><h2>Estado de la reserva: {state.label}</h2></div>
+    {b.closed_at && <p class="muted">Cerrada el {formatStamp(b.closed_at, { year: true })}{b.closed_by_name && ` por ${b.closed_by_name}`}. No se puede cambiar hasta reabrirla.</p>}
+    {checks.length > 0 && (
+      <>
+        <h3>Antes de cerrar</h3>
+        <ul class="checks">
+          {checks.map((c) => (
+            <li class={c.ok ? 'is-ok' : 'is-ko'}>
+              <Icon name={c.ok ? 'circle-check' : 'circle-alert'} /> {c.label}{!c.ok && c.missing?.length ? `: ${c.missing.join(', ')}` : ''}
+            </li>
+          ))}
+        </ul>
+      </>
+    )}
+    <form method="post" class="actions-inline mt">
+      {editable && canClose && (
+        <button class:list={['btn', ready ? 'btn-primary' : 'btn-ghost']} type="submit" name="intent" value="close" disabled={!ready}
+          title={ready ? undefined : 'Se cierra cuando esté todo en verde'} data-confirm={`¿Cerrar la reserva ${b.reference}? Quedará en sólo lectura (se puede reabrir).`}>
+          <Icon name="lock" size={16} /> Cerrar reserva
+        </button>
+      )}
+      {b.closed_at && canClose && <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen_closed"><Icon name="lock-open" size={16} /> Reabrir reserva</button>}
+      {!b.closed_at && (b.status === 'abierta'
         ? <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="cancel" data-confirm={`¿Cancelar la reserva ${b.reference}? Se conserva y se puede reabrir.`}><Icon name="ban" size={16} /> Cancelar reserva</button>
-        : <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen"><Icon name="rotate-ccw" size={16} /> Reabrir reserva</button>}
+        : <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen"><Icon name="rotate-ccw" size={16} /> Reabrir reserva</button>)}
       {!passengers.length && !lines.length && (
         <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar la reserva ${b.reference}? Está vacía.`}><Icon name="trash-2" size={16} /> Borrar reserva</button>
       )}
     </form>
+    {editable && !canClose && ready && <p class="muted mt">Está todo: Administración la cerrará.</p>}
   </section>
 </App>

@@ -30,6 +30,7 @@ const { rows, total, view, counts, all, due, types } = r.value;
 const info = pageInfo(total, state);
 if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
 const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
 const filters = [{ ...def.filters[0], options: types.map((t) => [t, t]) }];
 const q = state.q;
 ---
@@ -57,19 +58,20 @@ const q = state.q;
     <a class="kpi" href="?ver=vigentes"><span>En vigor</span><b>{counts.vigentes}</b><small>{plural(all, 'contrato', 'contratos')} en total</small></a>
   </div>
 
-  <TableTools def={def} state={state} filters={filters} url={Astro.url} keep={['ver']} />
-
-  <nav class="x-tabs mt" aria-label="Ver contratos">
-    {Object.entries(CONTRACT_VIEWS).map(([k, x]) => (
-      <a href={hrefWith(Astro.url, { ver: k })} aria-current={k === view ? 'page' : undefined}>
-        {x.label}{counts[k] > 0 && <small class:list={{ 'is-alert': k === 'atencion' }}>{counts[k]}</small>}
-      </a>
-    ))}
-  </nav>
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} keep={['ver']}>
+    <nav class="x-tabs mt" aria-label="Ver contratos" slot="tabs">
+      {Object.entries(CONTRACT_VIEWS).map(([k, x]) => (
+        <a href={hrefWith(Astro.url, { ver: k })} aria-current={k === view ? 'page' : undefined}>
+          {x.label}{counts[k] > 0 && <small class:list={{ 'is-alert': k === 'atencion' }}>{counts[k]}</small>}
+        </a>
+      ))}
+    </nav>
+    {plural(total, 'contrato', 'contratos')}{isFiltered(state) && ' con esos filtros'}
+  </TableTools>
 
   {rows.length ? (
     <div class="table-scroll mt">
-      <table class="dtable contracts">
+      <table class="dtable contracts is-listing">
         <thead>
           <tr>
             {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
@@ -77,17 +79,17 @@ const q = state.q;
         </thead>
         <tbody>
           {rows.map((c) => (
-            <tr class:list={{ 'is-planned': !c.state.attention && c.state.key !== 'vigente' }}>
+            <tr class:list={{ 'is-planned': !c.state.attention && c.state.key !== 'vigente' }} data-href={`/proveedores/${c.supplier_id}/contratos/${c.id}`}>
               <td><a href={`/proveedores/${c.supplier_id}#contratos`}><strong>{c.supplier_name}</strong></a>{!has('tipo') && !has('ciudad') && (c.supplier_type || c.supplier_city) && <div class="muted small">{[c.supplier_type, c.supplier_city].filter(Boolean).join(' · ')}</div>}</td>
-              {has('contrato') && <td><a href={`/proveedores/${c.supplier_id}/contratos/${c.id}`}>{c.title}</a></td>}
-              {has('tipo') && <td>{c.supplier_type ?? '—'}</td>}
-              {has('ciudad') && <td>{c.supplier_city ?? '—'}</td>}
-              {has('firma') && <td>{c.signed_on ? formatDate(c.signed_on) : '—'}</td>}
-              {has('inicio') && <td>{formatDate(c.starts_on)}</td>}
-              {has('fin') && <td>{c.ends_on ? formatDate(c.ends_on) : 'Indefinido'}</td>}
-              {has('estado') && <td><Pill state={c.state} /><div class:list={["small", { neg: c.state.key === "caducado" }]}>{c.state.text}</div></td>}
-              {has('aviso') && <td>{c.alert_days ? `${c.alert_days} días` : '—'}</td>}
-              {has('documento') && <td>{c.file_id ? <a href={fileUrl({ file_id: c.file_id, file_name: c.file_name })} target="_blank" rel="noopener">{c.file_name ?? 'Documento'}</a> : '—'}</td>}
+              {has('contrato') && <td data-label={L.contrato}><a href={`/proveedores/${c.supplier_id}/contratos/${c.id}`}>{c.title}</a></td>}
+              {has('tipo') && <td data-label={L.tipo}>{c.supplier_type ?? '—'}</td>}
+              {has('ciudad') && <td data-label={L.ciudad}>{c.supplier_city ?? '—'}</td>}
+              {has('firma') && <td data-label={L.firma}>{c.signed_on ? formatDate(c.signed_on) : '—'}</td>}
+              {has('inicio') && <td data-label={L.inicio}>{formatDate(c.starts_on)}</td>}
+              {has('fin') && <td data-label={L.fin}>{c.ends_on ? formatDate(c.ends_on) : 'Indefinido'}</td>}
+              {has('estado') && <td data-label={L.estado}><Pill state={c.state} /><div class:list={["small", { neg: c.state.key === "caducado" }]}>{c.state.text}</div></td>}
+              {has('aviso') && <td data-label={L.aviso}>{c.alert_days ? `${c.alert_days} días` : '—'}</td>}
+              {has('documento') && <td data-label={L.documento}>{c.file_id ? <a href={fileUrl({ file_id: c.file_id, file_name: c.file_name })} target="_blank" rel="noopener">{c.file_name ?? 'Documento'}</a> : '—'}</td>}
             </tr>
           ))}
         </tbody>

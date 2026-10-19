@@ -26,8 +26,8 @@ DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
 -- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009, 0010 y 0011)
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.value FROM roles r, json_each(CASE r.key
-  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
-  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.close"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.close"]'
   WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
   WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create","clientes","clientes.create","viajes"]'
   WHEN 'tecnico' THEN '["users"]'
@@ -333,7 +333,8 @@ INSERT INTO change_log (entity, entity_id, user_id, action, summary, changes, at
 SELECT 'client', id, (SELECT id FROM users WHERE email = 'direccion@example.com'), 'condiciones', 'Fee: 8 % → 10 %',
        '{"fee_bp":[800,1000]}', '2026-09-15T10:30:00Z' FROM clients WHERE name = 'BMW Ibérica';
 
--- ── Business Travel: reservas de ejemplo (ROCHE con tres reservas, BMW con un viaje a Múnich y una cancelada) ──
+-- ── Business Travel: reservas de ejemplo (ROCHE con tres reservas, BMW con un viaje a Múnich, una cancelada y
+--    dos de ELECNOR ya viajadas: una cerrada y otra por cerrar, a la que le falta el localizador del hotel) ──
 INSERT INTO suppliers (name, type_id, city, created_by) VALUES
   ('Iryo', (SELECT id FROM supplier_types WHERE name = 'Tren'), NULL, 1),
   ('Restel', (SELECT id FROM supplier_types WHERE name = 'Central de reservas'), NULL, 1),
@@ -347,7 +348,10 @@ INSERT INTO bt_bookings (id, reference, client_id, title, status, notes, created
   (2, 'BT-2026-0002', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Reunión de expertos · Sevilla', 'abierta', NULL, 2, '2026-09-28T09:30:00Z', '2026-09-28T09:30:00Z'),
   (3, 'BT-2026-0003', (SELECT id FROM clients WHERE name = 'BMW Ibérica'), 'Visita a la planta de Múnich', 'abierta', NULL, 2, '2026-10-02T12:00:00Z', '2026-10-02T12:00:00Z'),
   (4, 'BT-2026-0004', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Curso de formación · Valencia', 'abierta', NULL, 2, '2026-10-08T16:00:00Z', '2026-10-08T16:00:00Z'),
-  (5, 'BT-2026-0005', (SELECT id FROM clients WHERE name = 'GLENMARK'), 'Presentación a delegados · Bilbao', 'cancelada', 'El cliente aplazó la presentación.', 2, '2026-10-10T11:00:00Z', '2026-10-10T11:00:00Z');
+  (5, 'BT-2026-0005', (SELECT id FROM clients WHERE name = 'GLENMARK'), 'Presentación a delegados · Bilbao', 'cancelada', 'El cliente aplazó la presentación.', 2, '2026-10-10T11:00:00Z', '2026-10-10T11:00:00Z'),
+  (6, 'BT-2026-0006', (SELECT id FROM clients WHERE name = 'ELECNOR'), 'Visita a la obra de Toledo', 'abierta', NULL, 2, '2026-10-11T09:00:00Z', '2026-10-16T10:00:00Z'),
+  (7, 'BT-2026-0007', (SELECT id FROM clients WHERE name = 'ELECNOR'), 'Reunión con proveedores · Zaragoza', 'abierta', NULL, 2, '2026-10-12T15:30:00Z', '2026-10-12T15:30:00Z');
+UPDATE bt_bookings SET closed_at = '2026-10-16T10:00:00Z', closed_by = (SELECT id FROM users WHERE email = 'tania@example.com') WHERE id = 6;
 INSERT INTO bt_passengers (id, booking_id, title, first_name, last_name, email, phone, notes) VALUES
   (1, 1, 'Dra.', 'María', 'López Serrano', 'maria.lopez@example.com', '+34 600 100 001', NULL),
   (2, 1, 'Dr.', 'Carlos', 'García Ruiz', 'carlos.garcia@example.com', '+34 600 100 002', 'Tarjeta Iryo Plus 7781'),
@@ -355,7 +359,10 @@ INSERT INTO bt_passengers (id, booking_id, title, first_name, last_name, email, 
   (4, 3, NULL, 'Javier', 'Martín Gómez', 'javier.martin@example.com', NULL, NULL),
   (5, 3, NULL, 'Lucía', 'Fernández Pardo', NULL, NULL, 'Sin email: el bono se le entrega en mano'),
   (6, 4, 'Dr.', 'Carlos', 'García Ruiz', 'carlos.garcia@example.com', '+34 600 100 002', NULL),
-  (7, 5, NULL, 'Ana', 'Torres Vega', 'ana.torres@example.com', NULL, NULL);
+  (7, 5, NULL, 'Ana', 'Torres Vega', 'ana.torres@example.com', NULL, NULL),
+  (8, 6, NULL, 'Pedro', 'Sanz Ortega', 'pedro.sanz@example.com', '+34 600 200 001', NULL),
+  (9, 7, NULL, 'Pedro', 'Sanz Ortega', 'pedro.sanz@example.com', '+34 600 200 001', NULL),
+  (10, 7, NULL, 'Elena', 'Ruiz Campos', 'elena.ruiz@example.com', NULL, NULL);
 INSERT INTO bt_lines (id, booking_id, kind, supplier_id, supplier, description, start_date, end_date, locator, issued_on, details, base_cents, vat_bp, total_cents, fee_cents, pvp_cents, created_by) VALUES
   (1, 1, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iryo'), 'Iryo', 'Barcelona Sants → Madrid Atocha · ida y vuelta', '2026-11-18', '2026-11-20', 'IRY7Q2K', '2026-09-21', 'Clase Singular, plazas 5A y 5B', 22364, 1000, 24600, 1500, 26100, 2),
   (2, 1, 'alojamiento', (SELECT id FROM suppliers WHERE name = 'Restel'), 'Restel', 'NH Collection Madrid Eurobuilding', '2026-11-18', '2026-11-20', 'RST-449120', NULL, 'Dos habitaciones dobles de uso individual, desayuno incluido', 72000, 1000, 79200, 4000, 83200, 2),
@@ -368,7 +375,10 @@ INSERT INTO bt_lines (id, booking_id, kind, supplier_id, supplier, description, 
   (9, 3, 'alojamiento', (SELECT id FROM suppliers WHERE name = 'Hoteles NH'), 'Hoteles NH', 'NH Collection München Bavaria', '2026-11-04', '2026-11-06', 'NH-77120', NULL, NULL, 62000, 0, 62000, 3000, 65000, 2),
   (10, 4, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iryo'), 'Iryo', 'Madrid Atocha → Valencia Joaquín Sorolla', '2026-11-25', '2026-11-26', 'IRY4M8D', '2026-10-09', NULL, 8000, 1000, 8800, 1500, 10300, 2),
   (11, 4, 'inscripcion', NULL, NULL, 'Curso de actualización en oncología', '2026-11-25', '2026-11-26', NULL, NULL, NULL, 30000, 2100, 36300, 1000, 37300, 2),
-  (12, 5, 'transporte', (SELECT id FROM suppliers WHERE name = 'Ryanair'), 'Ryanair', 'Madrid → Bilbao', '2026-12-02', NULL, NULL, NULL, NULL, 8909, 1000, 9800, 1500, 11300, 2);
+  (12, 5, 'transporte', (SELECT id FROM suppliers WHERE name = 'Ryanair'), 'Ryanair', 'Madrid → Bilbao', '2026-12-02', NULL, NULL, NULL, NULL, 8909, 1000, 9800, 1500, 11300, 2),
+  (13, 6, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iryo'), 'Iryo', 'Madrid Atocha → Toledo · ida y vuelta', '2026-10-13', '2026-10-13', 'IRY2T5L', '2026-10-11', NULL, 3000, 1000, 3300, 1000, 4300, 2),
+  (14, 7, 'transporte', (SELECT id FROM suppliers WHERE name = 'Iberia'), 'Iberia', 'Madrid → Zaragoza · IB 8740 / IB 8741', '2026-10-14', '2026-10-15', 'IB5ZR8', '2026-10-12', NULL, 26000, 1000, 28600, 2000, 30600, 2),
+  (15, 7, 'alojamiento', (SELECT id FROM suppliers WHERE name = 'Hoteles NH'), 'Hoteles NH', 'NH Collection Gran Hotel de Zaragoza', '2026-10-14', '2026-10-15', NULL, NULL, 'Dos habitaciones individuales', 18000, 1000, 19800, 2000, 21800, 2);
 INSERT INTO bt_line_passengers (line_id, passenger_id) VALUES
   (1, 1),
   (1, 2),
@@ -386,8 +396,14 @@ INSERT INTO bt_line_passengers (line_id, passenger_id) VALUES
   (9, 5),
   (10, 6),
   (11, 6),
-  (12, 7);
-INSERT INTO counters (key, value) VALUES ('bt_booking:2026', 5);
+  (12, 7),
+  (13, 8),
+  (14, 9),
+  (14, 10),
+  (15, 9),
+  (15, 10);
+INSERT INTO counters (key, value) VALUES ('bt_booking:2026', 7);
 INSERT INTO change_log (entity, entity_id, user_id, action, summary, at)
 SELECT 'bt_booking', b.id, 2, 'alta', 'Alta de la reserva para ' || c.name, b.created_at FROM bt_bookings b JOIN clients c ON c.id = b.client_id;
-INSERT INTO change_log (entity, entity_id, user_id, action, summary, at) VALUES ('bt_booking', 5, 2, 'estado', 'Reserva cancelada', '2026-10-14T09:00:00Z');
+INSERT INTO change_log (entity, entity_id, user_id, action, summary, at) VALUES ('bt_booking', 5, 2, 'estado', 'Reserva cancelada', '2026-10-14T09:00:00Z'),
+  ('bt_booking', 6, (SELECT id FROM users WHERE email = 'tania@example.com'), 'estado', 'Reserva cerrada', '2026-10-16T10:00:00Z');

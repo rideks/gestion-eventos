@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLineAmounts, pvpOf, bookingSummary, bookingDates, bookingReference, personName, LINE_KINDS } from '../src/lib/travel.js';
+import { parseLineAmounts, pvpOf, bookingSummary, bookingDates, bookingReference, personName, LINE_KINDS, bookingState, closeChecks } from '../src/lib/travel.js';
 import { btLineSchema, BtPassengerSchema, ClientSchema, validate } from '../src/lib/validate.js';
 import { sectionPermission, normalizePermissions } from '../src/lib/permissions.js';
 
@@ -91,4 +91,29 @@ test('IVA propuesto por bloque (si está en la lista de Ajustes)', async () => {
   assert.equal(suggestedVat('inscripcion', rates, 2100), 2100);
   assert.equal(suggestedVat('otros', rates, 2100), 2100);
   assert.equal(suggestedVat('transporte', [{ rate_bp: 2100 }], 2100), 2100); // sin el 10 % en la lista
+});
+
+test('estado de una reserva: cancelada, cerrada, sin servicios, por cerrar (viaje hecho), de viaje o en curso', () => {
+  const s = (b) => bookingState({ status: 'abierta', closed_at: null, lines: 2, first_date: '2026-11-04', last_date: '2026-11-06', ...b }, '2026-11-05').key;
+  assert.equal(s({ status: 'cancelada' }), 'cancelada');
+  assert.equal(s({ closed_at: '2026-11-10T10:00:00Z' }), 'cerrada');
+  assert.equal(s({ lines: 0, first_date: null, last_date: null }), 'vacia');
+  assert.equal(s({ first_date: '2026-11-01', last_date: '2026-11-04' }), 'por_cerrar');
+  assert.equal(s({}), 'de_viaje');
+  assert.equal(s({ first_date: '2026-11-20', last_date: '2026-11-21' }), 'en_curso');
+  assert.equal(s({ first_date: null, last_date: null }), 'en_curso'); // servicios sin fechas: nunca «por cerrar»
+});
+
+test('antes de cerrar: viaje terminado, pasajeros en cada servicio y localizadores (en «otros» no hace falta)', () => {
+  const line = (l) => ({ kind: 'transporte', locator: 'ABC', start_date: '2026-10-01', end_date: '2026-10-02', passenger_ids: [1], ...l });
+  const ok = (b, today = '2026-10-19') => Object.fromEntries(closeChecks(b, today).map((c) => [c.key, c.ok]));
+  const pax = [{ id: 1 }];
+  assert.deepEqual(ok({ passengers: pax, lines: [line({}), line({ kind: 'otros', locator: null, description: 'Taxi' })] }),
+    { servicios: true, terminado: true, pasajeros: true, localizadores: true });
+  assert.deepEqual(ok({ passengers: pax, lines: [line({})] }, '2026-10-02'), { servicios: true, terminado: false, pasajeros: true, localizadores: true });
+  assert.deepEqual(ok({ passengers: [], lines: [] }), { servicios: false, terminado: false, pasajeros: false, localizadores: true });
+  const c = closeChecks({ passengers: pax, lines: [line({ kind: 'alojamiento', locator: ' ', description: 'Hotel X' }), line({ passenger_ids: [], description: 'Vuelo Y' })] }, '2026-10-19');
+  assert.deepEqual(c.find((x) => x.key === 'localizadores').missing, ['Hotel X']);
+  assert.deepEqual(c.find((x) => x.key === 'pasajeros').missing, ['Vuelo Y']);
+  assert.equal(c.find((x) => x.key === 'terminado').label, 'El viaje terminó el 02/10/2026');
 });

@@ -25,37 +25,55 @@ const CLIENT = 'c.name AS client_name, c.title AS client_title, c.kind AS client
 // Columna de la tabla (src/lib/tables.js) → expresión para ordenar
 const SORT = {
   reserva: 'reference', cliente: 'client_name COLLATE NOCASE', fechas: 'first_date', pasajeros: 'passengers', servicios: 'lines',
-  base: 'base_cents', total: 'total_cents', fee: 'fee_cents', pvp: 'pvp_cents', estado: 'status', creada: 'created_at',
+  base: 'base_cents', total: 'total_cents', fee: 'fee_cents', pvp: 'pvp_cents', creada: 'created_at',
+  // en curso → por cerrar → cerrada → cancelada (?4 = hoy)
+  estado: "CASE WHEN status = 'cancelada' THEN 4 WHEN closed_at IS NOT NULL THEN 3 WHEN last_date < ?4 THEN 2 ELSE 1 END",
   creador: 'created_by_name COLLATE NOCASE',
+};
+
+// Las pestañas (src/lib/travel.js → BOOKING_TABS) sobre la consulta de la lista: ?4 = hoy, ?5 = quien mira
+const TABS = {
+  curso: "status = 'abierta' AND closed_at IS NULL AND (last_date IS NULL OR last_date >= ?4)",
+  cerrar: "status = 'abierta' AND closed_at IS NULL AND last_date < ?4",
+  mias: "status = 'abierta' AND closed_at IS NULL AND created_by = ?5",
+  cerradas: "status = 'abierta' AND closed_at IS NOT NULL",
+  canceladas: "status = 'cancelada'",
+  todas: '1 = 1',
 };
 
 /**
  * Reservas por páginas. q: referencia, cliente, descripción, pasajero, proveedor o localizador.
- * month: 'YYYY-MM' (por la fecha de sus servicios: alguno empieza ese mes). Devuelve la página, cuántas hay con esos
- * filtros y la suma de sus importes (sin las canceladas).
+ * month: 'YYYY-MM' (por la fecha de sus servicios: alguno empieza ese mes). view: la pestaña (en curso, por cerrar,
+ * mías, cerradas, canceladas o todas). Devuelve la página, cuántas hay en cada pestaña con esos filtros y la suma
+ * de los importes de la pestaña (sin las canceladas).
  * @param {Db} db
- * @param {{ q?: string, status?: string, clientId?: number | null, month?: string, sort?: string, dir?: 'asc' | 'desc', limit?: number, offset?: number }} filters
- * @returns {Promise<{ rows: any[], total: number, sums: { base_cents: number, total_cents: number, fee_cents: number, pvp_cents: number } }>}
+ * @param {{ q?: string, clientId?: number | null, month?: string, view?: string, today?: string, userId?: number | null, sort?: string, dir?: 'asc' | 'desc', limit?: number, offset?: number }} filters
+ * @returns {Promise<{ rows: any[], total: number, counts: Record<string, number>, sums: { base_cents: number, total_cents: number, fee_cents: number, pvp_cents: number } }>}
  */
-export async function list(db, { q = '', status = '', clientId = null, month = '', sort = 'reserva', dir = 'desc', limit = 25, offset = 0 } = {}) {
+export async function list(db, { q = '', clientId = null, month = '', view = 'todas', today = '', userId = null, sort = 'reserva', dir = 'desc', limit = 25, offset = 0 } = {}) {
   const base = `
-    SELECT b.id, b.reference, b.client_id, b.title, b.status, b.created_at, u.name AS created_by_name, ${CLIENT}, ${TOTALS}
+    SELECT b.id, b.reference, b.client_id, b.title, b.status, b.closed_at, b.created_by, b.created_at, u.name AS created_by_name, ${CLIENT}, ${TOTALS},
+           (SELECT COUNT(*) FROM bt_lines l WHERE l.booking_id = b.id AND l.kind IN ('transporte', 'alojamiento', 'inscripcion')
+               AND TRIM(COALESCE(l.locator, '')) = '') AS missing_locators
       FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by
      WHERE (?1 = '%%' OR b.reference LIKE ?1 OR b.title LIKE ?1 OR c.name LIKE ?1
             OR EXISTS (SELECT 1 FROM bt_passengers p WHERE p.booking_id = b.id AND (p.first_name || ' ' || p.last_name) LIKE ?1)
             OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND (l.supplier LIKE ?1 OR l.locator LIKE ?1 OR l.description LIKE ?1)))
-       AND (?2 = '' OR b.status = ?2)
-       AND (?3 IS NULL OR b.client_id = ?3)
-       AND (?4 = '' OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND substr(l.start_date, 1, 7) = ?4))`;
-  const args = [likeTerm(q), status, clientId, month];
-  const live = "CASE WHEN status <> 'cancelada' THEN";
+       AND (?2 IS NULL OR b.client_id = ?2)
+       AND (?3 = '' OR EXISTS (SELECT 1 FROM bt_lines l WHERE l.booking_id = b.id AND substr(l.start_date, 1, 7) = ?3))`;
+  const tab = TABS[/** @type {keyof typeof TABS} */ (view)] ?? TABS.todas;
+  const args = [likeTerm(q), clientId, month, today, userId];
+  const live = `CASE WHEN (${tab}) AND status <> 'cancelada' THEN`;
   const [count, page] = await db.batch([
-    db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(${live} base_cents END), 0) AS base_cents, COALESCE(SUM(${live} total_cents END), 0) AS total_cents,
-                       COALESCE(SUM(${live} fee_cents END), 0) AS fee_cents, COALESCE(SUM(${live} pvp_cents END), 0) AS pvp_cents FROM (${base})`).bind(...args),
-    db.prepare(`SELECT * FROM (${base}) ORDER BY ${orderBy(SORT, sort, dir, 'reserva', 'id')} LIMIT ?5 OFFSET ?6`).bind(...args, limit, offset),
+    db.prepare(`SELECT ${Object.entries(TABS).map(([k, w]) => `COALESCE(SUM(CASE WHEN ${w} THEN 1 ELSE 0 END), 0) AS ${k}`).join(', ')},
+                       COALESCE(SUM(CASE WHEN ${tab} THEN 1 ELSE 0 END), 0) AS n,
+                       COALESCE(SUM(${live} base_cents END), 0) AS base_cents, COALESCE(SUM(${live} total_cents END), 0) AS total_cents,
+                       COALESCE(SUM(${live} fee_cents END), 0) AS fee_cents, COALESCE(SUM(${live} pvp_cents END), 0) AS pvp_cents
+                  FROM (${base})`).bind(...args),
+    db.prepare(`SELECT * FROM (${base}) WHERE ${tab} ORDER BY ${orderBy(SORT, sort, dir, 'reserva', 'id')} LIMIT ?6 OFFSET ?7`).bind(...args, limit, offset),
   ]);
-  const { n, ...sums } = count.results[0];
-  return { rows: page.results, total: n, sums };
+  const { n, base_cents, total_cents, fee_cents, pvp_cents, ...counts } = count.results[0];
+  return { rows: page.results, total: n, counts, sums: { base_cents, total_cents, fee_cents, pvp_cents } };
 }
 
 /** Los clientes que tienen reservas (para el filtro) @param {Db} db */
@@ -74,8 +92,8 @@ export const forClient = (db, clientId) => list(db, { clientId, limit: 500 }).th
 export async function detail(db, id) {
   const [b, passengers, lines, links] = await db.batch([
     db.prepare(
-      `SELECT b.*, ${CLIENT}, c.email AS client_email, c.phone AS client_phone, u.name AS created_by_name
-         FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by
+      `SELECT b.*, ${CLIENT}, c.email AS client_email, c.phone AS client_phone, u.name AS created_by_name, k.name AS closed_by_name
+         FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by LEFT JOIN users k ON k.id = b.closed_by
         WHERE b.id = ?`,
     ).bind(id),
     db.prepare('SELECT * FROM bt_passengers WHERE booking_id = ? ORDER BY id').bind(id),
@@ -91,7 +109,7 @@ export async function detail(db, id) {
 }
 
 /** Lo justo para saber si existe y en qué estado está @param {Db} db @param {number} id */
-export const header = (db, id) => db.prepare('SELECT id, reference, client_id, title, status FROM bt_bookings WHERE id = ?').bind(id).first();
+export const header = (db, id) => db.prepare('SELECT id, reference, client_id, title, status, closed_at FROM bt_bookings WHERE id = ?').bind(id).first();
 
 /** Un servicio de esa reserva @param {Db} db @param {number} bookingId @param {number} id */
 export const line = (db, bookingId, id) => db.prepare('SELECT * FROM bt_lines WHERE id = ? AND booking_id = ?').bind(id, bookingId).first();
@@ -140,6 +158,10 @@ export const updateStmt = (db, id, d, at) => db.prepare('UPDATE bt_bookings SET 
 
 /** @param {Db} db @param {number} id @param {'abierta' | 'cancelada'} status @param {string} at */
 export const statusStmt = (db, id, status, at) => db.prepare('UPDATE bt_bookings SET status = ?, updated_at = ? WHERE id = ?').bind(status, at, id);
+
+/** Cerrar (userId y at) o reabrir una cerrada (null) @param {Db} db @param {number} id @param {number | null} userId @param {string | null} at @param {string} now */
+export const closeStmt = (db, id, userId, at, now) =>
+  db.prepare('UPDATE bt_bookings SET closed_at = ?, closed_by = ?, updated_at = ? WHERE id = ?').bind(at, userId, now, id);
 
 /** @param {Db} db @param {number} id @param {string} at */
 export const touchStmt = (db, id, at) => db.prepare('UPDATE bt_bookings SET updated_at = ? WHERE id = ?').bind(at, id);

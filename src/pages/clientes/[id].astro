@@ -204,7 +204,7 @@ const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
             <tbody>
               {bookings.map((r) => (
                 <tr class:list={{ 'is-planned': r.status === 'cancelada' }}>
-                  <td><a href={`/viajes/${r.id}`}><strong>{r.reference}</strong>{r.title && ` · ${r.title}`}</a>{r.status === 'cancelada' && <span class="pill pill-muted">Cancelada</span>}</td>
+                  <td><a href={`/viajes/${r.id}`}><strong>{r.reference}</strong>{r.title && ` · ${r.title}`}</a>{r.state.key !== 'en_curso' && <span class={`pill pill-${r.state.tone}`}>{r.state.label}</span>}</td>
                   <td>{r.first_date ? formatRange(r.first_date, r.last_date) : '—'}</td>
                   <td class="num">{r.passengers}</td>
                   <td class="num">{r.lines}</td>

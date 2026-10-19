@@ -112,6 +112,20 @@ El resumen de la reserva (total sin IVA, con IVA, fees y PVP) suma sus servicios
 un servicio con un importe, así que los pasajeros no duplican nada. Una reserva **cancelada** queda de sólo
 lectura (se puede reabrir); cada cambio queda en su historial.
 
+Estado de una reserva (como los expedientes):
+
+| Estado | Cuándo |
+|---|---|
+| En curso | Abierta y el viaje no ha terminado (o aún no tiene servicios: «Sin servicios»); «De viaje» mientras dura |
+| Viaje hecho · por cerrar | Ya pasó la fecha de su último servicio y nadie la ha cerrado |
+| Cerrada | Alguien con «Cerrar y reabrir reservas» la cerró. Sólo lectura; se puede reabrir |
+| Cancelada | Se canceló. Sólo lectura; se puede reabrir |
+
+Para **cerrar** una reserva, en su ficha («Antes de cerrar») tienen que estar en verde: tiene servicios, el viaje ha
+terminado, cada servicio tiene sus pasajeros y los servicios de transporte, alojamiento e inscripción tienen su
+localizador o número de reserva (en «Otros», p. ej. un taxi, no siempre lo hay). Cuando haya albaranes y facturas de
+Business Travel, pedirá además que esté facturada.
+
 ### Quién hace qué (roles y permisos)
 
 Cada persona tiene **un rol** y cada rol, una lista de **permisos** (lista blanca: lo que no tiene marcado, no
@@ -145,6 +159,7 @@ Reparto inicial:
 | Ver y cambiar los **datos fiscales, el fee, el acuerdo de pago y lo presupuestado** de cada cliente (y sus entidades) | ✔ | ✔ | ✔ | | |
 | Ver y gestionar las reservas de **Business Travel** (pasajeros, servicios, importes y PVP) | ✔ | ✔ | ✔ | ✔ | |
 | Ver y cambiar el **fee interno** de los viajes | ✔ | ✔ | ✔ | | |
+| **Cerrar y reabrir** reservas de Business Travel | ✔ | ✔ | | | |
 | Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
 | Usuarios, roles y permisos | | | | | ✔ |
 
@@ -168,7 +183,8 @@ Reparto inicial:
 - **Buscar** (cabecera): expedientes, clientes (también por NIF o por una de sus entidades), proveedores, nº de
   factura o proforma, facturas al cliente y PO. Un número de
   expediente exacto (`1287`) abre directamente el expediente.
-- **Expedientes**: pestañas En curso · Por cerrar · Por abrir · Míos · Cerrados, y buscador.
+- **Expedientes**: pestañas En curso (primero las solicitudes por abrir, marcadas «Por abrir») · Por cerrar · Míos ·
+  Cerrados · Cancelados · Todos, y buscador.
 - **Expediente**: Resumen (venta, coste, beneficio al cerrar, cobrado, próximos pasos, datos y actividad) ·
   Pagos · Cobros (PO y facturas) · Presupuesto (versiones) · Cierre. Cada próximo paso lleva a donde se resuelve:
   si es de una sola cosa (un pago vencido, una factura por emitir…), directamente a su ficha.
@@ -216,6 +232,10 @@ Reparto inicial:
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
 - **Tablas** (Clientes, Proveedores, Contratos y Business Travel), todas iguales:
+  - el buscador y los filtros en una línea; debajo, el resumen (cuántas hay y sus totales) con «Columnas» a la derecha;
+  - se pulsa en cualquier parte de la fila para abrir la ficha; la flecha del orden sólo sale en la columna ordenada
+    (en las demás, al pasar por encima);
+  - en el **móvil**, cada fila es una tarjeta con cada dato y su nombre (sin tener que desplazar la tabla de lado);
   - **por páginas** (25, 50 o 100 filas), con «26–50 de 143 clientes» y las páginas debajo;
   - un **buscador** por las propiedades de cada tabla (se dicen en el propio campo) y un **filtro por columna**
     (ciudad, tipo, estado, cliente, mes…) que se aplica al cambiarlo; «Quitar filtros» vuelve a todo;
@@ -226,8 +246,12 @@ Reparto inicial:
     quien no lo tiene, ni aunque se pidan a mano;
   - los **totales** de encima son de todo lo filtrado, no sólo de la página; la búsqueda, el orden y la página van
     en la dirección, así que se puede enviar el enlace a una búsqueda.
-- **Business Travel**: las reservas con buscador (referencia, cliente, pasajero, proveedor o localizador), cliente,
-  mes y estado, con sus pasajeros, servicios y PVP. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
+- **Business Travel**: como Expedientes, en pestañas **En curso · Por cerrar · Mías · Cerradas · Canceladas · Todas**
+  (con el número de las que están en curso, por cerrar y las tuyas), con buscador (referencia, cliente, pasajero,
+  proveedor o localizador), cliente y mes. Se ven en **tarjetas** (nº de reserva, descripción, cliente, fechas,
+  pasajeros, servicios, quién la creó, su estado, si le falta algún localizador y el PVP) o, con «Tabla», como tabla
+  con columnas a elegir; cada persona elige y se recuerda. «Por cerrar» va por número de reserva, de la más antigua a
+  la más reciente. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
   añaden los pasajeros (si ya viajaron con ese cliente, se eligen y se rellenan sus datos) y los servicios de cada
   bloque, con el resumen económico arriba y el historial abajo. La ficha del cliente enseña sus reservas.
 - **Clientes**: directorio con buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
@@ -303,6 +327,10 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 ```
 
 **Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Cerrar reservas de Business Travel (migración 0014)**: sólo añade dos columnas a `bt_bookings` (`closed_at` y
+`closed_by`: cerrada es una reserva abierta con fecha de cierre, así no se reconstruye la tabla) y el permiso
+«Cerrar y reabrir reservas» para los roles que cierran expedientes y ven Business Travel (Jefes y Administración).
 
 **Columnas de las tablas (migración 0013)**: sólo añade la tabla `user_prefs` (las columnas y filas por página que
 elige cada persona). Si se borra a alguien, se borran sus preferencias.
