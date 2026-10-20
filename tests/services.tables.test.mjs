@@ -77,13 +77,13 @@ test('contratos: pestañas con sus recuentos, filtro de tipo, orden y páginas',
 });
 
 test('Business Travel: páginas, filtro de cliente y totales sin las canceladas; sin fee para Eventos', { skip }, async () => {
-  const { as } = await setup();
+  const { db, as } = await setup();
   const adm = as('administracion');
   const all = (await travel.list(adm, { limit: 100 })).value;
   assert.equal(all.total, 7);
   assert.deepEqual(all.rows.map((r) => r.reference), ['BT-2026-0007', 'BT-2026-0006', 'BT-2026-0005', 'BT-2026-0004', 'BT-2026-0003', 'BT-2026-0002', 'BT-2026-0001']);
   assert.equal(all.sums.pvp_cents, 274050 + 45240 + 146400 + 47600 + 4300 + 52400); // sin la cancelada (11300)
-  const roche = (await travel.list(adm, { clientId: 2, order: 'pvp', limit: 2 })).value;
+  const roche = (await travel.list(adm, { clientId: db.one("SELECT id FROM clients WHERE name = 'ROCHE FARMA'").id, order: 'pvp', limit: 2 })).value;
   assert.deepEqual([roche.total, roche.rows.length, roche.rows[0].reference], [3, 2, 'BT-2026-0001']);
   assert.deepEqual(all.clients.map((c) => c.name), ['BMW Ibérica', 'ELECNOR', 'GLENMARK', 'ROCHE FARMA']);
   const ev = (await travel.list(as('eventos'), { order: 'fee' })).value;

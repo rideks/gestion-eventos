@@ -12,6 +12,7 @@ import { parseId, readForm, can } from '../../lib/app.js';
 import { CLIENT_STATUS, CLIENT_KINDS, formToObject } from '../../lib/validate.js';
 import { feeLabel, stageOf, STAGES } from '../../lib/clients.js';
 import { expLabel, expedienteState, plural } from '../../lib/finance.js';
+import { CANCEL_SIDES, CANCEL_REASONS, countsAsCancellation } from '../../lib/cancel.js';
 import { eur } from '../../lib/money.js';
 import { formatDate, formatRange, formatStamp } from '../../lib/dates.js';
 import { serviceContext, failure } from '../../services/context.js';
@@ -70,6 +71,13 @@ const pct = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)} %`;
 const hotels = suppliers.filter((s) => ['Hotel', 'Venue / espacio'].includes(s.type));
 const others2 = suppliers.filter((s) => !['Hotel', 'Venue / espacio'].includes(s.type));
 const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
+// Cancelaciones (expedientes y, con permiso, reservas), la más reciente primero, con quién y por qué
+const cancellations = [
+  ...expedientes.filter((e) => e.status === 'cancelado').map((e) => ({ ...e, at: e.closed_at, href: `/expedientes/${e.id}`, what: `${expLabel(e)} · ${e.name}` })),
+  ...(bookings ?? []).filter((r) => r.status === 'cancelada').map((r) => ({ ...r, at: r.cancelled_at, href: `/viajes/${r.id}`, what: `${r.reference}${r.title ? ` · ${r.title}` : ''}` })),
+].sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')));
+const cancelledExps = expedientes.filter((e) => e.status === 'cancelado' && countsAsCancellation(e.cancel_reason)).length;
+const decided = vol.exps + cancelledExps;
 ---
 <App title={c.name} section="clientes" error={error} fieldErrors={errors} notice={merged ? `Fusionado: los expedientes de «${merged}» ya están en esta ficha y su nombre queda como nombre anterior.` : null}>
   <div class="crumbs">
@@ -215,6 +223,32 @@ const phoneHref = c.phone ? `tel:${c.phone.replace(/[^\d+]/g, '')}` : null;
           </table>
         </div>
       ) : <p class="muted">Todavía no tiene reservas de Business Travel. <a href="/viajes?nueva">Crear una</a></p>}
+    </>
+  )}
+
+  {cancellations.length > 0 && (
+    <>
+      <h2 class="section-title" id="cancelaciones">Cancelaciones ({cancellations.length})
+        {decided > 0 && <span class="muted small"> · {plural(vol.exps, 'expediente aceptado', 'expedientes aceptados')} y {plural(cancelledExps, 'cancelado', 'cancelados')} ({Math.round((100 * cancelledExps) / decided)} % cancelados)</span>}
+      </h2>
+      <div class="table-scroll">
+        <table class="dtable">
+          <thead>
+            <tr><th scope="col">Cancelado</th><th scope="col">Expediente o reserva</th><th scope="col">Quién</th><th scope="col">Motivo</th><th scope="col">Comentario</th></tr>
+          </thead>
+          <tbody>
+            {cancellations.map((x) => (
+              <tr>
+                <td>{x.at ? formatDate(x.at.slice(0, 10)) : '—'}</td>
+                <td><a href={x.href}>{x.what}</a></td>
+                <td>{CANCEL_SIDES[x.cancel_by] ?? '—'}</td>
+                <td>{x.cancel_reason ? CANCEL_REASONS[x.cancel_reason] ?? x.cancel_reason : <span class="muted">Sin motivo apuntado</span>}</td>
+                <td class="msg-body">{x.cancel_notes ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   )}
 

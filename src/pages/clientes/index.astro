@@ -127,7 +127,10 @@ const filters = [
               {has('email') && <td data-label={L.email}>{r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : '—'}</td>}
               {has('telefono') && <td data-label={L.telefono}>{r.phone ?? '—'}</td>}
               {has('expedientes') && <td data-label={L.expedientes} class="num">{r.exps}</td>}
+              {has('cancelados') && <td data-label={L.cancelados} class:list={['num', { neg: r.cancelled > 0 }]}>{r.cancelled}</td>}
+              {has('tasa') && <td data-label={L.tasa} class="num">{r.exps + r.cancelled ? `${Math.round((100 * r.cancelled) / (r.exps + r.cancelled))} %` : '—'}</td>}
               {has('viajes') && <td data-label={L.viajes} class="num">{r.bookings}</td>}
+              {has('viajes_canceladas') && <td data-label={L.viajes_canceladas} class="num">{r.bookings_cancelled}</td>}
               {has('proximo') && <td data-label={L.proximo}>{r.next_date ? formatDate(r.next_date) : '—'}</td>}
               {has('uso') && <td data-label={L.uso}>{r.last_date ? formatDate(r.last_date) : '—'}</td>}
               {has('fee') && <td data-label={L.fee} class="num">{feeLabel(r.fee_bp) ?? '—'}</td>}
@@ -147,5 +150,6 @@ const filters = [
     </div>
   )}
   <Pager info={info} url={Astro.url} noun={def.noun} />
-  {economy && <p class="muted small mt">Presupuestado: la versión vigente del presupuesto de cada expediente, sin IVA.{billing && ' Facturado: facturas emitidas o cobradas, sin IVA. Pendiente de cobro: facturas emitidas sin cobrar, con IVA.'}</p>}
+  <p class="muted small mt">Aceptados: sus expedientes en curso o cerrados. Cancelados: los que se cancelaron (sin contar los duplicados ni los creados por error); el motivo de cada uno está en su ficha.</p>
+  {economy && <p class="muted small">Presupuestado: la versión vigente del presupuesto de cada expediente, sin IVA.{billing && ' Facturado: facturas emitidas o cobradas, sin IVA. Pendiente de cobro: facturas emitidas sin cobrar, con IVA.'}</p>}
 </App>

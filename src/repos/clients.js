@@ -9,6 +9,8 @@ import { likeTerm } from './payments.js';
 import { orderBy } from '../lib/table.js';
 
 const LIVE = "e.status <> 'cancelado'";
+// Las cancelaciones que cuentan en las cifras del cliente: no los duplicados ni los creados por error (src/lib/cancel.js)
+const COUNTS = "COALESCE(e.cancel_reason, '') <> 'duplicado'";
 const BUDGET = '(SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1)';
 const INVOICED = "(SELECT COALESCE(SUM(i.base_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status IN ('emitida', 'cobrada'))";
 const COLLECTED = "(SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status = 'cobrada')";
@@ -16,12 +18,13 @@ const PENDING = "(SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i
 // Columna de la tabla (src/lib/tables.js) → expresión para ordenar (sobre la consulta agrupada)
 const SORT = {
   name: 'name COLLATE NOCASE', tipo: 'kind', ciudad: 'city COLLATE NOCASE', nif: 'tax_id', email: 'email COLLATE NOCASE',
-  expedientes: 'exps', viajes: 'bookings', proximo: 'next_date', uso: 'last_date', fee: 'fee_bp', volumen: 'budget',
+  expedientes: 'exps', cancelados: 'cancelled', tasa: 'CASE WHEN exps + cancelled = 0 THEN NULL ELSE 1.0 * cancelled / (exps + cancelled) END',
+  viajes: 'bookings', viajes_canceladas: 'bookings_cancelled', proximo: 'next_date', uso: 'last_date', fee: 'fee_bp', volumen: 'budget',
   year: 'this_year', facturado: 'invoiced', pendiente: 'pending', altas: 'created_at',
 };
 
 /**
- * Directorio con sus expedientes y su volumen (presupuestado, facturado y pendiente de cobro), por páginas.
+ * Directorio con sus expedientes (aceptados y cancelados) y su volumen (presupuestado, facturado y pendiente de cobro), por páginas.
  * Devuelve la página pedida, cuántos hay en total con esos filtros y la suma de sus importes (de todos, no sólo
  * de la página).
  * @param {Db} db
@@ -33,7 +36,9 @@ export async function list(db, { q = '', status = '', kind = '', city = '', sort
   const base = `
     SELECT c.id, c.name, c.status, c.kind, c.title, c.city, c.tax_id, c.email, c.phone, c.fee_bp, c.created_at,
            COUNT(CASE WHEN ${LIVE} THEN e.id END) AS exps,
+           COUNT(CASE WHEN e.status = 'cancelado' AND ${COUNTS} THEN e.id END) AS cancelled,
            (SELECT COUNT(*) FROM bt_bookings bb WHERE bb.client_id = c.id AND bb.status <> 'cancelada') AS bookings,
+           (SELECT COUNT(*) FROM bt_bookings bb WHERE bb.client_id = c.id AND bb.status = 'cancelada' AND COALESCE(bb.cancel_reason, '') <> 'duplicado') AS bookings_cancelled,
            MAX(CASE WHEN ${LIVE} AND e.start_date <= ?5 THEN e.start_date END) AS last_date,
            MIN(CASE WHEN ${LIVE} AND e.start_date > ?5 THEN e.start_date END) AS next_date,
            COALESCE(SUM(CASE WHEN ${LIVE} THEN ${BUDGET} END), 0) AS budget,
@@ -83,6 +88,7 @@ export async function ficha(db, id) {
     db.prepare('SELECT * FROM client_entities WHERE client_id = ? ORDER BY legal_name COLLATE NOCASE, id').bind(id),
     db.prepare(
       `SELECT e.id, e.number, e.name, e.status, e.start_date, e.end_date, e.destination, e.fee_bp, e.attendees,
+              e.closed_at, e.cancel_by, e.cancel_reason, e.cancel_notes,
               e.contact_name, e.contact_email, e.contact_phone, m.name AS manager_name,
               ${BUDGET} AS budget_base, ${INVOICED} AS invoiced_base, ${COLLECTED} AS collected_total, ${PENDING} AS pending_total
          FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id

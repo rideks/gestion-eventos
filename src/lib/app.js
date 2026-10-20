@@ -68,6 +68,7 @@ export const FLASH = {
   abierto: 'Expediente abierto',
   creado: 'Expediente creado: ya está en curso con su número',
   cerrado: 'Expediente cerrado',
+  cancelado: 'Expediente cancelado: se conserva con su motivo y se puede reabrir',
   reabierto: 'Expediente reabierto',
   pagado: 'Pago registrado',
   emitida: 'Factura emitida: ya tiene su número',

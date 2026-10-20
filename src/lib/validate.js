@@ -6,6 +6,7 @@ import { isDate } from './dates.js';
 import { parseAmount } from './money.js';
 import { parseRate, rateLabel, vatColumn, baseFromTotalBp } from './vat.js';
 import { PAYMENT_METHODS, DOC_KINDS } from './finance.js';
+import { CANCEL_SIDES, CANCEL_REASONS } from './cancel.js';
 
 // Quita caracteres de control (salvo saltos de línea y tabuladores) y espacios sobrantes
 const clean = (v) => (typeof v === 'string' ? v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim() : v);
@@ -210,6 +211,13 @@ export const RoleSchema = z.object({
 });
 
 // ── Expediente ─────────────────────────────────────────────────────────────
+// Cancelar un expediente o una reserva: quién y por qué (con «Otros», el comentario es obligatorio)
+export const CancelSchema = z.object({
+  cancel_by: z.enum(Object.keys(CANCEL_SIDES), { error: '¿Quién cancela? Elige el cliente o nosotros' }),
+  cancel_reason: z.enum(Object.keys(CANCEL_REASONS), { error: 'Elige el motivo de la cancelación' }),
+  cancel_notes: optText('Comentario', 1000),
+}).refine((d) => d.cancel_reason !== 'otros' || !!d.cancel_notes, { path: ['cancel_notes'], message: 'Con «Otros», explica el motivo en el comentario' });
+
 export const ExpedienteSchema = z.object({
   name: reqText('Nombre del evento', 2, 140),
   company: reqText('Empresa', 2, 120),

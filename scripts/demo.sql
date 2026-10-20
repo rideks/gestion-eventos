@@ -5,6 +5,7 @@
 --   · EXP 1285 Jornadas de trabajo ELECNOR    → cerrado
 --   · EXP 1289 Convención anual ROCHE         → en curso, con pagos urgentes y una factura pedida
 --   · EXP 1290 Lanzamiento Winlevi GLENMARK   → recién creado (los expedientes nacen en curso con su número)
+--   · EXP 1288 Viaje de incentivo BMW          → cancelado por el cliente (se fue a otra agencia)
 -- Cuentas, una por rol (contraseña de todas: demo-gestion-2026):
 --   tania@example.com (Administración) · marta@example.com (Eventos) · direccion@example.com (Jefes)
 --   tesoreria@example.com (Tesorería) · tecnico@example.com (Técnico)
@@ -52,7 +53,11 @@ INSERT INTO expedientes (id, number, name, company, contact_name, contact_email,
   (3, 1289, 'Convención anual', 'ROCHE FARMA', 'Javier Molina', 'javier.molina@example.com', '+34 600 333 444', 'Sevilla', '2026-11-12', '2026-11-14', 220,
    'Anticipo del 50 % con PO; el resto, a la vuelta.', 'abierto', 2, 2, '2026-09-20T10:00:00Z', 1, '2026-09-21T08:15:00Z', NULL, NULL),
   (4, 1290, 'Lanzamiento Winlevi', 'GLENMARK', 'Josephin Malade', 'josephin.malade@example.com', NULL, 'Marbella', '2027-04-20', '2027-04-22', 180,
-   'El cliente quiere la factura del hotel separada del resto.', 'abierto', 2, 2, '2026-10-16T15:42:00Z', 2, '2026-10-16T15:42:00Z', NULL, NULL);
+   'El cliente quiere la factura del hotel separada del resto.', 'abierto', 2, 2, '2026-10-16T15:42:00Z', 2, '2026-10-16T15:42:00Z', NULL, NULL),
+  (5, 1288, 'Viaje de incentivo', 'BMW Ibérica', 'Laura Gómez', 'laura.gomez@example.com', '+34 600 111 222', 'Lisboa', '2026-09-24', '2026-09-27', 40,
+   NULL, 'cancelado', 2, 2, '2026-06-20T10:00:00Z', 1, '2026-06-20T12:00:00Z', 1, '2026-07-02T10:30:00Z');
+UPDATE expedientes SET cancel_by = 'cliente', cancel_reason = 'competencia',
+       cancel_notes = 'Se lo dio a una agencia de Lisboa con mejor precio en el hotel. Volver a ofrecer en 2027.' WHERE id = 5;
 
 -- Presupuestos con su desglose por tipos de IVA (alojamiento al 10 %, servicios al 21 %)
 INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, created_by, created_at) VALUES
@@ -60,7 +65,8 @@ INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines,
   (1, 2, 6300000, 7415000, '[{"rate":1000,"label":"IVA 10 %","base":1890909,"total":2080000},{"rate":2100,"label":"IVA 21 %","base":4409091,"total":5335000}]', 'Cena para concesionarios y merchandising', 2, '2026-07-28T12:00:00Z'),
   (2, 1, 1894000, 2151240, '[{"rate":1000,"label":"IVA 10 %","base":1277273,"total":1405000},{"rate":2100,"label":"IVA 21 %","base":616727,"total":746240}]', 'Presupuesto aprobado por el cliente', 2, '2026-03-02T08:30:00Z'),
   (3, 1, 9640000, 11086000, '[{"rate":1000,"label":"IVA 10 %","base":5258182,"total":5784000},{"rate":2100,"label":"IVA 21 %","base":4381818,"total":5302000}]', 'Presupuesto aprobado por el cliente', 2, '2026-09-20T10:00:00Z'),
-  (4, 1, 13000000, 15020000, '[{"rate":1000,"label":"IVA 10 %","base":6454546,"total":7100001},{"rate":2100,"label":"IVA 21 %","base":6545454,"total":7919999}]', 'Presupuesto aprobado por el cliente', 2, '2026-10-16T15:42:00Z');
+  (4, 1, 13000000, 15020000, '[{"rate":1000,"label":"IVA 10 %","base":6454546,"total":7100001},{"rate":2100,"label":"IVA 21 %","base":6545454,"total":7919999}]', 'Presupuesto aprobado por el cliente', 2, '2026-10-16T15:42:00Z'),
+  (5, 1, 4200000, 5082000, '[{"rate":2100,"label":"IVA 21 %","base":4200000,"total":5082000}]', 'Presupuesto aprobado por el cliente', 2, '2026-06-20T10:00:00Z');
 
 -- ── EXP 1287 · lado izquierdo del Excel de cierre ─────────────────────────
 INSERT INTO payments (expediente_id, supplier, concept, invoice_number, invoice_date, base_cents, total_cents, vat, due_date, status, paid_on, method, planned, created_by) VALUES
@@ -202,7 +208,10 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (3, 2, 'Marta López', 'payment.add', 'añadió un pago a Catering Lazo (2.200,00 €)', '2026-10-01T13:00:00Z'),
   (3, 1, 'Tania Ruiz', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
   (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.022,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),
-  (4, 2, 'Marta López', 'expediente.create', 'creó el expediente 1290 con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z');
+  (4, 2, 'Marta López', 'expediente.create', 'creó el expediente 1290 con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z'),
+  (5, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 42.000,00 € sin IVA', '2026-06-20T10:00:00Z'),
+  (5, 1, 'Tania Ruiz', 'expediente.open', 'abrió el expediente con el número 1288', '2026-06-20T12:00:00Z'),
+  (5, 1, 'Tania Ruiz', 'expediente.cancel', 'canceló el expediente (El cliente · Eligió otra agencia o proveedor · «Se lo dio a una agencia de Lisboa con mejor precio en el hotel. Volver a ofrecer en 2027.»)', '2026-07-02T10:30:00Z');
 
 -- ── Proveedores: el directorio sale de los nombres de los pagos; algunas fichas, completas ─────────
 INSERT INTO suppliers (name, created_by)
@@ -348,7 +357,7 @@ INSERT INTO bt_bookings (id, reference, client_id, title, status, notes, created
   (2, 'BT-2026-0002', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Reunión de expertos · Sevilla', 'abierta', NULL, 2, '2026-09-28T09:30:00Z', '2026-09-28T09:30:00Z'),
   (3, 'BT-2026-0003', (SELECT id FROM clients WHERE name = 'BMW Ibérica'), 'Visita a la planta de Múnich', 'abierta', NULL, 2, '2026-10-02T12:00:00Z', '2026-10-02T12:00:00Z'),
   (4, 'BT-2026-0004', (SELECT id FROM clients WHERE name = 'ROCHE FARMA'), 'Curso de formación · Valencia', 'abierta', NULL, 2, '2026-10-08T16:00:00Z', '2026-10-08T16:00:00Z'),
-  (5, 'BT-2026-0005', (SELECT id FROM clients WHERE name = 'GLENMARK'), 'Presentación a delegados · Bilbao', 'cancelada', 'El cliente aplazó la presentación.', 2, '2026-10-10T11:00:00Z', '2026-10-10T11:00:00Z'),
+  (5, 'BT-2026-0005', (SELECT id FROM clients WHERE name = 'GLENMARK'), 'Presentación a delegados · Bilbao', 'cancelada', NULL, 2, '2026-10-10T11:00:00Z', '2026-10-14T09:00:00Z'),
   (6, 'BT-2026-0006', (SELECT id FROM clients WHERE name = 'ELECNOR'), 'Visita a la obra de Toledo', 'abierta', NULL, 2, '2026-10-11T09:00:00Z', '2026-10-16T10:00:00Z'),
   (7, 'BT-2026-0007', (SELECT id FROM clients WHERE name = 'ELECNOR'), 'Reunión con proveedores · Zaragoza', 'abierta', NULL, 2, '2026-10-12T15:30:00Z', '2026-10-12T15:30:00Z');
 UPDATE bt_bookings SET closed_at = '2026-10-16T10:00:00Z', closed_by = (SELECT id FROM users WHERE email = 'tania@example.com') WHERE id = 6;
@@ -405,5 +414,8 @@ INSERT INTO bt_line_passengers (line_id, passenger_id) VALUES
 INSERT INTO counters (key, value) VALUES ('bt_booking:2026', 7), ('expediente', 1290);
 INSERT INTO change_log (entity, entity_id, user_id, action, summary, at)
 SELECT 'bt_booking', b.id, 2, 'alta', 'Alta de la reserva para ' || c.name, b.created_at FROM bt_bookings b JOIN clients c ON c.id = b.client_id;
-INSERT INTO change_log (entity, entity_id, user_id, action, summary, at) VALUES ('bt_booking', 5, 2, 'estado', 'Reserva cancelada', '2026-10-14T09:00:00Z'),
+UPDATE bt_bookings SET cancel_by = 'cliente', cancel_reason = 'fechas', cancel_notes = 'Aplazan la presentación a delegados al primer trimestre.',
+       cancelled_at = '2026-10-14T09:00:00Z', cancelled_by = 2 WHERE id = 5;
+INSERT INTO change_log (entity, entity_id, user_id, action, summary, at) VALUES
+  ('bt_booking', 5, 2, 'estado', 'Reserva cancelada · El cliente · Cambio de fechas o aplazamiento · «Aplazan la presentación a delegados al primer trimestre.»', '2026-10-14T09:00:00Z'),
   ('bt_booking', 6, (SELECT id FROM users WHERE email = 'tania@example.com'), 'estado', 'Reserva cerrada', '2026-10-16T10:00:00Z');

@@ -9,6 +9,7 @@ import EntityPicker from '../../components/EntityPicker.astro';
 import EntityPickerKit from '../../components/EntityPickerKit.astro';
 import PassengerFields from '../../components/PassengerFields.astro';
 import TravelLineFields from '../../components/TravelLineFields.astro';
+import CancelDialog from '../../components/CancelDialog.astro';
 import { parseId, readForm, can } from '../../lib/app.js';
 import { formToObject } from '../../lib/validate.js';
 import { LINE_KINDS, KIND_KEYS, personName } from '../../lib/travel.js';
@@ -16,6 +17,7 @@ import { pctText } from '../../lib/vat.js';
 import { eur } from '../../lib/money.js';
 import { formatDate, formatRange, formatStamp } from '../../lib/dates.js';
 import { plural } from '../../lib/finance.js';
+import { cancelSummary } from '../../lib/cancel.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as travel from '../../services/travel.js';
 
@@ -26,7 +28,7 @@ let error = null;
 let errors = {};
 let input = null;
 // Qué formulario se vuelve a abrir si hay un error: 'datos' · 'pasajero:new' · 'pasajero:<id>' · 'linea:<kind>' · 'linea:<id>'
-let open = Astro.url.searchParams.has('editar') ? 'datos' : null;
+let open = Astro.url.searchParams.has('editar') ? 'datos' : Astro.url.searchParams.has('cancelar') ? 'cancelar' : null;
 
 if (id && Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
@@ -37,8 +39,8 @@ if (id && Astro.request.method === 'POST') {
   // Cada acción, a dónde vuelve si sale bien
   const ACTIONS = {
     save: [() => travel.update(ctx, id, input), `${self}?ok=guardado`, 'datos'],
-    cancel: [() => travel.setStatus(ctx, id, 'cancelada'), `${self}?ok=cancelada`],
-    reopen: [() => travel.setStatus(ctx, id, 'abierta'), `${self}?ok=reabierta`],
+    cancel: [() => travel.cancel(ctx, id, input), `${self}?ok=cancelada`, 'cancelar'],
+    reopen: [() => travel.reopen(ctx, id), `${self}?ok=reabierta`],
     close: [() => travel.close(ctx, id), `${self}?ok=cerrada#estado`],
     reopen_closed: [() => travel.reopenClosed(ctx, id), `${self}?ok=reabierta#estado`],
     delete: [() => travel.remove(ctx, id), '/viajes?ok=borrado'],
@@ -263,6 +265,9 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
   <section class="card mt" id="estado">
     <div class="sec-head"><h2>Estado de la reserva: {state.label}</h2></div>
     {b.closed_at && <p class="muted">Cerrada el {formatStamp(b.closed_at, { year: true })}{b.closed_by_name && ` por ${b.closed_by_name}`}. No se puede cambiar hasta reabrirla.</p>}
+    {b.status === 'cancelada' && (
+      <p class="cancel-info"><strong>Cancelada</strong>{b.cancelled_at && ` el ${formatStamp(b.cancelled_at, { year: true })}`}{b.cancelled_by_name && ` por ${b.cancelled_by_name}`}: {cancelSummary(b)}</p>
+    )}
     {checks.length > 0 && (
       <>
         <h3>Antes de cerrar</h3>
@@ -284,7 +289,7 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
       )}
       {b.closed_at && canClose && <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen_closed"><Icon name="lock-open" size={16} /> Reabrir reserva</button>}
       {!b.closed_at && (b.status === 'abierta'
-        ? <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="cancel" data-confirm={`¿Cancelar la reserva ${b.reference}? Se conserva y se puede reabrir.`}><Icon name="ban" size={16} /> Cancelar reserva</button>
+        ? <a class="btn btn-ghost btn-sm" href="?cancelar" data-cancel-open="cancelar-reserva"><Icon name="ban" size={16} /> Cancelar reserva</a>
         : <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="reopen"><Icon name="rotate-ccw" size={16} /> Reabrir reserva</button>)}
       {!passengers.length && !lines.length && (
         <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete" data-confirm={`¿Borrar la reserva ${b.reference}? Está vacía.`}><Icon name="trash-2" size={16} /> Borrar reserva</button>
@@ -292,4 +297,10 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
     </form>
     {editable && !canClose && ready && <p class="muted mt">Está todo: Administración la cerrará.</p>}
   </section>
+
+  {b.status === 'abierta' && !b.closed_at && (
+    <CancelDialog id="cancelar-reserva" title={`Cancelar la reserva ${b.reference}`}
+      intro="Se conserva y se puede reabrir. Apunta quién cancela y por qué: queda en su historial y en la ficha del cliente."
+      submit="Cancelar reserva" v={open === 'cancelar' && input ? input : {}} errors={open === 'cancelar' ? errors : {}} open={open === 'cancelar'} />
+  )}
 </App>

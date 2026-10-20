@@ -1,0 +1,71 @@
+---
+// Ventana para cancelar un expediente o una reserva: quién cancela (el cliente o nosotros), el motivo de la lista
+// (src/lib/cancel.js) y un comentario (obligatorio con «Otros»). Se abre con un botón <a data-cancel-open="id">;
+// sin JavaScript, ese enlace lleva a «?cancelar», que pinta la ventana abierta en la página.
+// Si el servidor devuelve un error, la ventana se vuelve a abrir con lo escrito; el aviso de cada campo lo pone App
+// (fieldErrors), como en el resto de formularios.
+//   id · title · intro · submit (texto del botón) · v (lo escrito) · errors · open (pintarla abierta)
+import Icon from './Icon.astro';
+import { CANCEL_SIDES, CANCEL_REASONS } from '../lib/cancel.js';
+
+const { id = 'cancelar', title, intro, submit, v = {}, errors = {}, open = false } = Astro.props;
+---
+<dialog id={id} class="confirm-dialog picker-dialog cancel-dialog" aria-labelledby={`${id}-title`} open={open} data-cancel-dialog data-start-open={open ? '' : undefined}>
+  <form method="post" class="cancel-form">
+    <h2 id={`${id}-title`}><Icon name="ban" /> {title}</h2>
+    <p class="muted">{intro}</p>
+    <fieldset class:list={['field', { 'has-error': errors.cancel_by }]}>
+      <legend class="label">¿Quién cancela?</legend>
+      <div class="segmented">
+        {Object.entries(CANCEL_SIDES).map(([k, label]) => (
+          <label><input type="radio" name="cancel_by" value={k} checked={v.cancel_by === k} required data-invalid="Elige quién cancela: el cliente o nosotros." />{label}</label>
+        ))}
+      </div>
+    </fieldset>
+    <div class:list={['field', { 'has-error': errors.cancel_reason }]}>
+      <label for={`${id}-reason`}>Motivo</label>
+      <select id={`${id}-reason`} name="cancel_reason" required data-cancel-reason data-invalid="Elige el motivo de la cancelación.">
+        <option value="">Elige el motivo…</option>
+        {Object.entries(CANCEL_REASONS).map(([k, label]) => <option value={k} selected={v.cancel_reason === k}>{label}</option>)}
+      </select>
+    </div>
+    <div class:list={['field', { 'has-error': errors.cancel_notes }]}>
+      <label for={`${id}-notes`}>Comentario <span class="opt" data-notes-hint>(opcional; obligatorio con «Otros»)</span></label>
+      <textarea id={`${id}-notes`} name="cancel_notes" rows="3" maxlength="1000" required={v.cancel_reason === 'otros'} data-cancel-notes
+        data-invalid="Con «Otros», explica el motivo." placeholder="Lo que conviene recordar: a quién se fue, si lo intentará más adelante…">{v.cancel_notes ?? ''}</textarea>
+    </div>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" type="button" data-cancel-close>Volver</button>
+      <button class="btn btn-danger-solid" type="submit" name="intent" value="cancel" data-busy="Cancelando…"><Icon name="ban" size={18} /> {submit}</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  // Abrir (sin salir de la página), cerrar y, con «Otros», el comentario pasa a ser obligatorio
+  document.querySelectorAll('[data-cancel-open]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      const dialog = document.getElementById(a.getAttribute('data-cancel-open') ?? '');
+      if (!(dialog instanceof HTMLDialogElement)) return;
+      e.preventDefault();
+      if (dialog.open) dialog.close();
+      dialog.showModal();
+    });
+  });
+  document.querySelectorAll('dialog[data-cancel-dialog]').forEach((dialog) => {
+    if (!(dialog instanceof HTMLDialogElement)) return;
+    // Si el servidor la pinta abierta (un error, o «?cancelar» sin JavaScript), se abre como ventana
+    if (dialog.hasAttribute('data-start-open')) {
+      dialog.close();
+      dialog.showModal();
+    }
+    dialog.querySelector('[data-cancel-close]')?.addEventListener('click', () => dialog.close());
+    const reason = dialog.querySelector('[data-cancel-reason]');
+    const notes = dialog.querySelector('[data-cancel-notes]');
+    const sync = () => {
+      if (reason instanceof HTMLSelectElement && notes instanceof HTMLTextAreaElement) notes.required = reason.value === 'otros';
+    };
+    reason?.addEventListener('change', sync);
+    sync();
+  });
+</script>

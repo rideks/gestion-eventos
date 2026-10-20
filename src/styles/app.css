@@ -895,3 +895,13 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
 .pager-page.is-current { background: var(--text); color: #fff; border-color: var(--text); }
 .pager-gap { padding: 0 4px; color: var(--muted); }
 .btn.is-disabled { opacity: 0.4; pointer-events: none; }
+
+/* Ventana de cancelación (expediente o reserva): quién, motivo y comentario */
+.cancel-dialog form { gap: 12px; }
+.cancel-dialog h2 svg { color: var(--danger); }
+.cancel-dialog .field { width: 100%; margin: 0; }
+.cancel-dialog fieldset { border: 0; padding: 0; }
+.cancel-info { margin: 6px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--danger-bg); color: var(--text); font-size: 0.92rem; }
+.cancel-info strong { color: var(--danger); }
+.cancel-note { color: var(--danger); font-size: 0.85rem; }
+.cancel-dialog textarea { min-height: 0; height: 5.5rem; }

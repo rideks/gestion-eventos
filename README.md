@@ -200,6 +200,11 @@ Reparto inicial:
   sale en **Cierre** y, una vez cerrado, también en el resumen y en la lista de expedientes. En la pestaña Cobros,
   «Con el presupuesto vigente» resume cómo queda tras un cambio de versión, con «Crear factura por lo que falta» (el
   importe ya repartido con los tipos de IVA del presupuesto) y «Subir PO por la diferencia».
+- **Cancelar** un expediente o una reserva abre una ventana: **quién cancela** (el cliente o nosotros), el **motivo**
+  (precio o presupuesto, cambio de fechas o aplazamiento, eligió otra agencia, el evento o el viaje ya no se hace, fuerza
+  mayor, duplicado o error, otros) y un **comentario** (obligatorio con «Otros»). Queda en el expediente o la reserva, en su
+  actividad o historial y en la **ficha del cliente** («Cancelaciones», con su % de cancelados). Al reabrir, el motivo
+  se quita (queda en la actividad). Los duplicados y errores no cuentan en las cifras del cliente.
 - **Cierre**: las comprobaciones de «Antes de cerrar» sólo salen en verde cuando está hecho de verdad: costes apuntados
   y pagados, todo el presupuesto facturado (o avisa si se ha facturado de más), emitido y cobrado, y las PO facturadas
   (si las hay). Un expediente recién creado no sale «todo terminado».
@@ -253,7 +258,8 @@ Reparto inicial:
   la más reciente. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
   añaden los pasajeros (si ya viajaron con ese cliente, se eligen y se rellenan sus datos) y los servicios de cada
   bloque, con el resumen económico arriba y el historial abajo. La ficha del cliente enseña sus reservas.
-- **Clientes**: directorio con buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
+- **Clientes**: directorio con sus expedientes **aceptados** (en curso o cerrados) y **cancelados** (y, en «Columnas», el % de
+  cancelados y las reservas canceladas), buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
   entidades), filtros de estado, tipo (empresa o persona) y ciudad; con permiso económico, el fee y lo presupuestado de cada uno (y, con cobros, lo facturado y lo
   pendiente de cobro). **Ficha** de cada cliente: datos, antigüedad, personas de contacto de sus expedientes,
   condiciones y datos fiscales, **relación económica** (ver arriba), sus expedientes (previstos, en curso,
@@ -365,6 +371,10 @@ Números de expediente: cada expediente recibe el suyo al crearlo, de un contado
 que se incrementa en la misma transacción que el alta, así que dos altas a la vez nunca reciben el mismo. Nunca baja
 del mayor número usado (si Administración cambia uno a mano en «Editar», se sigue desde él) ni del primer número de
 Ajustes (`settings.first_number`, 1001 por defecto). Un número dado no se vuelve a dar aunque se borre el expediente.
+
+**Motivo de cancelación (migración 0016)**: sólo añade columnas: quién cancela, el motivo y el comentario en
+`expedientes` y en `bt_bookings` (y, en las reservas, cuándo y quién). Las canceladas de antes quedan «sin motivo
+apuntado» (la fecha de las reservas sale de su historial).
 
 **Expedientes en curso al crearlos (migración 0015)**: las solicitudes que quedaban sin abrir reciben número
 correlativo por orden de petición y pasan a «En curso» (queda en su actividad). El contador arranca en el mayor número.

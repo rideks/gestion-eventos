@@ -115,15 +115,37 @@ test('cancelada: sólo lectura hasta reabrirla; una reserva con servicios no se 
   const ctx = as('eventos');
   assert.deepEqual((await travel.addPassenger(ctx, 5, { first_name: 'X', last_name: 'Y' })).code, 'conflict');
   assert.equal((await travel.detail(ctx, 5)).value.editable, false);
-  assert.ok((await travel.setStatus(ctx, 5, 'abierta')).ok);
+  assert.ok((await travel.reopen(ctx, 5)).ok);
   assert.ok((await travel.addPassenger(ctx, 5, { first_name: 'X', last_name: 'Y' })).ok);
   assert.equal((await travel.remove(ctx, 5)).code, 'conflict');
-  assert.ok((await travel.setStatus(ctx, 5, 'cancelada')).ok);
+  assert.ok((await travel.cancel(ctx, 5, { cancel_by: 'agencia', cancel_reason: 'duplicado' })).ok);
   assert.equal((await travel.list(ctx, { view: 'canceladas' })).value.rows.length, 1);
 });
 
+test('cancelar: quién y por qué (con «Otros», comentario); queda en el historial y al reabrir se borra', { skip }, async () => {
+  const { db, as } = await setup();
+  const ctx = as('eventos');
+  const r = (input) => travel.cancel(ctx, 4, input);
+  assert.deepEqual((await r({})).fields && Object.keys((await r({})).fields).sort(), ['cancel_by', 'cancel_reason']);
+  assert.equal((await r({ cancel_by: 'cliente', cancel_reason: 'otros' })).fields.cancel_notes, 'Con «Otros», explica el motivo en el comentario');
+  assert.equal((await r({ cancel_by: 'cliente', cancel_reason: 'inventado' })).code, 'invalid');
+  assert.equal(db.one('SELECT status FROM bt_bookings WHERE id = 4').status, 'abierta'); // nada cambia sin motivo
+  assert.ok((await r({ cancel_by: 'cliente', cancel_reason: 'otros', cancel_notes: ' Cambio de proveedor de formación ' })).ok);
+  const b = db.one('SELECT status, cancel_by, cancel_reason, cancel_notes, cancelled_at, cancelled_by FROM bt_bookings WHERE id = 4');
+  assert.deepEqual([b.status, b.cancel_by, b.cancel_reason, b.cancel_notes], ['cancelada', 'cliente', 'otros', 'Cambio de proveedor de formación']);
+  assert.ok(b.cancelled_at && b.cancelled_by === db.one("SELECT id FROM users WHERE email = 'marta@example.com'").id);
+  assert.equal(db.one("SELECT summary FROM change_log WHERE entity = 'bt_booking' AND entity_id = 4 ORDER BY id DESC LIMIT 1").summary,
+    'Reserva cancelada · El cliente · Otros · «Cambio de proveedor de formación»');
+  const row = (await travel.list(ctx, { view: 'canceladas' })).value.rows.find((x) => x.id === 4);
+  assert.deepEqual([row.cancel_by, row.cancel_reason], ['cliente', 'otros']);
+  assert.ok((await travel.reopen(ctx, 4)).ok);
+  const re = db.one('SELECT status, cancel_by, cancel_reason, cancel_notes, cancelled_at FROM bt_bookings WHERE id = 4');
+  assert.deepEqual(Object.values(re), ['abierta', null, null, null, null]);
+  assert.equal((await travel.cancel(as('tecnico'), 4, { cancel_by: 'cliente', cancel_reason: 'precio' })).code, 'forbidden');
+});
+
 test('listado: buscar por pasajero, localizador o proveedor y filtrar por mes', { skip }, async () => {
-  const { as } = await setup();
+  const { as, clientId } = await setup();
   const ctx = as('eventos');
   const refs = async (f) => (await travel.list(ctx, f)).value.rows.map((r) => r.reference).sort();
   assert.deepEqual(await refs({ q: 'López Serrano' }), ['BT-2026-0001', 'BT-2026-0002']);
@@ -131,7 +153,7 @@ test('listado: buscar por pasajero, localizador o proveedor y filtrar por mes', 
   assert.deepEqual(await refs({ q: 'iryo' }), ['BT-2026-0001', 'BT-2026-0004', 'BT-2026-0006']);
   assert.deepEqual(await refs({ month: '2026-10' }), ['BT-2026-0002', 'BT-2026-0006', 'BT-2026-0007']);
   assert.equal((await refs({ month: 'mal' })).length, 7);
-  assert.equal((await travel.forClient(ctx, 2)).value.length, 3); // ROCHE FARMA: tres reservas
+  assert.equal((await travel.forClient(ctx, clientId('ROCHE FARMA'))).value.length, 3); // ROCHE FARMA: tres reservas
 });
 
 test('cambiar el cliente o la descripción queda en el historial; los expedientes no se tocan', { skip }, async () => {
@@ -195,7 +217,7 @@ test('cerrar: con el viaje terminado, pasajeros y localizadores; sólo con «via
   assert.deepEqual([after.state.key, after.editable, after.checks], ['cerrada', false, []]);
   // Cerrada: no se cambia, no se cancela y no se vuelve a cerrar
   assert.equal((await travel.addPassenger(adm, 7, { first_name: 'X', last_name: 'Y' })).code, 'conflict');
-  assert.equal((await travel.setStatus(adm, 7, 'cancelada')).code, 'conflict');
+  assert.equal((await travel.cancel(adm, 7, { cancel_by: 'cliente', cancel_reason: 'precio' })).code, 'conflict');
   assert.equal((await travel.close(adm, 7)).code, 'conflict');
   // Reabrir: sólo con el permiso; vuelve a «por cerrar»
   assert.equal((await travel.reopenClosed(as('eventos'), 7)).code, 'forbidden');

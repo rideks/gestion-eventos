@@ -130,7 +130,7 @@ test('editar: el fee nuevo queda en el historial y no cambia el de los expedient
   assert.equal(last.action, 'condiciones');
   assert.deepEqual(JSON.parse(last.changes).fee_bp, [1000, 1200]);
   assert.equal(db.one('SELECT fee_bp FROM clients WHERE id = ?', bmw).fee_bp, 1200);
-  assert.deepEqual(db.rows('SELECT fee_bp FROM expedientes WHERE client_id = ?', bmw).map((e) => e.fee_bp), [800]);
+  assert.deepEqual(db.rows('SELECT fee_bp FROM expedientes WHERE client_id = ?', bmw).map((e) => e.fee_bp), [800, 800]); // el en curso y el cancelado
   // Sin cambios de condiciones ni de datos fiscales: no se apunta nada en el historial
   const n = db.one('SELECT COUNT(*) n FROM change_log').n;
   assert.ok((await clients.update(as('administracion'), bmw, { ...input, phone: '910 000 000' })).ok);
@@ -241,4 +241,23 @@ test('cliente de una solicitud: de la lista (id), por su nombre exacto o anterio
   assert.match((await clients.resolveForExpediente(ctx, { id: '', name: '' })).fields.company, /elígela de la lista/);
   assert.equal((await clients.resolveForExpediente(ctx, { id: '999999', name: '' })).code, 'invalid');
   assert.equal((await clients.resolveForExpediente(as('tecnico'), { id: String(bmw) })).code, 'forbidden');
+});
+
+test('directorio: aceptados y cancelados de cada cliente (sin los duplicados), y la ficha con sus cancelaciones', { skip }, async () => {
+  const { db, as, id } = await setup();
+  const ctx = as('eventos');
+  const rowOf = async (name, opts = {}) => (await clients.directory(ctx, { limit: 100, ...opts })).value.rows.find((r) => r.name === name);
+  const bmw = await rowOf('BMW Ibérica');
+  assert.deepEqual([bmw.exps, bmw.cancelled, bmw.bookings_cancelled], [1, 1, 0]); // EXP 1287 en curso y EXP 1288 cancelado
+  assert.deepEqual([(await rowOf('GLENMARK')).cancelled, (await rowOf('GLENMARK')).bookings_cancelled], [0, 1]);
+  assert.equal((await clients.directory(ctx, { order: 'cancelados', limit: 1 })).value.rows[0].name, 'BMW Ibérica');
+  // Un duplicado no cuenta como cancelación del cliente
+  db.raw.exec("UPDATE expedientes SET cancel_reason = 'duplicado' WHERE number = 1288");
+  assert.equal((await rowOf('BMW Ibérica')).cancelled, 0);
+  // La ficha trae quién y por qué
+  db.raw.exec("UPDATE expedientes SET cancel_reason = 'competencia' WHERE number = 1288");
+  const f = (await clients.ficha(ctx, id('BMW Ibérica'))).value;
+  const c = f.expedientes.find((e) => e.number === 1288);
+  assert.deepEqual([c.status, c.cancel_by, c.cancel_reason], ['cancelado', 'cliente', 'competencia']);
+  assert.match(c.cancel_notes, /agencia de Lisboa/);
 });

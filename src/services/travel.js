@@ -12,8 +12,9 @@ import * as rates from '../repos/rates.js';
 import * as clients from './clients.js';
 import * as suppliers from './suppliers.js';
 import { can, activityStmt } from '../lib/app.js';
-import { LINE_KINDS, BOOKING_STATUS, BOOKING_TABS, personName, bookingReference, parseLineAmounts, pvpOf, bookingSummary, bookingDates, bookingState, closeChecks } from '../lib/travel.js';
-import { BtBookingSchema, BtPassengerSchema, btLineSchema, validate } from '../lib/validate.js';
+import { LINE_KINDS, BOOKING_TABS, personName, bookingReference, parseLineAmounts, pvpOf, bookingSummary, bookingDates, bookingState, closeChecks } from '../lib/travel.js';
+import { BtBookingSchema, BtPassengerSchema, btLineSchema, CancelSchema, validate } from '../lib/validate.js';
+import { cancelSummary } from '../lib/cancel.js';
 import { diffFields } from '../lib/changes.js';
 import { eur } from '../lib/money.js';
 import { allowedColumns } from '../lib/table.js';
@@ -172,22 +173,42 @@ export async function update(ctx, id, input) {
 }
 
 /**
- * Cancelar o reabrir
+ * Cancelar una reserva: quién cancela (el cliente o nosotros), el motivo de la lista y un comentario (obligatorio con
+ * «Otros»). Queda en su historial y en la ficha del cliente. Una reserva cerrada no se cancela (antes se reabre).
  * @param {Context} ctx
  * @param {number} id
- * @param {'abierta' | 'cancelada'} status
+ * @param {Record<string, any>} input cancel_by, cancel_reason, cancel_notes
  */
-export async function setStatus(ctx, id, status) {
+export async function cancel(ctx, id, input) {
   const r = await load(ctx, id, { write: false });
   if (!r.ok) return r;
-  if (!Object.hasOwn(BOOKING_STATUS, status)) return fail('invalid', 'Estado no válido.');
-  if (r.value.status === status) return done({ id });
+  if (r.value.status === 'cancelada') return done({ id });
   if (r.value.closed_at) return fail('conflict', CLOSED);
+  const c = validate(CancelSchema, input);
+  if (!c.ok) return invalid(c);
+  const at = nowIso();
+  const why = cancelSummary(c.data);
   await ctx.db.batch([
-    repo.statusStmt(ctx.db, id, status, nowIso()),
-    log(ctx, id, 'estado', status === 'cancelada' ? 'Reserva cancelada' : 'Reserva reabierta'),
-    activityStmt(ctx.db, ctx.actor, null, `bt_booking.${status === 'cancelada' ? 'cancel' : 'reopen'}`,
-      `${status === 'cancelada' ? 'canceló' : 'reabrió'} la reserva ${r.value.reference}`),
+    repo.cancelStmt(ctx.db, id, { by: c.data.cancel_by, reason: c.data.cancel_reason, notes: c.data.cancel_notes, userId: ctx.user?.id ?? null, at }),
+    log(ctx, id, 'estado', `Reserva cancelada · ${why}`),
+    activityStmt(ctx.db, ctx.actor, null, 'bt_booking.cancel', `canceló la reserva ${r.value.reference} (${why})`),
+  ]);
+  return done({ id });
+}
+
+/**
+ * Reabrir una reserva cancelada (el motivo queda en su historial)
+ * @param {Context} ctx
+ * @param {number} id
+ */
+export async function reopen(ctx, id) {
+  const r = await load(ctx, id, { write: false });
+  if (!r.ok) return r;
+  if (r.value.status !== 'cancelada') return done({ id });
+  await ctx.db.batch([
+    repo.reopenStmt(ctx.db, id, nowIso()),
+    log(ctx, id, 'estado', 'Reserva reabierta'),
+    activityStmt(ctx.db, ctx.actor, null, 'bt_booking.reopen', `reabrió la reserva ${r.value.reference}`),
   ]);
   return done({ id });
 }

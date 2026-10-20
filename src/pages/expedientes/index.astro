@@ -6,6 +6,7 @@ import Pill from '../../components/Pill.astro';
 import { LIST_COLUMNS } from '../../lib/data.js';
 import { can } from '../../lib/app.js';
 import { expedienteState, expLabel } from '../../lib/finance.js';
+import { cancelSummary } from '../../lib/cancel.js';
 import { eur, pct } from '../../lib/money.js';
 import { today, formatRange } from '../../lib/dates.js';
 
@@ -93,6 +94,7 @@ const counts = await db.prepare(
                   {e.to_pay > 0 && <span class="pill pill-muted">Por pagar {eur(e.to_pay)}</span>}
                   {cobros && e.to_collect > 0 && <span class="pill pill-info">Por cobrar {eur(e.to_collect)}</span>}
                 </span>
+                {e.status === 'cancelado' && <span class="cancel-note">Motivo: {cancelSummary(e)}</span>}
               </div>
               <div class="item-amount">
                 <span class="big-money money">{eur(sale)}</span>

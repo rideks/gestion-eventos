@@ -52,7 +52,8 @@ const TABS = {
  */
 export async function list(db, { q = '', clientId = null, month = '', view = 'todas', today = '', userId = null, sort = 'reserva', dir = 'desc', limit = 25, offset = 0 } = {}) {
   const base = `
-    SELECT b.id, b.reference, b.client_id, b.title, b.status, b.closed_at, b.created_by, b.created_at, u.name AS created_by_name, ${CLIENT}, ${TOTALS},
+    SELECT b.id, b.reference, b.client_id, b.title, b.status, b.closed_at, b.created_by, b.created_at, u.name AS created_by_name,
+           b.cancel_by, b.cancel_reason, b.cancel_notes, b.cancelled_at, ${CLIENT}, ${TOTALS},
            (SELECT COUNT(*) FROM bt_lines l WHERE l.booking_id = b.id AND l.kind IN ('transporte', 'alojamiento', 'inscripcion')
                AND TRIM(COALESCE(l.locator, '')) = '') AS missing_locators
       FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by
@@ -92,8 +93,9 @@ export const forClient = (db, clientId) => list(db, { clientId, limit: 500 }).th
 export async function detail(db, id) {
   const [b, passengers, lines, links] = await db.batch([
     db.prepare(
-      `SELECT b.*, ${CLIENT}, c.email AS client_email, c.phone AS client_phone, u.name AS created_by_name, k.name AS closed_by_name
+      `SELECT b.*, ${CLIENT}, c.email AS client_email, c.phone AS client_phone, u.name AS created_by_name, k.name AS closed_by_name, x.name AS cancelled_by_name
          FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by LEFT JOIN users k ON k.id = b.closed_by
+         LEFT JOIN users x ON x.id = b.cancelled_by
         WHERE b.id = ?`,
     ).bind(id),
     db.prepare('SELECT * FROM bt_passengers WHERE booking_id = ? ORDER BY id').bind(id),
@@ -156,8 +158,21 @@ export async function insert(db, d) {
 export const updateStmt = (db, id, d, at) => db.prepare('UPDATE bt_bookings SET client_id = ?, title = ?, notes = ?, updated_at = ? WHERE id = ?')
   .bind(d.clientId, d.title, d.notes, at, id);
 
-/** @param {Db} db @param {number} id @param {'abierta' | 'cancelada'} status @param {string} at */
-export const statusStmt = (db, id, status, at) => db.prepare('UPDATE bt_bookings SET status = ?, updated_at = ? WHERE id = ?').bind(status, at, id);
+/**
+ * Cancelar con quién y por qué
+ * @param {Db} db @param {number} id
+ * @param {{ by: string, reason: string, notes: string | null, userId: number | null, at: string }} c
+ */
+export const cancelStmt = (db, id, c) => db.prepare(
+  `UPDATE bt_bookings SET status = 'cancelada', cancel_by = ?, cancel_reason = ?, cancel_notes = ?, cancelled_at = ?, cancelled_by = ?, updated_at = ?
+    WHERE id = ? AND status = 'abierta' AND closed_at IS NULL`,
+).bind(c.by, c.reason, c.notes, c.at, c.userId, c.at, id);
+
+/** Reabrir una cancelada (el motivo queda en su historial) @param {Db} db @param {number} id @param {string} at */
+export const reopenStmt = (db, id, at) => db.prepare(
+  `UPDATE bt_bookings SET status = 'abierta', cancel_by = NULL, cancel_reason = NULL, cancel_notes = NULL, cancelled_at = NULL, cancelled_by = NULL,
+          updated_at = ? WHERE id = ?`,
+).bind(at, id);
 
 /** Cerrar (userId y at) o reabrir una cerrada (null) @param {Db} db @param {number} id @param {number | null} userId @param {string | null} at @param {string} now */
 export const closeStmt = (db, id, userId, at, now) =>

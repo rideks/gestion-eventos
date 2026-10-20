@@ -10,9 +10,9 @@ const noEconomy = (p) => p !== 'clientes.economia' && p !== 'cobros';
 
 test('columnas: las de por defecto, las elegidas y nunca las que piden un permiso que no tiene', () => {
   const s = tableState(def, P(''), { can: all });
-  assert.deepEqual(s.visible, ['name', 'ciudad', 'expedientes', 'proximo', 'uso', 'fee', 'volumen', 'facturado', 'pendiente']);
+  assert.deepEqual(s.visible, ['name', 'ciudad', 'expedientes', 'cancelados', 'proximo', 'uso', 'fee', 'volumen', 'facturado', 'pendiente']);
   const e = tableState(def, P(''), { can: noEconomy });
-  assert.deepEqual(e.visible, ['name', 'ciudad', 'expedientes', 'proximo', 'uso']);
+  assert.deepEqual(e.visible, ['name', 'ciudad', 'expedientes', 'cancelados', 'proximo', 'uso']);
   assert.ok(!e.columns.some((c) => c.key === 'nif' || c.key === 'fee'));
   // Lo guardado: sólo lo que sigue permitido, y la fija siempre
   const saved = tableState(def, P(''), { prefs: { columns: ['email', 'fee', 'inventada'] }, can: noEconomy });

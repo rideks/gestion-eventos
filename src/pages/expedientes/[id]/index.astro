@@ -4,9 +4,11 @@ import { env } from 'cloudflare:workers';
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
+import CancelDialog from '../../../components/CancelDialog.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance } from '../../../lib/data.js';
-import { NoteSchema, validate, formToObject } from '../../../lib/validate.js';
+import { NoteSchema, CancelSchema, validate, formToObject } from '../../../lib/validate.js';
+import { cancelSummary } from '../../../lib/cancel.js';
 import { nextNumberStmt, NUMBER } from '../../../repos/expedientes.js';
 import { nextSteps, plural } from '../../../lib/finance.js';
 import { eur, pct } from '../../../lib/money.js';
@@ -23,6 +25,9 @@ const me = Astro.locals.user;
 const now = today();
 let error = null;
 let errors = {};
+// La ventana de cancelar: abierta si se pide sin JavaScript (?cancelar) o si hubo un error al cancelar
+let cancelOpen = Astro.url.searchParams.has('cancelar');
+let cancelInput = {};
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
@@ -38,17 +43,29 @@ if (Astro.request.method === 'POST') {
       return Astro.redirect(`/expedientes/${id}?ok=nota#actividad`, 303);
     }
   } else if (input.intent === 'cancel' && can(me, 'expediente.close') && !isLocked(exp)) {
-    await db.batch([
-      db.prepare("UPDATE expedientes SET status = 'cancelado', closed_by = ?, closed_at = ?, updated_at = ? WHERE id = ?").bind(me.id, at, at, id),
-      activityStmt(db, who, id, 'expediente.cancel', 'canceló el expediente'),
-    ]);
-    return Astro.redirect(`/expedientes/${id}?ok=guardado`, 303);
+    // Quién cancela y por qué: queda con el expediente (histórico del cliente) y en su actividad
+    const c = validate(CancelSchema, input);
+    if (!c.ok) {
+      error = c.message;
+      errors = c.errors;
+      cancelOpen = true;
+      cancelInput = input;
+    } else {
+      await db.batch([
+        db.prepare(`UPDATE expedientes SET status = 'cancelado', closed_by = ?, closed_at = ?, cancel_by = ?, cancel_reason = ?, cancel_notes = ?, updated_at = ?
+                     WHERE id = ? AND status NOT IN ('cerrado', 'cancelado')`)
+          .bind(me.id, at, c.data.cancel_by, c.data.cancel_reason, c.data.cancel_notes, at, id),
+        activityStmt(db, who, id, 'expediente.cancel', `canceló el expediente (${cancelSummary(c.data)})`),
+      ]);
+      return Astro.redirect(`/expedientes/${id}?ok=cancelado`, 303);
+    }
   } else if (input.intent === 'reopen' && can(me, 'expediente.close') && isLocked(exp)) {
     // Vuelve a estar en curso; si era una solicitud antigua cancelada sin número, recibe ahora el siguiente
     await db.batch([
       ...(exp.number ? [] : [nextNumberStmt(db)]),
       db.prepare(`UPDATE expedientes SET status = 'abierto', number = ${exp.number ? 'number' : NUMBER},
-                         opened_at = COALESCE(opened_at, ?), opened_by = COALESCE(opened_by, ?), closed_by = NULL, closed_at = NULL, updated_at = ? WHERE id = ?`)
+                         opened_at = COALESCE(opened_at, ?), opened_by = COALESCE(opened_by, ?), closed_by = NULL, closed_at = NULL,
+                         cancel_by = NULL, cancel_reason = NULL, cancel_notes = NULL, updated_at = ? WHERE id = ?`)
         .bind(at, me.id, at, id),
       activityStmt(db, who, id, 'expediente.reopen', 'reabrió el expediente'),
     ]);
@@ -199,6 +216,7 @@ const kpiCount = 2 + (closed ? 1 : 0) + (cobros ? 1 : 0);
           <dt>Creado</dt><dd>{exp.requested_by_name ?? '—'} · {formatStamp(exp.requested_at)}</dd>
           {exp.opened_at && exp.opened_at !== exp.requested_at && <><dt>Abierto</dt><dd>{exp.opened_by_name ?? '—'} · {formatStamp(exp.opened_at)}</dd></>}
           {exp.closed_at && <><dt>{exp.status === 'cancelado' ? 'Cancelado' : 'Cerrado'}</dt><dd>{exp.closed_by_name ?? '—'} · {formatStamp(exp.closed_at)}</dd></>}
+          {exp.status === 'cancelado' && <><dt>Motivo</dt><dd>{cancelSummary(exp)}</dd></>}
         </dl>
         {exp.notes && <p class="mt msg-body">{exp.notes}</p>}
       </section>
@@ -208,18 +226,25 @@ const kpiCount = 2 + (closed ? 1 : 0) + (cobros ? 1 : 0);
           {isLocked(exp) ? (
             <>
               <h2>Expediente {exp.status}</h2>
-              <p class="muted">Está en sólo lectura. Si hay que corregir algo, reábrelo.</p>
+              {exp.status === 'cancelado' && <p class="cancel-info"><strong>Cancelado:</strong> {cancelSummary(exp)}</p>}
+              <p class="muted">Está en sólo lectura. Si hay que corregir algo, reábrelo{exp.status === 'cancelado' && ' (el motivo queda en la actividad)'}.</p>
               <button class="btn btn-ghost mt" type="submit" name="intent" value="reopen"><Icon name="lock-open" size={18} /> Reabrir expediente</button>
             </>
           ) : (
             <>
               <h2>¿El evento no se hace?</h2>
-              <p class="muted">Cancelarlo lo saca de las bandejas de pagos y cobros. Se puede reabrir.</p>
-              <button class="btn btn-danger mt" type="submit" name="intent" value="cancel" data-confirm="¿Cancelar el expediente? Sus pagos y cobros dejarán de salir en las bandejas.">Cancelar expediente</button>
+              <p class="muted">Cancelarlo lo saca de las bandejas de pagos y cobros. Se apunta quién cancela y por qué (sale en la ficha del cliente). Se puede reabrir.</p>
+              <a class="btn btn-danger mt" href="?cancelar" data-cancel-open="cancelar-expediente"><Icon name="ban" size={18} /> Cancelar expediente</a>
             </>
           )}
         </form>
       )}
     </div>
   </div>
+
+  {can(me, 'expediente.close') && !isLocked(exp) && (
+    <CancelDialog id="cancelar-expediente" title={`Cancelar ${exp.number ? `el EXP ${exp.number}` : 'el expediente'}`}
+      intro="Sus pagos y cobros dejarán de salir en las bandejas. Apunta quién cancela y por qué: queda en la ficha del cliente."
+      submit="Cancelar expediente" v={cancelInput} errors={errors} open={cancelOpen} />
+  )}
 </App>

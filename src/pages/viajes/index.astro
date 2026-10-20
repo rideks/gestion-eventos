@@ -16,6 +16,7 @@ import { TABLES } from '../../lib/tables.js';
 import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
 import { formToObject } from '../../lib/validate.js';
 import { BOOKING_TABS } from '../../lib/travel.js';
+import { cancelSummary } from '../../lib/cancel.js';
 import { eur } from '../../lib/money.js';
 import { plural } from '../../lib/finance.js';
 import { formatRange, formatMonth, formatStamp } from '../../lib/dates.js';
@@ -147,6 +148,7 @@ const pill = (s) => `pill pill-${s.tone}`;
                 {r.status === 'abierta' && !r.closed_at && r.lines > 0 && !r.passengers && <span class="pill pill-warn">Sin pasajeros</span>}
                 {r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <span class="pill pill-warn">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</span>}
               </span>
+              {r.status === 'cancelada' && <span class="cancel-note">Motivo: {cancelSummary(r)}</span>}
             </div>
             <div class="item-amount">
               <span class="big-money money">{eur(r.pvp_cents)}</span>
@@ -180,7 +182,7 @@ const pill = (s) => `pill pill-${s.tone}`;
               {has('total') && <td data-label={L.total} class="num money">{eur(r.total_cents)}</td>}
               {has('fee') && <td data-label={L.fee} class="num money">{eur(r.fee_cents)}</td>}
               {has('pvp') && <td data-label={L.pvp} class="num money"><strong>{eur(r.pvp_cents)}</strong></td>}
-              {has('estado') && <td data-label={L.estado}><span class={pill(r.state)}>{r.state.label}</span>{r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <div class="small neg">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</div>}</td>}
+              {has('estado') && <td data-label={L.estado}><span class={pill(r.state)}>{r.state.label}</span>{r.status === 'cancelada' && <div class="cancel-note">{cancelSummary(r)}</div>}{r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <div class="small neg">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</div>}</td>}
               {has('creada') && <td data-label={L.creada}>{formatStamp(r.created_at, { year: true })}</td>}
               {has('creador') && <td data-label={L.creador}>{r.created_by_name ?? '—'}</td>}
             </tr>
