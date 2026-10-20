@@ -1,5 +1,5 @@
 // Consultas a la base de datos que comparten varias páginas.
-import { summarize, nextNumber, SOON_DAYS } from './finance.js';
+import { summarize, SOON_DAYS } from './finance.js';
 import { addDays } from './dates.js';
 import { contractDue } from '../repos/contracts.js';
 import { PAYMENT_SELECT, PAYMENT_JOINS, DOCS_OF, likeTerm } from '../repos/payments.js';
@@ -84,14 +84,13 @@ export async function activeUsers(db) {
 }
 
 /**
- * Contadores de la navegación: solicitudes por abrir, pagos urgentes, facturas por emitir, facturas
+ * Contadores de la navegación: pagos urgentes, facturas por emitir, facturas
  * de proveedor por conformar (sólo las que ya se pueden: con el pago hecho) y contratos de proveedor
  * que requieren atención (próximos a caducar, pendientes de renovación o caducados).
  */
 export function navCounts(db, now) {
   return db.prepare(
-    `SELECT (SELECT COUNT(*) FROM expedientes WHERE status = 'solicitado') AS requests,
-            (SELECT COUNT(*) FROM supplier_contracts c WHERE ${contractDue('?2')}) AS contracts_due,
+    `SELECT (SELECT COUNT(*) FROM supplier_contracts c WHERE ${contractDue('?2')}) AS contracts_due,
             (SELECT COUNT(*) FROM supplier_invoices si JOIN expedientes e ON e.id = si.expediente_id
               WHERE si.kind = 'factura' AND si.review = 'pendiente' AND e.status != 'cancelado'
                 AND ${READY_TO_CONFORM}) AS to_review,
@@ -167,14 +166,6 @@ export function posWithBalance(db, q = '') {
          AND (?1 = '%%' OR number LIKE ?1 OR billed_to LIKE ?1 OR exp_name LIKE ?1 OR CAST(exp_number AS TEXT) LIKE ?1)
      ORDER BY exp_number, id`,
   ).bind(likeTerm(q)).all().then((r) => r.results);
-}
-
-/** Número que se propone al abrir un expediente: el mayor + 1 */
-export async function suggestNumber(db) {
-  const row = await db.prepare(
-    "SELECT (SELECT MAX(number) FROM expedientes) AS max, (SELECT value FROM settings WHERE key = 'first_number') AS first",
-  ).first();
-  return nextNumber(row?.max, row?.first);
 }
 
 /** ¿Está libre ese número de expediente? */

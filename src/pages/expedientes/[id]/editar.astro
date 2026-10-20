@@ -40,7 +40,7 @@ if (Astro.request.method === 'POST') {
   // (como al pedirlo)
   const otherClient = cl?.ok && cl.value.id !== exp.client_id;
   const fee = feeEditable ? validate(ExpedienteFeeSchema, input) : { ok: true, data: { fee: otherClient ? cl.value.fee_bp : exp.fee_bp } };
-  // El número sólo lo cambia Administración, y sólo si el expediente ya lo tiene
+  // El número (se da solo al crearlo) sólo lo cambia quien tiene «Cambiar el número de los expedientes»
   const n = admin && exp.number ? validate(NumberSchema, input) : { ok: true, data: { number: exp.number } };
   if (isLocked(exp)) {
     error = LOCKED_MSG;
@@ -68,15 +68,22 @@ if (Astro.request.method === 'POST') {
     if (cl.value.id !== exp.client_id) changes.push(`cliente: ${cl.value.name}`);
     // Sin los valores: la actividad del expediente la ve también quien no puede ver el fee
     if (fee.data.fee !== exp.fee_bp) changes.push('fee');
-    await db.batch([
-      db.prepare(
-        `UPDATE expedientes SET number = ?, name = ?, company = ?, client_id = ?, fee_bp = ?, contact_name = ?, contact_email = ?, contact_phone = ?,
-                destination = ?, start_date = ?, end_date = ?, attendees = ?, notes = ?, manager_id = ?, updated_at = ? WHERE id = ?`,
-      ).bind(n.data.number, d.name, cl.value.name, cl.value.id, fee.data.fee, d.contact_name, d.contact_email, d.contact_phone, d.destination,
-        d.start_date, d.end_date, d.attendees, d.notes, d.manager_id, nowIso(), id),
-      activityStmt(db, actor(Astro), id, 'expediente.update', `cambió los datos del evento${changes.length ? ` (${changes.join(', ')})` : ''}`),
-    ]);
-    return Astro.redirect(`/expedientes/${id}?ok=guardado`, 303);
+    try {
+      await db.batch([
+        db.prepare(
+          `UPDATE expedientes SET number = ?, name = ?, company = ?, client_id = ?, fee_bp = ?, contact_name = ?, contact_email = ?, contact_phone = ?,
+                  destination = ?, start_date = ?, end_date = ?, attendees = ?, notes = ?, manager_id = ?, updated_at = ? WHERE id = ?`,
+        ).bind(n.data.number, d.name, cl.value.name, cl.value.id, fee.data.fee, d.contact_name, d.contact_email, d.contact_phone, d.destination,
+          d.start_date, d.end_date, d.attendees, d.notes, d.manager_id, nowIso(), id),
+        activityStmt(db, actor(Astro), id, 'expediente.update', `cambió los datos del evento${changes.length ? ` (${changes.join(', ')})` : ''}`),
+      ]);
+      return Astro.redirect(`/expedientes/${id}?ok=guardado`, 303);
+    } catch (err) {
+      // Si a la vez se ha creado (o cambiado) otro expediente con ese número, la base de datos no deja repetirlo
+      if (!/UNIQUE/i.test(String(err?.message))) throw err;
+      error = `Ya hay un expediente con el número ${n.data.number}.`;
+      errors = { number: error };
+    }
   }
   Astro.response.status = 400;
 }

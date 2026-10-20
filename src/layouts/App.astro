@@ -22,7 +22,6 @@ const company = env.COMPANY_NAME || 'Seven Worlds';
 const work = can(user, 'expedientes');
 // Ya pedidos en el middleware (en paralelo con la página); si no, aquí. Sin expedientes no hay contadores.
 const counts = work ? ((await Astro.locals.counts) ?? await navCounts(env.DB, today())) : {};
-const canOpen = can(user, 'expediente.open');
 const reviewer = can(user, 'supplier.review');
 const toReview = reviewer ? counts.to_review : 0;
 
@@ -31,13 +30,13 @@ const warn = Astro.url.searchParams.get('aviso') === 'permiso' ? 'No tienes perm
 
 const nav = [
   ...(work ? [{ key: 'inicio', href: '/', label: 'Inicio', icon: 'house' }] : []),
-  ...(work ? [{ key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder', badge: canOpen ? counts.requests : 0, tone: 'warn' }] : []),
+  ...(work ? [{ key: 'expedientes', href: '/expedientes', label: 'Expedientes', icon: 'folder' }] : []),
   ...(can(user, 'pagos') ? [{ key: 'pagos', href: '/pagos', label: 'Pagos', icon: 'arrow-up-right', badge: counts.urgent, tone: 'danger' }] : []),
   ...(can(user, 'cobros') ? [{ key: 'cobros', href: '/cobros', label: 'Cobros', icon: 'arrow-down-left', badge: counts.to_issue, tone: 'warn' }] : []),
   ...(can(user, 'clientes') ? [{ key: 'clientes', href: '/clientes', label: 'Clientes', icon: 'building' }] : []),
   ...(can(user, 'viajes') ? [{ key: 'viajes', href: '/viajes', label: 'Business Travel', icon: 'plane' }] : []),
   ...(can(user, 'proveedores') ? [{ key: 'proveedores', href: '/proveedores', label: 'Proveedores', icon: 'briefcase', badge: can(user, 'contratos') ? counts.contracts_due : 0, tone: 'warn' }] : []),
-  ...(work ? [{ key: 'nuevo', href: '/expedientes/nuevo', label: 'Nueva solicitud', icon: 'folder-plus', sep: true }] : []),
+  ...(work ? [{ key: 'nuevo', href: '/expedientes/nuevo', label: 'Nuevo expediente', icon: 'folder-plus', sep: true }] : []),
   ...(can(user, 'users') ? [{ key: 'usuarios', href: '/usuarios', label: 'Usuarios y permisos', icon: 'user-plus', sep: !work }] : []),
   ...(can(user, 'settings') ? [{ key: 'ajustes', href: '/ajustes', label: 'Ajustes', icon: 'settings' }] : []),
   { key: 'cuenta', href: '/cuenta', label: 'Mi cuenta', icon: 'user-round' },

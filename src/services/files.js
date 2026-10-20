@@ -4,8 +4,25 @@
 // Nunca hay URL pública: se sirven desde /archivos/<id>/<nombre> con sesión. Lo usan los demás servicios
 // (y las páginas que aún no están en capas). Las comprobaciones del fichero son puras: src/lib/files.js.
 import * as repo from '../repos/files.js';
-import { uploadInfo, checkSignature, getFile } from '../lib/files.js';
+import { uploadInfo, checkSignature, getFile, UploadError } from '../lib/files.js';
 import { randomToken } from '../lib/crypto.js';
+
+/**
+ * ¿Vale este archivo? Lo mismo que comprueba storeFile (tipo, tamaño y sus primeros bytes), sin guardar nada.
+ * Para comprobarlo antes de crear lo que lo usa (p. ej. un expediente, que gastaría un número).
+ * @param {File | null} file
+ * @returns {Promise<string | null>} el motivo si no vale; null si vale (o si no hay archivo)
+ */
+export async function fileProblem(file) {
+  if (!file) return null;
+  try {
+    checkSignature(uploadInfo(file.name, file.size), new Uint8Array(await file.arrayBuffer()));
+    return null;
+  } catch (err) {
+    if (err instanceof UploadError) return err.message;
+    throw err;
+  }
+}
 
 /**
  * Comprueba el fichero, lo sube a R2 y crea su fila. Lanza UploadError si no es válido (sin guardar nada).

@@ -10,7 +10,7 @@ import { VatRateSchema, FirstNumberSchema, InvoiceSettingsSchema, validate, form
 import { invoiceSettings, peekInvoiceNumber, patternProblem, counterKey, nextSeq, formatInvoiceNumber, yearly } from '../lib/invoicing.js';
 import { today } from '../lib/dates.js';
 import { loadRates, pctText } from '../lib/vat.js';
-import { suggestNumber } from '../lib/data.js';
+import { upcomingNumber } from '../repos/expedientes.js';
 
 const denied = deny(Astro, 'settings');
 if (denied) return denied;
@@ -116,7 +116,7 @@ if (Astro.request.method === 'POST') {
 const [rates, first, next, billing, nextInvoice] = await Promise.all([
   loadRates(db),
   db.prepare("SELECT value FROM settings WHERE key = 'first_number'").first().then((r) => r?.value ?? '1001'),
-  suggestNumber(db),
+  upcomingNumber(db),
   invoiceSettings(db),
   peekInvoiceNumber(db, year),
 ]);
@@ -221,8 +221,8 @@ const [rates, first, next, billing, nextInvoice] = await Promise.all([
 
   <form method="post" class="form-section mt">
     <h2><Icon name="folder" /> Numeración de expedientes</h2>
-    <p class="muted">Al abrir una solicitud se propone el número siguiente al mayor que exista (ahora: <strong>{next}</strong>).
-      Si todavía no hay ninguno, se empieza por este.</p>
+    <p class="muted">Cada expediente recibe su número al crearlo: el siguiente al último dado (el próximo será el <strong>{next}</strong>).
+      Nunca se da uno menor que este primer número: si lo subes, se sigue desde él.</p>
     <div class="row row-2">
       <div class:list={['field', { 'has-error': errors.first_number }]}>
         <label for="first_number">Primer número</label>

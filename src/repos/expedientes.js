@@ -16,3 +16,26 @@ export function header(db, id) {
       WHERE e.id = ?`,
   ).bind(id).first();
 }
+
+// ── Número de expediente ───────────────────────────────────────────────────
+// Cada expediente recibe su número al crearlo: el siguiente de un contador (counters, 'expediente') que nunca
+// baja del mayor número ya usado (Administración puede cambiar uno en «Editar») ni del «primer número» de Ajustes.
+// Se da en UNA sentencia, en el mismo batch que el alta: dos altas a la vez nunca reciben el mismo número, y un
+// número dado no se vuelve a dar aunque se borre el expediente (puede quedar un hueco).
+const FLOOR = `MAX(COALESCE((SELECT MAX(number) FROM expedientes), 0),
+                   COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'first_number'), 1001) - 1)`;
+
+/** Reserva el siguiente número (va antes, en el mismo batch, que la sentencia que lo usa con NUMBER) @param {Db} db */
+export const nextNumberStmt = (db) => db.prepare(
+  `INSERT INTO counters (key, value) VALUES ('expediente', ${FLOOR} + 1)
+   ON CONFLICT (key) DO UPDATE SET value = MAX(value, ${FLOOR}) + 1`,
+);
+
+/** El número recién reservado con nextNumberStmt (para usarlo dentro de otra sentencia del mismo batch) */
+export const NUMBER = "(SELECT value FROM counters WHERE key = 'expediente')";
+
+/** El número que recibirá el próximo expediente (para enseñarlo en Ajustes) @param {Db} db @returns {Promise<number>} */
+export async function upcomingNumber(db) {
+  const row = await db.prepare(`SELECT MAX(COALESCE(${NUMBER}, 0), ${FLOOR}) + 1 AS n`).first();
+  return row.n;
+}

@@ -22,7 +22,6 @@ const change = e.prev_budget_base != null ? e.budget_base - e.prev_budget_base :
       {e.poLeft > 0 && <span>PO sin facturar {eur(e.poLeft)}</span>}
     </span>
     <span class="item-flags">
-      {e.status === 'solicitado' && <span class="pill pill-warn">Solicitud por abrir</span>}
       {e.overInvoiced > 0 && <span class="pill pill-danger" title="El presupuesto vigente es menor que lo ya facturado: si el cliente no paga la diferencia, haz una factura rectificativa">Facturado de más {eur(e.overInvoiced)}</span>}
       {e.poExcess > 0 && <span class="pill pill-warn" title="El presupuesto vigente es menor que sus PO: pide al cliente que ajuste la PO o ciérrala por lo que no se facture">PO por encima del presupuesto {eur(e.poExcess)}</span>}
       {e.poMissing > 0 && <span class="pill pill-info">Faltan PO por {eur(e.poMissing)}</span>}

@@ -9,7 +9,7 @@ export const AREAS = [
     label: 'Expedientes',
     permissions: [
       { key: 'expedientes', label: 'Ver y trabajar en los expedientes', help: 'Pedir expedientes, presupuesto, pagos previstos, documentos y notas. Es la base de casi todo lo demás.' },
-      { key: 'expediente.open', label: 'Abrir expedientes', help: 'Dar número a las solicitudes.' },
+      { key: 'expediente.open', label: 'Cambiar el número de los expedientes', help: 'Los expedientes reciben su número solos al crearlos; con este permiso se cambia en «Editar» (p. ej. para que coincida con contabilidad) y se ven en Inicio los nuevos de la semana.' },
       { key: 'expediente.close', label: 'Cerrar, reabrir y cancelar expedientes' },
       { key: 'delete', label: 'Borrar lo que han subido otras personas' },
     ],

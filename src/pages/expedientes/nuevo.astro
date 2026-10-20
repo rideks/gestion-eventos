@@ -1,7 +1,7 @@
 ---
-// Paso 1-2 del proceso: el presupuesto está aprobado → se pide el expediente.
-// Sustituye al correo a Administración: todo lo necesario va en un único formulario
-// (datos, presupuesto aprobado y previsión de pagos) y le aparece en su bandeja.
+// Paso 1-2 del proceso: el presupuesto está aprobado → se crea el expediente, ya en curso y con su número (el
+// siguiente, sin que nadie tenga que abrirlo; Administración puede cambiarlo en «Editar»). Todo va en un único
+// formulario: datos, presupuesto aprobado y previsión de pagos.
 import { env } from 'cloudflare:workers';
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
@@ -10,12 +10,13 @@ import VatLines from '../../components/VatLines.astro';
 import FileField from '../../components/FileField.astro';
 import ForecastRows from '../../components/ForecastRows.astro';
 import EntityPickerKit from '../../components/EntityPickerKit.astro';
-import { readForm, actor, can, activityStmt } from '../../lib/app.js';
-import { ExpedienteSchema, forecastRowSchema, NumberSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
+import { readForm, actor, activityStmt } from '../../lib/app.js';
+import { ExpedienteSchema, forecastRowSchema, parseRows, validate, formToObject } from '../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines } from '../../lib/vat.js';
-import { activeUsers, suggestNumber, numberTaken } from '../../lib/data.js';
+import { activeUsers } from '../../lib/data.js';
+import { nextNumberStmt, NUMBER } from '../../repos/expedientes.js';
 import { getFile, UploadError } from '../../lib/files.js';
-import { storeFile } from '../../services/files.js';
+import { storeFile, fileProblem } from '../../services/files.js';
 import { eur } from '../../lib/money.js';
 import { nowIso } from '../../lib/dates.js';
 import { serviceContext } from '../../services/context.js';
@@ -24,7 +25,6 @@ import * as clients from '../../services/clients.js';
 
 const db = env.DB;
 const me = Astro.locals.user;
-const admin = can(me, 'expediente.open');
 let error = null;
 let errors = {};
 let v = { manager_id: me.id };
@@ -44,6 +44,9 @@ if (Astro.request.method === 'POST') {
   const fc = form ? parseRows(form, 'fc', ['supplier', 'supplier_id', 'concept', 'due_date', 'total', 'rate'], forecastRowSchema(rates), { ignore: ['rate', 'supplier_id'] }) : { ok: true, rows: [] };
   // Los proveedores de la previsión tienen que estar dados de alta (se eligen de la lista)
   const sups = fc.ok && fc.rows.length ? await suppliers.resolveRowsForPayment(serviceContext(Astro), fc.rows) : { ok: true, value: null };
+  // El presupuesto se comprueba antes de crear nada: un archivo que no vale no gasta un número de expediente
+  const file = form ? getFile(form, 'file') : null;
+  const badFile = await fileProblem(file);
   if (form) {
     // Para volver a pintar el formulario tal cual si hay un error
     budgetLines = rawVatLines(form);
@@ -51,8 +54,6 @@ if (Astro.request.method === 'POST') {
     forecast = col('supplier').map((supplier, i) => ({ supplier, supplier_id: col('supplier_id')[i], concept: col('concept')[i], due_date: col('due_date')[i], total: col('total')[i], rate: col('rate')[i] }))
       .filter((r) => r.supplier || r.total);
   }
-  const wantsNumber = admin && String(input.number ?? '').trim() !== '';
-  const n = wantsNumber ? validate(NumberSchema, input) : { ok: true, data: { number: null } };
 
   if (!e.ok) {
     error = e.message;
@@ -67,25 +68,24 @@ if (Astro.request.method === 'POST') {
     error = `Previsión de pagos · ${fc.message}`;
   } else if (!sups.ok) {
     error = `Previsión de pagos · ${sups.message}`;
-  } else if (!n.ok) {
-    error = n.message;
-    errors = n.errors;
-  } else if (n.data.number && (await numberTaken(db, n.data.number))) {
-    error = `Ya hay un expediente con el número ${n.data.number}.`;
-    errors = { number: error };
+  } else if (badFile) {
+    error = badFile;
   } else {
     const d = e.data;
-    const number = n.data.number;
     const at = nowIso();
-    const exp = await db.prepare(
-      `INSERT INTO expedientes (number, name, company, client_id, fee_bp, contact_name, contact_email, contact_phone, destination, start_date, end_date,
-                                attendees, notes, status, manager_id, requested_by, requested_at, opened_by, opened_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-    ).bind(number, d.name, cl.value.name, cl.value.id, cl.value.fee_bp, d.contact_name, d.contact_email, d.contact_phone, d.destination, d.start_date, d.end_date,
-      d.attendees, d.notes, number ? 'abierto' : 'solicitado', d.manager_id, me.id, at, number ? me.id : null, number ? at : null, at).first();
+    // El número y el alta en la misma transacción: el siguiente del contador, sin repetir aunque se creen dos a la vez
+    const [, created] = await db.batch([
+      nextNumberStmt(db),
+      db.prepare(
+        `INSERT INTO expedientes (number, name, company, client_id, fee_bp, contact_name, contact_email, contact_phone, destination, start_date, end_date,
+                                  attendees, notes, status, manager_id, requested_by, requested_at, opened_by, opened_at, updated_at)
+         VALUES (${NUMBER}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'abierto', ?, ?, ?, ?, ?, ?) RETURNING id, number`,
+      ).bind(d.name, cl.value.name, cl.value.id, cl.value.fee_bp, d.contact_name, d.contact_email, d.contact_phone, d.destination, d.start_date, d.end_date,
+        d.attendees, d.notes, d.manager_id, me.id, at, me.id, at, at),
+    ]);
+    const exp = created.results[0];
 
     try {
-      const file = getFile(form, 'file');
       const fileId = file ? await storeFile({ db, bucket: env.DOCS, file, expedienteId: exp.id, userId: me.id }) : null;
       const supOf = sups.value?.of;
       await db.batch([
@@ -95,31 +95,30 @@ if (Astro.request.method === 'POST') {
           `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines, due_date, planned, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
         ).bind(exp.id, supOf(r).name, supOf(r).id, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, me.id)),
-        activityStmt(db, who, exp.id, 'expediente.request',
-          `pidió el expediente con un presupuesto de ${eur(b.base)} sin IVA${fc.rows.length ? ` y ${fc.rows.length} pagos previstos` : ''}`),
-        ...(number ? [activityStmt(db, who, exp.id, 'expediente.open', `abrió el expediente con el número ${number}`)] : []),
+        activityStmt(db, who, exp.id, 'expediente.create',
+          `creó el expediente ${exp.number} con un presupuesto de ${eur(b.base)} sin IVA${fc.rows.length ? ` y ${fc.rows.length} pagos previstos` : ''}`),
       ]);
     } catch (err) {
-      // Sin documento válido no se crea nada: se borra el expediente recién creado
+      // Si no se ha podido guardar el documento, no se crea nada: se borra el expediente (su número no se vuelve a dar)
       await db.prepare('DELETE FROM expedientes WHERE id = ?').bind(exp.id).run();
       if (!(err instanceof UploadError)) throw err;
       error = err.message;
     }
-    if (!error) return Astro.redirect(`/expedientes/${exp.id}?ok=${number ? 'abierto' : 'solicitado'}`, 303);
+    if (!error) return Astro.redirect(`/expedientes/${exp.id}?ok=creado`, 303);
   }
   Astro.response.status = 400;
 }
 
-const [users, suggested, picker, clientPicker] = await Promise.all([
-  activeUsers(db), admin ? suggestNumber(db) : null, suppliers.pickerData(serviceContext(Astro)), clients.pickerData(serviceContext(Astro)),
+const [users, picker, clientPicker] = await Promise.all([
+  activeUsers(db), suppliers.pickerData(serviceContext(Astro)), clients.pickerData(serviceContext(Astro)),
 ]);
 const { options = [], types = [] } = picker.ok ? picker.value : {};
 ---
-<App title="Nueva solicitud" section="nuevo" error={error} fieldErrors={errors}>
+<App title="Nuevo expediente" section="nuevo" error={error} fieldErrors={errors}>
   <div class="page-top">
     <div>
-      <h1>Nueva solicitud</h1>
-      <p>El cliente ha aprobado el presupuesto: pide aquí el expediente. Sustituye al correo a Administración.</p>
+      <h1>Nuevo expediente</h1>
+      <p>El cliente ha aprobado el presupuesto: crea aquí el expediente. Queda en curso con el número siguiente.</p>
     </div>
   </div>
 
@@ -141,19 +140,8 @@ const { options = [], types = [] } = picker.ok ? picker.value : {};
       <ForecastRows rows={forecast} rates={rates} />
     </section>
 
-    {admin && (
-      <section class="form-section">
-        <h2><Icon name="folder" /> Número de expediente <span class="opt muted small">(sólo Administración)</span></h2>
-        <div class:list={['field', { 'has-error': errors.number }]}>
-          <label for="number">Número</label>
-          <input id="number" name="number" type="number" min="1" inputmode="numeric" value={v.number ?? ''} placeholder={String(suggested)} />
-          <p class="hint">Déjalo vacío para crear sólo la solicitud. Si pones el número ({suggested} es el siguiente), el expediente queda abierto directamente.</p>
-        </div>
-      </section>
-    )}
-
     <div class="actions">
-      <button class="btn btn-primary" type="submit" data-busy="Enviando…"><Icon name="send" size={18} /> {admin ? 'Crear' : 'Enviar solicitud'}</button>
+      <button class="btn btn-primary" type="submit" data-busy="Creando…"><Icon name="folder-plus" size={18} /> Crear expediente</button>
       <a class="btn btn-ghost" href="/expedientes">Cancelar</a>
     </div>
   </form>

@@ -4,7 +4,7 @@
 --   · EXP 1287 Workshop BMW (Valladolid)      → celebrado, por cerrar (como el Excel de cierre)
 --   · EXP 1285 Jornadas de trabajo ELECNOR    → cerrado
 --   · EXP 1289 Convención anual ROCHE         → en curso, con pagos urgentes y una factura pedida
---   · Lanzamiento Winlevi GLENMARK            → solicitud pendiente de abrir
+--   · EXP 1290 Lanzamiento Winlevi GLENMARK   → recién creado (los expedientes nacen en curso con su número)
 -- Cuentas, una por rol (contraseña de todas: demo-gestion-2026):
 --   tania@example.com (Administración) · marta@example.com (Eventos) · direccion@example.com (Jefes)
 --   tesoreria@example.com (Tesorería) · tecnico@example.com (Técnico)
@@ -51,8 +51,8 @@ INSERT INTO expedientes (id, number, name, company, contact_name, contact_email,
    NULL, 'cerrado', 2, 2, '2026-03-02T08:30:00Z', 1, '2026-03-02T10:05:00Z', 1, '2026-06-15T16:20:00Z'),
   (3, 1289, 'Convención anual', 'ROCHE FARMA', 'Javier Molina', 'javier.molina@example.com', '+34 600 333 444', 'Sevilla', '2026-11-12', '2026-11-14', 220,
    'Anticipo del 50 % con PO; el resto, a la vuelta.', 'abierto', 2, 2, '2026-09-20T10:00:00Z', 1, '2026-09-21T08:15:00Z', NULL, NULL),
-  (4, NULL, 'Lanzamiento Winlevi', 'GLENMARK', 'Josephin Malade', 'josephin.malade@example.com', NULL, 'Marbella', '2027-04-20', '2027-04-22', 180,
-   'El cliente quiere la factura del hotel separada del resto.', 'solicitado', 2, 2, '2026-10-16T15:42:00Z', NULL, NULL, NULL, NULL);
+  (4, 1290, 'Lanzamiento Winlevi', 'GLENMARK', 'Josephin Malade', 'josephin.malade@example.com', NULL, 'Marbella', '2027-04-20', '2027-04-22', 180,
+   'El cliente quiere la factura del hotel separada del resto.', 'abierto', 2, 2, '2026-10-16T15:42:00Z', 2, '2026-10-16T15:42:00Z', NULL, NULL);
 
 -- Presupuestos con su desglose por tipos de IVA (alojamiento al 10 %, servicios al 21 %)
 INSERT INTO budgets (expediente_id, version, base_cents, total_cents, vat_lines, note, created_by, created_at) VALUES
@@ -202,7 +202,7 @@ INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUE
   (3, 2, 'Marta López', 'payment.add', 'añadió un pago a Catering Lazo (2.200,00 €)', '2026-10-01T13:00:00Z'),
   (3, 1, 'Tania Ruiz', 'po.add', 'subió la PO 4700112233 de ROCHE FARMA (48.200,00 € sin IVA)', '2026-10-05T09:40:00Z'),
   (3, 2, 'Marta López', 'invoice.request', 'pidió una factura a ROCHE FARMA por 55.022,00 € con la PO 4700112233', '2026-10-16T09:30:00Z'),
-  (4, 2, 'Marta López', 'expediente.request', 'pidió el expediente con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z');
+  (4, 2, 'Marta López', 'expediente.create', 'creó el expediente 1290 con un presupuesto de 130.000,00 € sin IVA y 3 pagos previstos', '2026-10-16T15:42:00Z');
 
 -- ── Proveedores: el directorio sale de los nombres de los pagos; algunas fichas, completas ─────────
 INSERT INTO suppliers (name, created_by)
@@ -402,7 +402,7 @@ INSERT INTO bt_line_passengers (line_id, passenger_id) VALUES
   (14, 10),
   (15, 9),
   (15, 10);
-INSERT INTO counters (key, value) VALUES ('bt_booking:2026', 7);
+INSERT INTO counters (key, value) VALUES ('bt_booking:2026', 7), ('expediente', 1290);
 INSERT INTO change_log (entity, entity_id, user_id, action, summary, at)
 SELECT 'bt_booking', b.id, 2, 'alta', 'Alta de la reserva para ' || c.name, b.created_at FROM bt_bookings b JOIN clients c ON c.id = b.client_id;
 INSERT INTO change_log (entity, entity_id, user_id, action, summary, at) VALUES ('bt_booking', 5, 2, 'estado', 'Reserva cancelada', '2026-10-14T09:00:00Z'),

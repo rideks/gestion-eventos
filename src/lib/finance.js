@@ -285,11 +285,5 @@ export function closingChecks(s) {
   return checks;
 }
 
-/** Siguiente número de expediente: el mayor + 1 (o el primero configurado) */
-export function nextNumber(maxNumber, firstNumber) {
-  const first = Number(firstNumber) || 1;
-  return Math.max(first, (Number(maxNumber) || 0) + 1);
-}
-
-/** 'EXP 1287' (o 'Solicitud' si aún no tiene número) */
+/** 'EXP 1287' (o 'Solicitud' si no tiene número: sólo las solicitudes antiguas que se cancelaron sin abrir) */
 export const expLabel = (e) => (e.number ? `EXP ${e.number}` : 'Solicitud');

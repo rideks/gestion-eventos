@@ -112,6 +112,10 @@ depende de los expedientes. Las numeraciones nuevas (referencias de reserva y, m
 Business Travel) usan `src/repos/counters.js`: un contador que se incrementa en una sola sentencia, así que nunca
 sale el mismo número aunque dos personas guarden a la vez.
 
+Los **números de expediente** también salen de un contador (`src/repos/expedientes.js`: `nextNumberStmt` y `NUMBER`), en el
+mismo `db.batch` que el alta: el contador sube y el INSERT usa ese valor dentro de la misma transacción. El contador nunca
+baja del mayor número usado ni del primer número de Ajustes, porque Administración puede cambiar un número a mano.
+
 Ya están en capas Proveedores, Contratos, Clientes y **Pagos** (la pestaña Pagos del expediente, la ficha de cada
 pago con sus facturas, proformas y justificante, y la bandeja `/pagos`; `src/services/payments.js`). El resto
 (cobros, facturas al cliente, expedientes, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está

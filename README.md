@@ -15,8 +15,7 @@ transparente), y colores negro, blanco y amarillo `#FFCF00` definidos al princip
 | Paso | Antes | Ahora |
 |---|---|---|
 | 1. El cliente aprueba el presupuesto | — | — |
-| 2. Pedir el expediente | Correo a Tania con los datos, el Excel y la previsión de pagos | **Nueva solicitud**: un formulario con todo (datos, contacto, presupuesto + total, previsión de pagos). Le aparece a Administración en su bandeja y en el contador del menú. |
-| 3. Abrir el expediente | Tania lo crea a mano y le da número | Un botón: se propone el **siguiente número libre** (editable si debe coincidir con contabilidad). La previsión de pagos ya está dentro. |
+| 2. Crear el expediente | Correo a Tania con los datos, el Excel y la previsión de pagos; Tania lo crea a mano y le da número | **Nuevo expediente**: un formulario con todo (datos, contacto, presupuesto + total, previsión de pagos). Nace **en curso** con el **número siguiente**, sin que nadie tenga que abrirlo; Administración lo ve en Inicio («Expedientes nuevos esta semana») y puede cambiar el número en «Editar» si debe coincidir con contabilidad. |
 | Cambios de última hora | Correos y versiones de Excel sueltas | **Versiones del presupuesto** (v1, v2…) con el archivo, el total y qué ha cambiado (+/− €); si a una versión le falta el documento, se sube después desde su fila del historial. Al subir una versión nueva, **Cobros se recalcula** con ella: las PO y las facturas se mantienen, lo que falta por facturar es el presupuesto vigente menos lo facturado o pedido, y avisa si hace falta otra PO por la diferencia, si las PO superan el presupuesto o si se ha facturado de más. **Notas** y **actividad** en cada expediente. |
 | Facturas de proveedores | Se adjuntan por correo | Se suben al pago (PDF/foto desde el móvil) indicando si es **factura** o **proforma**. Un pago puede tener **varias facturas y proformas**, y una factura puede cubrir **varios pagos** (dos anticipos y una única factura; se comprueba que su total cuadra). La ficha de cada pago sigue el orden **① factura o proforma del proveedor → ② justificante y pago → ③ factura conforme**: la factura se da por **conforme** (verde, «Con factura») cuando el pago está hecho; mientras tanto queda «recibida» y en la bandeja sale en «Esperando el pago». La **campana** sólo avisa de las facturas que ya se pueden conformar (de pagos hechos). Las proformas no avisan a nadie. Administración puede borrar la factura o proforma vieja y dejar la nueva, pero una factura **conforme no se puede borrar**: se sube otra con un **comentario** de por qué, y vuelve a avisar. Las **previsiones** («el hotel exige 21.400 € antes del 29/01») se completan cuando llegan los documentos. Se pueden ir **añadiendo pagos** en cualquier momento, de uno en uno o **varios de golpe**; el importe se escribe **con IVA** y el sin IVA se calcula. |
 | Pagos | Se controlan a mano | **Bandeja de pagos** de todos los expedientes por fecha límite (vencidos, próximos 7 días, este mes…) y botón **Pagado** con fecha y forma de pago (transferencia, tarjeta…). Desde Eventos sólo se marcan los pagos hechos **con tarjeta** («Pagado con tarjeta»); las transferencias y los demás los marca Administración. Para marcar pagado un pago **por transferencia** hay que subir antes el **justificante bancario**: si falta, sale un aviso. Un **pago hecho no se modifica** (ni importe, ni fecha, ni justificante, ni se borra); si hubo un error, Administración puede **«Deshacer pagado»**, que queda en la actividad. A un pago hecho se le pueden seguir subiendo facturas y proformas. Aviso de **pagos hechos sin factura**. |
@@ -138,7 +137,7 @@ Reparto inicial:
 | Permiso | Jefes | Administración | Tesorería | Eventos | Técnico |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Ver y trabajar en los expedientes (pedirlos, presupuesto, pagos previstos, documentos, notas) | ✔ | ✔ | ✔ | ✔ | |
-| Abrir expedientes (darles número) | ✔ | ✔ | | | |
+| Cambiar el número de los expedientes (y ver en Inicio los nuevos de la semana) | ✔ | ✔ | | | |
 | Cerrar, reabrir y cancelar expedientes | ✔ | ✔ | | | |
 | Borrar lo que han subido otras personas (nunca una factura conforme) | ✔ | ✔ | | | |
 | Bandeja de pagos y marcar pagado **con tarjeta** | ✔ | ✔ | ✔ | ✔ | |
@@ -154,7 +153,7 @@ Reparto inicial:
 | Ver los **contratos** de los proveedores (caducidades, condiciones, historial y documento) | ✔ | ✔ | ✔ | | |
 | Crear, renovar, modificar y borrar contratos; marcar la renovación | ✔ | ✔ | ✔ | | |
 | Ver el directorio y las fichas de **clientes** (contacto, expedientes, proveedores con los que se ha trabajado) | ✔ | ✔ | ✔ | ✔ | |
-| **Dar de alta** clientes nuevos (también desde la solicitud, con aviso de los que tienen un nombre parecido) | ✔ | ✔ | ✔ | ✔ | |
+| **Dar de alta** clientes nuevos (también desde el expediente nuevo, con aviso de los que tienen un nombre parecido) | ✔ | ✔ | ✔ | ✔ | |
 | Editar, fusionar y borrar clientes | ✔ | ✔ | ✔ | | |
 | Ver y cambiar los **datos fiscales, el fee, el acuerdo de pago y lo presupuestado** de cada cliente (y sus entidades) | ✔ | ✔ | ✔ | | |
 | Ver y gestionar las reservas de **Business Travel** (pasajeros, servicios, importes y PVP) | ✔ | ✔ | ✔ | ✔ | |
@@ -176,15 +175,15 @@ Reparto inicial:
 
 ## Pantallas
 
-- **Inicio**: lo que hay que mover hoy (solicitudes por abrir, pagos urgentes, facturas por emitir,
-  cobros vencidos, expedientes en marcha, celebrados por cerrar y actividad reciente), con los totales arriba
-  (expedientes en curso, pagos en 7 días, pendiente de cobro y por facturar). A Eventos le sale arriba **«Te toca»**:
+- **Inicio**: lo que hay que mover hoy (pagos urgentes, facturas por emitir, cobros vencidos, expedientes en marcha
+  y celebrados por cerrar; Administración, además, los **expedientes nuevos de la semana**), con los totales arriba
+  (expedientes en curso, pagos en 7 días, pendiente de cobro y por facturar). La actividad de cada expediente está
+  en su propia ficha. A Eventos le sale arriba **«Te toca»**:
   las facturas que reclamar a proveedores (pagos ya hechos sin factura) de sus expedientes.
 - **Buscar** (cabecera): expedientes, clientes (también por NIF o por una de sus entidades), proveedores, nº de
   factura o proforma, facturas al cliente y PO. Un número de
   expediente exacto (`1287`) abre directamente el expediente.
-- **Expedientes**: pestañas En curso (primero las solicitudes por abrir, marcadas «Por abrir») · Por cerrar · Míos ·
-  Cerrados · Cancelados · Todos, y buscador.
+- **Expedientes**: pestañas En curso · Por cerrar · Míos · Cerrados · Cancelados · Todos, y buscador.
 - **Expediente**: Resumen (venta, coste, beneficio al cerrar, cobrado, próximos pasos, datos y actividad) ·
   Pagos · Cobros (PO y facturas) · Presupuesto (versiones) · Cierre. Cada próximo paso lleva a donde se resuelve:
   si es de una sola cosa (un pago vencido, una factura por emitir…), directamente a su ficha.
@@ -216,7 +215,7 @@ Reparto inicial:
   debajo **2. Justificante y pago** (Administración sube el justificante y lo marca pagado, o «Deshacer pagado»; Eventos
   sólo «Pagado con tarjeta»).
 - El **proveedor de un pago se elige de la lista** de proveedores dados de alta (en el alta del pago, al modificarlo,
-  en «varios pagos previstos» y en la previsión de la Nueva solicitud): al escribir se buscan por nombre, nombre
+  en «varios pagos previstos» y en la previsión del Nuevo expediente): al escribir se buscan por nombre, nombre
   anterior, tipo o ciudad, sin acentos ni mayúsculas, y cada uno sale con su tipo y su ciudad. Un nombre que no está
   **no se guarda** (ni en el navegador ni en el servidor). Si es nuevo, «**Dar de alta «…»**» abre una ventana
   (nombre, tipo y ciudad) que antes **avisa de los que tienen un nombre parecido** («Barcelo Valladolid S.L.» →
@@ -259,7 +258,7 @@ Reparto inicial:
   pendiente de cobro). **Ficha** de cada cliente: datos, antigüedad, personas de contacto de sus expedientes,
   condiciones y datos fiscales, **relación económica** (ver arriba), sus expedientes (previstos, en curso,
   terminados y cancelados), los **hoteles y proveedores** con los que se ha trabajado para él, por año y por ciudad,
-  sus **entidades de facturación** y el **historial** de condiciones y datos. En la **solicitud** y al editar un
+  sus **entidades de facturación** y el **historial** de condiciones y datos. En el **expediente nuevo** y al editar un
   expediente, el cliente **se elige de la lista** (no se escribe a mano); si es nuevo, «Dar de alta» con aviso de
   los parecidos. Si aun así hay repetidos, se **fusionan** (expedientes, entidades e historial pasan al bueno y el
   nombre queda como anterior). Un cliente con expedientes no se borra: se marca como inactivo.
@@ -298,7 +297,7 @@ cd gestion-eventos
 npm install
 cp .dev.vars.example .dev.vars   # claves de PRUEBA de Turnstile
 npm run db:migrate               # crea las tablas en la D1 local (y aplica las migraciones nuevas)
-npm run db:demo                  # (opcional) datos de ejemplo: EXP 1287 BMW, ELECNOR, ROCHE y la solicitud de GLENMARK
+npm run db:demo                  # (opcional) datos de ejemplo: EXP 1287 BMW, ELECNOR, ROCHE y el recién creado de GLENMARK
 npm run dev                      # http://localhost:4321
 ```
 
@@ -362,8 +361,14 @@ Como nadie tiene todavía el rol Técnico, nadie puede gestionar usuarios hasta 
 `npm run invite -- --url https://TU-DOMINIO` (por defecto, rol Técnico). Desde ella se asignan los Jefes y la
 Tesorería en «Usuarios y permisos».
 
-El primer número de expediente sale de la tabla `settings` (`first_number`, 1001 por defecto);
-después siempre se propone el mayor + 1.
+Números de expediente: cada expediente recibe el suyo al crearlo, de un contador (`counters`, clave `expediente`)
+que se incrementa en la misma transacción que el alta, así que dos altas a la vez nunca reciben el mismo. Nunca baja
+del mayor número usado (si Administración cambia uno a mano en «Editar», se sigue desde él) ni del primer número de
+Ajustes (`settings.first_number`, 1001 por defecto). Un número dado no se vuelve a dar aunque se borre el expediente.
+
+**Expedientes en curso al crearlos (migración 0015)**: las solicitudes que quedaban sin abrir reciben número
+correlativo por orden de petición y pasan a «En curso» (queda en su actividad). El contador arranca en el mayor número.
+No se borra ni se reconstruye nada: el estado «solicitado» sigue admitido en la tabla, pero ya no se usa.
 
 Antes de emitir la primera factura real, en **Ajustes → Facturas al cliente**: el **próximo número** (el
 siguiente al último que hicisteis en contabilidad este año) y los **datos de la empresa** (razón social, CIF,
@@ -431,7 +436,7 @@ Las capas y sus reglas (qué puede hacer cada una, cómo se prueban y cómo aña
 ## Ideas para las próximas versiones
 
 - **Envío real** de las facturas al cliente por email (ahora es simulado) y **plantilla** de la factura de contabilidad.
-- Avisos por **email** (solicitud nueva, factura pedida, pago que vence) además de la bandeja.
+- Avisos por **email** (expediente nuevo, factura pedida, pago que vence) además de la bandeja.
 - Al hacer una factura al cliente, **elegir la entidad** (el propio cliente o una de sus entidades) en vez de escribir los datos fiscales.
 - Leer el **Excel del presupuesto** para proponer el total y las líneas automáticamente.
 - Exportación a **.xlsx** con formato y fórmulas, y conexión con el programa de contabilidad.

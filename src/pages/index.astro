@@ -1,6 +1,7 @@
 ---
 // Inicio: lo que hay que hacer hoy. Cada persona ve primero lo suyo
-// (quien abre expedientes o lleva los cobros: todo lo abierto; Eventos: sus expedientes).
+// (Administración y quien lleva los cobros: todo lo abierto; Eventos: sus expedientes). Administración ve además
+// los expedientes nuevos de la semana (ya nacen en curso: nadie tiene que abrirlos).
 // Quien no trabaja con expedientes (p. ej. Técnico) va directamente a su sección.
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
@@ -54,26 +55,22 @@ const cobros = can(me, 'cobros');
 // Oficina (abre expedientes o lleva los cobros): ve todo lo abierto. Eventos: lo suyo y «Te toca».
 const office = admin || cobros;
 const seesContracts = can(me, 'contratos');
-const [review, urgent, invoices, pos, open, requests, toClose, activity, { n: openCount }, noInvoice, billing, dueContracts] = await Promise.all([
+const [review, urgent, invoices, pos, open, fresh, toClose, { n: openCount }, noInvoice, billing, dueContracts] = await Promise.all([
   reviewer ? invoicesToReview(db) : [],
   pendingPayments(db, '', { until: soon }),
   cobros ? openInvoices(db) : [],
   cobros ? posWithBalance(db) : [],
-  // Administración ve las solicitudes en su propio bloque («Solicitudes por abrir»): aquí sólo las abiertas.
-  // Eventos ve aquí todo lo suyo, también lo que ha pedido y aún no está abierto.
   db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id
-               WHERE ${office ? "e.status = 'abierto'" : "e.status IN ('abierto', 'solicitado') AND e.manager_id = ?"}
+               WHERE e.status = 'abierto' ${office ? '' : 'AND e.manager_id = ?'}
                ORDER BY e.start_date LIMIT 8`).bind(...(office ? [] : [me.id])).all().then((r) => r.results),
-  db.prepare(`SELECT e.*, u.name AS requested_by_name,
+  // Los creados en los últimos 7 días (no cancelados), los más recientes primero
+  db.prepare(`SELECT e.id, e.number, e.name, e.company, e.start_date, e.end_date, e.requested_at, u.name AS requested_by_name,
                      (SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1) AS budget_base
                 FROM expedientes e LEFT JOIN users u ON u.id = e.requested_by
-               WHERE e.status = 'solicitado' ORDER BY e.requested_at`).all().then((r) => r.results),
+               WHERE e.requested_at >= ? AND e.status <> 'cancelado' ORDER BY e.requested_at DESC, e.id DESC LIMIT 10`)
+    .bind(addDays(now, -7)).all().then((r) => r.results),
   db.prepare(`SELECT id, number, name, company, start_date, end_date FROM expedientes
                WHERE status = 'abierto' AND COALESCE(end_date, start_date) < ? ORDER BY end_date LIMIT 8`).bind(now).all().then((r) => r.results),
-  db.prepare(`SELECT a.user_name, a.text, a.action, a.at, a.expediente_id, e.number, e.name
-                FROM activity a JOIN expedientes e ON e.id = a.expediente_id
-               ${cobros ? '' : "WHERE a.action NOT LIKE 'invoice.%' AND a.action NOT LIKE 'po.%'"}
-               ORDER BY a.at DESC, a.id DESC LIMIT 12`).all().then((r) => r.results),
   db.prepare("SELECT COUNT(*) AS n FROM expedientes WHERE status = 'abierto'").first(),
   office ? [] : paidWithoutInvoice(db),
   cobros ? toInvoiceByExpediente(db) : [],
@@ -104,7 +101,7 @@ const firstName = me.name.split(' ')[0];
   </div>
 
   <div class:list={['kpis', { 'is-3': !cobros }]}>
-    <a class="kpi" href="/expedientes"><span>Expedientes en curso</span><b>{openCount}</b><small>{requests.length ? `${plural(requests.length, 'solicitud', 'solicitudes')} por abrir` : 'ninguna solicitud pendiente'}</small></a>
+    <a class="kpi" href="/expedientes"><span>Expedientes en curso</span><b>{openCount}</b><small>{fresh.length ? `${plural(fresh.length, 'nuevo', 'nuevos')} esta semana` : 'ninguno nuevo esta semana'}</small></a>
     <a class:list={['kpi', { 'is-danger': overdueCount > 0 }]} href="/pagos"><span>Pagos en {SOON_DAYS} días</span><b class="money">{eur(sum(urgent))}</b><small>{overdueCount ? plural(overdueCount, 'vencido', 'vencidos') : plural(urgent.length, 'pago', 'pagos')}</small></a>
     {cobros && <a class:list={['kpi', { 'is-danger': overdueInvoices.length > 0 }]} href="/cobros#cobrar"><span>Pendiente de cobro</span><b class="money">{eur(sum(toCollect))}</b><small>{overdueInvoices.length ? plural(overdueInvoices.length, 'vencida', 'vencidas') : plural(toCollect.length, 'factura', 'facturas')}</small></a>}
     {cobros && <a class="kpi is-gold" href="/cobros#facturar"><span>Por facturar</span><b class="money">{eur(toBill.reduce((a, n) => a + n, 0))}</b><small>{plural(toBill.length, 'expediente', 'expedientes')} · sin IVA</small></a>}
@@ -160,18 +157,19 @@ const firstName = me.name.split(' ')[0];
           <ul class="list">{ready.slice(0, 4).map((si) => <ReviewItem si={si} canReview />)}</ul>
         </section>
       )}
-      {admin && requests.length > 0 && (
+      {admin && fresh.length > 0 && (
         <section class="card">
           <div class="sec-head">
-            <h2><Icon name="inbox" /> Solicitudes por abrir ({requests.length})</h2>
-            <p>Entra en cada una, revísala y dale número con «Abrir expediente»: entonces pasa a «Expedientes en marcha».</p>
+            <h2><Icon name="folder-plus" /> Expedientes nuevos esta semana ({fresh.length})</h2>
+            <a class="btn btn-ghost btn-sm" href="/expedientes">Ver todos</a>
           </div>
+          <p class="muted small">Ya están en curso con su número. Si el número tiene que coincidir con el de contabilidad, cámbialo en «Editar».</p>
           <ul class="list">
-            {requests.map((e) => (
+            {fresh.map((e) => (
               <li><a class="item" href={`/expedientes/${e.id}`}>
                 <div class="item-body">
-                  <span class="item-title">{e.name} <span class="muted">· {e.company}</span></span>
-                  <span class="item-meta"><span>{formatRange(e.start_date, e.end_date)}</span><span>{e.requested_by_name} · {formatStamp(e.requested_at)}</span></span>
+                  <span class="item-title"><span class="exp-num">{expLabel(e)}</span> {e.name} <span class="muted">· {e.company}</span></span>
+                  <span class="item-meta"><span>{formatRange(e.start_date, e.end_date)}</span><span>{e.requested_by_name ?? 'Alguien'} · {formatStamp(e.requested_at)}</span></span>
                 </div>
                 <div class="item-amount"><span class="money"><strong>{eur(e.budget_base ?? 0)}</strong></span><small>sin IVA</small></div>
                 <Icon name="chevron-right" class="chev" />
@@ -224,8 +222,8 @@ const firstName = me.name.split(' ')[0];
           </ul>
         ) : (
           <div class="empty">
-            <p>{admin && requests.length ? 'Ningún expediente abierto todavía: abre primero las solicitudes pendientes.' : 'No hay expedientes en marcha.'}</p>
-            <p class="mt"><a class="btn btn-primary btn-sm" href="/expedientes/nuevo"><Icon name="folder-plus" size={16} /> Nueva solicitud</a></p>
+            <p>No hay expedientes en marcha.</p>
+            <p class="mt"><a class="btn btn-primary btn-sm" href="/expedientes/nuevo"><Icon name="folder-plus" size={16} /> Nuevo expediente</a></p>
           </div>
         )}
       </section>
@@ -240,20 +238,6 @@ const firstName = me.name.split(' ')[0];
           </ul>
         </section>
       )}
-
-      <section class="card">
-        <h2>Actividad reciente</h2>
-        {activity.length ? (
-          <ul class="activity">
-            {activity.map((a) => (
-              <li>
-                <time datetime={a.at}>{formatStamp(a.at)}</time>
-                <span><strong>{a.user_name ?? 'Alguien'}</strong> {a.action === 'note' ? 'escribió una nota en' : a.text} · <a href={`/expedientes/${a.expediente_id}`}>{a.number ? `EXP ${a.number}` : a.name}</a></span>
-              </li>
-            ))}
-          </ul>
-        ) : <p class="muted">Aún no hay actividad.</p>}
-      </section>
     </div>
   </div>
 </App>

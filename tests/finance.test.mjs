@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, nextNumber } from '../src/lib/finance.js';
+import { summarize, nextSteps, closingChecks, paymentState, invoiceState, expedienteState, supplierInvoiceState, documentState, needsReceipt, conformBlocker } from '../src/lib/finance.js';
 import { PaymentSchema, forecastRowSchema, PoSchema, ExpedienteSchema, VatRateSchema, SupplierDocSchema, ConformSchema, PaySchema, parseAllocations, validate } from '../src/lib/validate.js';
 import { paidProblem } from '../src/lib/actions.js';
 import { formatRange, dueText, addDays, isDate } from '../src/lib/dates.js';
@@ -134,12 +134,6 @@ test('estados', () => {
   assert.equal(expedienteState({ status: 'abierto', start_date: '2026-08-01', end_date: '2026-08-02' }, NOW).key, 'por_cerrar');
   assert.equal(expedienteState({ status: 'abierto', start_date: '2026-09-01' }, NOW).key, 'abierto');
   assert.equal(expedienteState({ status: 'solicitado' }, NOW).key, 'solicitado');
-});
-
-test('nextNumber', () => {
-  assert.equal(nextNumber(null, '1001'), 1001);
-  assert.equal(nextNumber(1287, '1001'), 1288);
-  assert.equal(nextNumber(5, '1001'), 1001);
 });
 
 const RATES = [{ label: 'IVA 21 %', rate_bp: 2100, is_default: 1 }, { label: 'IVA 10 %', rate_bp: 1000 }, { label: 'IGIC 7 %', rate_bp: 700 }];
