@@ -106,7 +106,43 @@ const filters = [
     {billing && sums.pending > 0 && <> · pendiente de cobro: <b class="money">{eur(sums.pending)}</b> <span class="small">(con IVA)</span></>}
   </TableTools>
 
-  {rows.length ? (
+  {!rows.length ? (
+    <div class="empty mt">
+      <p>{filtered ? 'Ningún cliente con esos filtros.' : 'Todavía no hay clientes. Se dan de alta con «Nuevo cliente» o al pedir un expediente.'}</p>
+    </div>
+  ) : state.view === 'tarjetas' ? (
+    <ul class="list mt clients-list">
+      {rows.map((r) => (
+        <li>
+          <a class="item is-row" href={`/clientes/${r.id}`}>
+            <div class="item-body">
+              <span class="item-title">{[r.title, r.name].filter(Boolean).join(' ')}</span>
+              <span class="item-meta">
+                {CLIENT_KINDS[r.kind] && <span>{CLIENT_KINDS[r.kind]}</span>}
+                {r.city && <span>{r.city}</span>}
+                {r.email && <span>{r.email}</span>}
+                {r.phone && <span>{r.phone}</span>}
+              </span>
+              <span class="item-flags">
+                {r.status !== 'activo' && <span class="pill pill-muted">{CLIENT_STATUS[r.status]}</span>}
+                <span class="pill pill-muted">{r.exps ? plural(r.exps, 'aceptado', 'aceptados') : 'Sin expedientes'}</span>
+                {r.cancelled > 0 && <span class="pill pill-danger">{plural(r.cancelled, 'cancelado', 'cancelados')}</span>}
+                {r.bookings > 0 && <span class="pill pill-muted">{plural(r.bookings, 'reserva de viaje', 'reservas de viaje')}</span>}
+                {r.next_date && <span class="pill pill-info">Próximo: {formatDate(r.next_date)}</span>}
+                {billing && r.pending > 0 && <span class="pill pill-warn">Pendiente de cobro {eur(r.pending)}</span>}
+              </span>
+            </div>
+            {economy && (
+              <div class="item-amount">
+                <span class="big-money money">{eur(r.budget)}</span>
+                <small>presupuestado{feeLabel(r.fee_bp) && ` · fee ${feeLabel(r.fee_bp)}`}</small>
+              </div>
+            )}
+          </a>
+        </li>
+      ))}
+    </ul>
+  ) : (
     <div class="table-scroll mt">
       <table class="dtable clients is-listing">
         <thead>
@@ -143,10 +179,6 @@ const filters = [
           ))}
         </tbody>
       </table>
-    </div>
-  ) : (
-    <div class="empty mt">
-      <p>{filtered ? 'Ningún cliente con esos filtros.' : 'Todavía no hay clientes. Se dan de alta con «Nuevo cliente» o al pedir un expediente.'}</p>
     </div>
   )}
   <Pager info={info} url={Astro.url} noun={def.noun} />

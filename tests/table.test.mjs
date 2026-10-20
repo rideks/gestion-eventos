@@ -92,5 +92,10 @@ test('vista: tarjetas o tabla sólo en las tablas que la tienen (la elegida o la
   assert.equal(tableState(bt, P('')).view, 'tarjetas');
   assert.equal(tableState(bt, P(''), { prefs: { view: 'tabla' } }).view, 'tabla');
   assert.equal(tableState(bt, P(''), { prefs: { view: 'otra' } }).view, 'tarjetas');
-  assert.equal(tableState(def, P(''), { prefs: { view: 'tarjetas' } }).view, 'tabla'); // Clientes no tiene tarjetas
+  assert.equal(tableState(TABLES.contratos, P(''), { prefs: { view: 'tarjetas' } }).view, 'tabla'); // Contratos no tiene tarjetas
+  // Clientes y Proveedores: tabla por defecto, tarjetas si se eligen; Expedientes, tarjetas por defecto
+  assert.equal(tableState(def, P('')).view, 'tabla');
+  assert.equal(tableState(def, P(''), { prefs: { view: 'tarjetas' } }).view, 'tarjetas');
+  assert.equal(tableState(TABLES.proveedores, P('')).view, 'tabla');
+  assert.equal(tableState(TABLES.expedientes, P('')).view, 'tarjetas');
 });

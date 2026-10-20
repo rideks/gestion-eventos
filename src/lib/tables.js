@@ -5,14 +5,42 @@
 //   hidden: true          → no se ve hasta que se añade en «Columnas»
 //   fixed: true           → siempre se ve (la que identifica la fila)
 //   need                  → el permiso (o permisos) para verla
-// views: la tabla se puede ver también como tarjetas (como los expedientes); view: la vista por defecto.
+// views: la tabla se puede ver también como tarjetas; view: la vista por defecto (Expedientes y Business Travel,
+// tarjetas; Clientes y Proveedores, tabla). Cada persona elige y se le recuerda.
 
 const ECONOMY = 'clientes.economia';
 const BILLING = ['clientes.economia', 'cobros'];
 
 export const TABLES = {
+  expedientes: {
+    key: 'expedientes', sort: 'fechas', noun: ['expediente', 'expedientes'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
+    search: 'Nombre, cliente, destino o nº',
+    columns: [
+      { key: 'numero', label: 'Expediente', fixed: true, sort: 'desc' },
+      { key: 'cliente', label: 'Cliente', sort: 'asc' },
+      { key: 'destino', label: 'Destino', hidden: true, sort: 'asc' },
+      { key: 'fechas', label: 'Fechas', sort: 'asc' },
+      { key: 'responsable', label: 'Responsable', sort: 'asc' },
+      { key: 'asistentes', label: 'Asistentes', num: true, hidden: true, sort: 'desc' },
+      { key: 'estado', label: 'Estado', sort: 'asc' },
+      { key: 'presupuesto', label: 'Presupuesto', num: true, sort: 'desc' },
+      { key: 'coste', label: 'Coste', num: true, hidden: true, sort: 'desc' },
+      { key: 'por_pagar', label: 'Por pagar', num: true, sort: 'desc' },
+      { key: 'facturado', label: 'Facturado', num: true, hidden: true, need: 'cobros', sort: 'desc' },
+      { key: 'por_cobrar', label: 'Por cobrar', num: true, need: 'cobros', sort: 'desc' },
+      { key: 'beneficio', label: 'Beneficio (cerrados)', num: true, hidden: true, sort: 'desc' },
+      { key: 'alta', label: 'Alta', hidden: true, sort: 'desc' },
+    ],
+    // El estado va en pestañas encima de la lista (en curso, por cerrar, míos, cerrados, cancelados, todos)
+    filters: [
+      { key: 'cliente', label: 'Cliente', all: 'Todos los clientes' },
+      { key: 'responsable', label: 'Responsable', all: 'Todos los responsables' },
+      { key: 'mes', label: 'Mes', all: 'Todos los meses' },
+    ],
+  },
+
   clientes: {
-    key: 'clientes', sort: 'name', noun: ['cliente', 'clientes'],
+    key: 'clientes', sort: 'name', noun: ['cliente', 'clientes'], views: ['tarjetas', 'tabla'], view: 'tabla',
     search: 'Nombre, nombre fiscal, NIF, ciudad, nombre anterior o entidad',
     columns: [
       { key: 'name', label: 'Cliente', fixed: true, sort: 'asc' },
@@ -43,7 +71,7 @@ export const TABLES = {
   },
 
   proveedores: {
-    key: 'proveedores', sort: 'name', noun: ['proveedor', 'proveedores'],
+    key: 'proveedores', sort: 'name', noun: ['proveedor', 'proveedores'], views: ['tarjetas', 'tabla'], view: 'tabla',
     search: 'Nombre, ciudad, contacto o nombre anterior',
     columns: [
       { key: 'name', label: 'Proveedor', fixed: true, sort: 'asc' },

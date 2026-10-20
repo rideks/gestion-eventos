@@ -184,7 +184,11 @@ Reparto inicial:
 - **Buscar** (cabecera): expedientes, clientes (también por NIF o por una de sus entidades), proveedores, nº de
   factura o proforma, facturas al cliente y PO. Un número de
   expediente exacto (`1287`) abre directamente el expediente.
-- **Expedientes**: pestañas En curso · Por cerrar · Míos · Cerrados · Cancelados · Todos, y buscador.
+- **Expedientes**: pestañas En curso · Por cerrar · Míos · Cerrados · Cancelados · Todos, con buscador (nombre, cliente,
+  destino o nº) y filtros de cliente, responsable y mes. Se ven como **tarjetas** (por defecto) o como **tabla** con
+  columnas a elegir: expediente, cliente, destino, fechas, responsable, asistentes, estado, presupuesto, coste, por
+  pagar, facturado y por cobrar (éstas dos, sólo con el permiso de cobros), beneficio (sólo de los cerrados) y alta.
+  Arriba, cuántos hay y sus totales; con buscador o filtros, cada pestaña dice cuántos tiene.
 - **Expediente**: Resumen (venta, coste, beneficio al cerrar, cobrado, próximos pasos, datos y actividad) ·
   Pagos · Cobros (PO y facturas) · Presupuesto (versiones) · Cierre. Cada próximo paso lleva a donde se resuelve:
   si es de una sola cosa (un pago vencido, una factura por emitir…), directamente a su ficha.
@@ -241,7 +245,7 @@ Reparto inicial:
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
-- **Tablas** (Clientes, Proveedores, Contratos y Business Travel), todas iguales:
+- **Tablas** (Expedientes, Clientes, Proveedores, Contratos y Business Travel), todas iguales:
   - el buscador y los filtros en una línea; debajo, el resumen (cuántas hay y sus totales) con «Columnas» a la derecha;
   - se pulsa en cualquier parte de la fila para abrir la ficha; la flecha del orden sólo sale en la columna ordenada
     (en las demás, al pasar por encima);
@@ -255,7 +259,10 @@ Reparto inicial:
     «Las de siempre» lo deja como estaba. Las columnas que piden un permiso (fee, importes, NIF) no se ofrecen a
     quien no lo tiene, ni aunque se pidan a mano;
   - los **totales** de encima son de todo lo filtrado, no sólo de la página; la búsqueda, el orden y la página van
-    en la dirección, así que se puede enviar el enlace a una búsqueda.
+    en la dirección, así que se puede enviar el enlace a una búsqueda;
+  - **Tarjetas o tabla** (Expedientes, Business Travel, Clientes y Proveedores): cada persona elige cómo verlas y se
+    le recuerda. Expedientes y Business Travel empiezan en tarjetas; Clientes y Proveedores, en tabla. En tarjetas,
+    el orden se elige en un desplegable.
 - **Business Travel**: como Expedientes, en pestañas **En curso · Por cerrar · Mías · Cerradas · Canceladas · Todas**
   (con el número de las que están en curso, por cerrar y las tuyas), con buscador (referencia, cliente, pasajero,
   proveedor o localizador), cliente y mes. Se ven en **tarjetas** (nº de reserva, descripción, cliente, fechas,

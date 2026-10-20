@@ -1,50 +1,68 @@
 ---
-import { env } from 'cloudflare:workers';
+// Expedientes: en pestañas (en curso, por cerrar, míos, cerrados, cancelados y todos), con buscador (nombre, cliente,
+// destino o número), cliente, responsable y mes. Se ven como tarjetas o como tabla (con columnas a elegir); cada
+// persona elige y se recuerda. Lo facturado y lo pendiente de cobro, sólo con el permiso de cobros; el beneficio,
+// sólo de los cerrados (como en el Cierre). Todo pasa por src/services/expedientes.js.
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
 import Pill from '../../components/Pill.astro';
-import { LIST_COLUMNS } from '../../lib/data.js';
-import { can } from '../../lib/app.js';
-import { expedienteState, expLabel } from '../../lib/finance.js';
+import TableTools from '../../components/TableTools.astro';
+import SortTh from '../../components/SortTh.astro';
+import Pager from '../../components/Pager.astro';
+import { can, parseId } from '../../lib/app.js';
+import { TABLES } from '../../lib/tables.js';
+import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
+import { EXP_TABS, saleOf } from '../../lib/expedientes.js';
+import { expLabel, plural } from '../../lib/finance.js';
 import { cancelSummary } from '../../lib/cancel.js';
 import { eur, pct } from '../../lib/money.js';
-import { today, formatRange } from '../../lib/dates.js';
+import { formatRange, formatMonth, formatStamp } from '../../lib/dates.js';
+import { serviceContext, failure } from '../../services/context.js';
+import * as expedientes from '../../services/expedientes.js';
+import * as prefs from '../../services/prefs.js';
 
-const db = env.DB;
-const now = today();
+const ctx = serviceContext(Astro);
 const me = Astro.locals.user;
-const cobros = can(me, 'cobros');
-// En curso: los abiertos que aún no se han celebrado (los expedientes nacen en curso, con su número)
-const FILTERS = {
-  curso: { label: 'En curso', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) >= ?", args: [now] },
-  cerrar: { label: 'Por cerrar', where: "e.status = 'abierto' AND COALESCE(e.end_date, e.start_date) < ?", args: [now] },
-  mios: { label: 'Míos', where: "e.manager_id = ? AND e.status = 'abierto'", args: [me.id] },
-  cerrados: { label: 'Cerrados', where: "e.status = 'cerrado'", args: [] },
-  cancelados: { label: 'Cancelados', where: "e.status = 'cancelado'", args: [] },
-  todos: { label: 'Todos', where: '1 = 1', args: [] },
+// La pestaña, el buscador, los filtros, el orden, la página, la vista y las columnas que ha elegido cada persona
+const params = Astro.url.searchParams;
+const tab = Object.hasOwn(EXP_TABS, params.get('ver') ?? '') ? params.get('ver') : 'curso'; // los enlaces antiguos (?ver=solicitudes) van a «En curso»
+const def = TABLES.expedientes;
+const state = tableState(def, params, { prefs: await prefs.forTable(ctx, 'expedientes'), can: (p) => can(me, p) });
+// Cerrados y cancelados: los más recientes primero (si no se ha elegido otro orden)
+if ((tab === 'cerrados' || tab === 'cancelados') && !params.get('orden')) {
+  state.sort = 'fechas';
+  if (!params.get('dir')) state.dir = 'desc';
+}
+const res = await expedientes.list(ctx, {
+  q: state.q, view: tab, clientId: parseId(state.filters.cliente), managerId: parseId(state.filters.responsable), month: state.filters.mes ?? '',
+  order: state.sort, dir: state.dir, limit: state.per, offset: state.offset,
+});
+if (!res.ok) return failure(Astro, res, '/');
+const { rows, total, counts, sums, clients, managers, cobros } = res.value;
+const info = pageInfo(total, state);
+if (state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
+const filtered = isFiltered(state);
+const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
+// Los meses para el filtro: de dentro de un año hacia atrás (el mes en que empieza el evento)
+const months = Array.from({ length: 25 }, (_, i) => {
+  const d = new Date(Date.UTC(Number(ctx.now.slice(0, 4)), Number(ctx.now.slice(5, 7)) - 1 + 12 - i, 1));
+  return d.toISOString().slice(0, 7);
+});
+const filters = [
+  { ...def.filters[0], options: clients.map((c) => [c.id, [c.title, c.name].filter(Boolean).join(' ')]) },
+  { ...def.filters[1], options: managers.map((u) => [u.id, u.name]) },
+  { ...def.filters[2], options: months.map((m) => [m, formatMonth(m)]) },
+];
+const EMPTY = {
+  curso: 'No hay expedientes en curso.', cerrar: 'No hay expedientes por cerrar: los celebrados ya están cerrados.',
+  mios: 'No llevas ningún expediente abierto.', cerrados: 'Todavía no hay expedientes cerrados.',
+  cancelados: 'No hay expedientes cancelados.', todos: 'Todavía no hay expedientes. Crea el primero con «Nuevo expediente».',
 };
-const asked = Astro.url.searchParams.get('ver') ?? '';
-const key = Object.hasOwn(FILTERS, asked) ? asked : 'curso'; // los enlaces antiguos (?ver=solicitudes) van a «En curso»
-const filter = FILTERS[key];
-const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
-const search = q
-  ? { where: " AND (e.name LIKE ?1 OR e.company LIKE ?1 OR e.destination LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)", term: `%${q.replace(/[%_]/g, '')}%` }
-  : null;
-
-// Con búsqueda se busca en todos; sin ella, en la pestaña elegida
-const where = search ? search.where.replace(' AND ', '') : filter.where;
-const args = search ? [search.term] : filter.args;
-const order = key === 'cerrados' || key === 'cancelados' ? 'e.closed_at DESC' : 'e.start_date, e.id';
-const { results } = await db.prepare(`SELECT ${LIST_COLUMNS} FROM expedientes e LEFT JOIN users m ON m.id = e.manager_id WHERE ${where} ORDER BY ${order} LIMIT 200`)
-  .bind(...args).all();
-const counts = await db.prepare(
-  `SELECT SUM(status = 'abierto' AND COALESCE(end_date, start_date) >= ?1) AS curso,
-          SUM(status = 'abierto' AND COALESCE(end_date, start_date) < ?1) AS cerrar,
-          SUM(manager_id = ?2 AND status = 'abierto') AS mios
-     FROM expedientes`,
-).bind(now, me.id).first();
+// Con buscador o filtros, el número de cada pestaña (para ver dónde están los resultados); si no, sólo los de trabajo
+const counted = (k) => counts[k] > 0 && (filtered || ['curso', 'cerrar', 'mios'].includes(k));
 ---
-<App title="Expedientes" section="expedientes" origin="Expedientes">
+<App title="Expedientes" section="expedientes" origin="Expedientes" wide={state.view === 'tabla'}>
   <div class="page-top">
     <div>
       <h1>Expedientes</h1>
@@ -53,31 +71,30 @@ const counts = await db.prepare(
     <a class="btn btn-primary" href="/expedientes/nuevo"><Icon name="folder-plus" size={18} /> Nuevo expediente</a>
   </div>
 
-  <form method="get" class="quick-form" role="search">
-    <label class="visually-hidden" for="q">Buscar</label>
-    <input id="q" name="q" type="search" value={q} placeholder="Buscar por nombre, empresa, destino o nº" />
-    <button class="btn btn-ghost btn-sm" type="submit"><Icon name="search" size={16} /> Buscar</button>
-    {q && <a class="btn btn-ghost btn-sm" href="/expedientes">Quitar búsqueda</a>}
-  </form>
-
-  {!search && (
-    <nav class="x-tabs mt" aria-label="Filtrar expedientes">
-      {Object.entries(FILTERS).map(([k, f]) => (
-        <a href={`/expedientes?ver=${k}`} aria-current={key === k ? 'page' : undefined}>
-          {f.label}{counts[k] > 0 && <small>{counts[k]}</small>}
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} keep={['ver']} label="Buscar expedientes">
+    <nav class="x-tabs mt" aria-label="Filtrar expedientes" slot="tabs">
+      {Object.entries(EXP_TABS).map(([k, label]) => (
+        <a href={hrefWith(Astro.url, { ver: k === 'curso' ? null : k, orden: null, dir: null })} aria-current={tab === k ? 'page' : undefined}>
+          {label}{counted(k) && <small class:list={{ 'is-alert': k === 'cerrar' }}>{counts[k]}</small>}
         </a>
       ))}
     </nav>
-  )}
-  {search && <p class="muted mt">{results.length} resultado{results.length === 1 ? '' : 's'} para «{q}»</p>}
+    {plural(total, 'expediente', 'expedientes')}{filtered && ' con esos filtros'}
+    {total > 0 && tab !== 'cancelados' && (
+      <> · presupuesto: <b class="money">{eur(sums.budget_base)}</b> · por pagar: <b class="money">{eur(sums.to_pay)}</b>
+        {cobros && sums.to_collect > 0 && <> · por cobrar: <b class="money">{eur(sums.to_collect)}</b></>}
+        {tab === 'todos' && <span class="small"> (sin los cancelados)</span>}</>
+    )}
+  </TableTools>
 
-  {results.length ? (
+  {!rows.length ? (
+    <div class="empty mt">
+      <p>{filtered ? 'Ningún expediente con esos filtros en esta pestaña.' : EMPTY[tab]}</p>
+    </div>
+  ) : state.view === 'tarjetas' ? (
     <ul class="list mt">
-      {results.map((e) => {
-        // Venta: lo facturado (o el presupuesto); el beneficio sólo se calcula al cerrar, como en el cierre
-        const closed = e.status === 'cerrado';
-        const sale = ((cobros || closed) && e.sales_base) || e.budget_base || 0;
-        const margin = sale - e.cost_base;
+      {rows.map((e) => {
+        const { sale, margin } = saleOf(e, cobros);
         return (
           <li>
             <a class="item is-row" href={`/expedientes/${e.id}`}>
@@ -90,7 +107,7 @@ const counts = await db.prepare(
                   {e.manager_name && <span>{e.manager_name}</span>}
                 </span>
                 <span class="item-flags">
-                  <Pill state={expedienteState(e, now)} />
+                  <Pill state={e.state} />
                   {e.to_pay > 0 && <span class="pill pill-muted">Por pagar {eur(e.to_pay)}</span>}
                   {cobros && e.to_collect > 0 && <span class="pill pill-info">Por cobrar {eur(e.to_collect)}</span>}
                 </span>
@@ -98,7 +115,7 @@ const counts = await db.prepare(
               </div>
               <div class="item-amount">
                 <span class="big-money money">{eur(sale)}</span>
-                {closed
+                {margin !== null
                   ? <small class:list={['money', { neg: margin < 0 }]}>Beneficio {eur(margin)} · {pct(margin, sale)}</small>
                   : <small>sin IVA</small>}
               </div>
@@ -108,6 +125,43 @@ const counts = await db.prepare(
       })}
     </ul>
   ) : (
-    <p class="empty mt">{search ? 'No hay expedientes que coincidan.' : 'No hay expedientes en esta pestaña.'}</p>
+    <div class="table-scroll mt">
+      <table class="dtable expedientes is-listing">
+        <thead>
+          <tr>
+            {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((e) => {
+            const { sale, margin } = saleOf(e, cobros);
+            return (
+              <tr class:list={{ 'is-planned': e.status === 'cancelado' }} data-href={`/expedientes/${e.id}`}>
+                <td>
+                  <a href={`/expedientes/${e.id}`}><strong>{expLabel(e)}</strong></a>
+                  {!has('estado') && e.state.key !== 'abierto' && <Pill state={e.state} />}
+                  <div class="small muted">{e.name}</div>
+                </td>
+                {has('cliente') && <td data-label={L.cliente}>{e.company}</td>}
+                {has('destino') && <td data-label={L.destino}>{e.destination ?? '—'}</td>}
+                {has('fechas') && <td data-label={L.fechas}>{e.start_date ? formatRange(e.start_date, e.end_date) : '—'}</td>}
+                {has('responsable') && <td data-label={L.responsable}>{e.manager_name ?? '—'}</td>}
+                {has('asistentes') && <td data-label={L.asistentes} class="num">{e.attendees ?? '—'}</td>}
+                {has('estado') && <td data-label={L.estado}><Pill state={e.state} />{e.status === 'cancelado' && <div class="cancel-note" title={cancelSummary(e)}>{cancelSummary(e)}</div>}</td>}
+                {has('presupuesto') && <td data-label={L.presupuesto} class="num money">{e.budget_base == null ? '—' : eur(e.budget_base)}</td>}
+                {has('coste') && <td data-label={L.coste} class="num money">{eur(e.cost_base)}</td>}
+                {has('por_pagar') && <td data-label={L.por_pagar} class="num money">{e.to_pay ? eur(e.to_pay) : '—'}</td>}
+                {has('facturado') && <td data-label={L.facturado} class="num money">{eur(e.sales_base ?? 0)}</td>}
+                {has('por_cobrar') && <td data-label={L.por_cobrar} class:list={['num', 'money', { neg: e.to_collect > 0 }]}>{e.to_collect ? eur(e.to_collect) : '—'}</td>}
+                {has('beneficio') && <td data-label={L.beneficio} class:list={['num', 'money', { neg: margin !== null && margin < 0 }]}>{margin === null ? '—' : <>{eur(margin)} <span class="small muted">{pct(margin, sale)}</span></>}</td>}
+                {has('alta') && <td data-label={L.alta}>{formatStamp(e.requested_at, { year: true })}</td>}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   )}
+  <Pager info={info} url={Astro.url} noun={def.noun} />
+  <p class="muted small mt">Presupuesto: la versión vigente, sin IVA. Por pagar: lo pendiente a proveedores y los reembolsos de gastos, con IVA.{cobros && ' Por cobrar: facturas emitidas sin cobrar, con IVA.'} El beneficio sale al cerrar el expediente, como en su Cierre.</p>
 </App>

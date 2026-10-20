@@ -73,7 +73,7 @@ errors = r.fields;      // debajo de cada campo
 | **Nombres parecidos** | `src/lib/name-match.js` | Sin tildes, mayúsculas, forma jurídica (S.L., S.A.…) ni palabras de relleno (hotel, group, España…) |
 | **Archivos** | `src/services/files.js` (guardar y borrar: R2 + tabla `files`), `src/repos/files.js` (su SQL) y `src/lib/files.js` (lo puro: tipos admitidos, comprobar los primeros bytes, nombres, enlaces) | Todos los documentos (facturas y proformas de proveedor, justificantes, PO, presupuestos, contratos). `storeFile` lanza `UploadError` si el archivo no vale; el servicio lo convierte en un error del campo. **Que no se pierdan si hay un error**: la página llama a `keepUploads(ctx, form, ['file', …])` antes de usar el formulario (recupera en el `FormData` los documentos de un intento anterior, como si se acabaran de elegir), luego `done()` si sale bien o `keep()` si hay error, y pasa lo que devuelve al campo (`<FileField kept={…}>`); el servicio no cambia. |
 | **Historial de cambios** | tabla `change_log`, `src/repos/changes.js` y `src/lib/changes.js` (`diffFields`) | Qué cambió en una ficha (antes y después), quién y cuándo, con un resumen ya redactado (`Fee: 8 % → 10 %`). Lo usan los clientes; un área nueva sólo añade su `entity`. |
-| **Tablas de listado** | `src/lib/tables.js` (cada tabla: columnas, cuáles se ven por defecto, cuáles piden permiso, por cuáles se ordena y sus filtros), `src/lib/table.js` (el motor: `tableState` lee la dirección y las preferencias, `pageInfo`, `hrefWith`, `orderBy` para el SQL, `sortRows` para lo que se ordena en memoria), los componentes `TableTools`, `SortTh` y `Pager`, y `src/services/prefs.js` + tabla `user_prefs` (las columnas y filas por página de cada persona, que se guardan en `/preferencias/tabla`) | Clientes, Proveedores, Contratos y Business Travel. El servicio de cada área recibe `q`, sus filtros, `order`/`dir` y `limit`/`offset` y devuelve `{ rows, total, sums }`: el total y las sumas son de todo lo filtrado. Sólo se ordena por columnas que el rol puede ver (el servicio vuelve al orden por defecto si no). Una tabla con `views` (Business Travel) se ve también en tarjetas; la vista elegida va en las mismas preferencias. Las pestañas de la página van en el hueco `tabs` de `TableTools` y el resumen, dentro. En el móvil, una tabla con la clase `is-listing` se ve en tarjetas: cada celda lleva su `data-label`, y la fila, `data-href` para abrirse entera. |
+| **Tablas de listado** | `src/lib/tables.js` (cada tabla: columnas, cuáles se ven por defecto, cuáles piden permiso, por cuáles se ordena y sus filtros), `src/lib/table.js` (el motor: `tableState` lee la dirección y las preferencias, `pageInfo`, `hrefWith`, `orderBy` para el SQL, `sortRows` para lo que se ordena en memoria), los componentes `TableTools`, `SortTh` y `Pager`, y `src/services/prefs.js` + tabla `user_prefs` (las columnas y filas por página de cada persona, que se guardan en `/preferencias/tabla`) | Expedientes, Clientes, Proveedores, Contratos y Business Travel. El servicio de cada área recibe `q`, sus filtros, `order`/`dir` y `limit`/`offset` y devuelve `{ rows, total, sums }`: el total y las sumas son de todo lo filtrado. Sólo se ordena por columnas que el rol puede ver (el servicio vuelve al orden por defecto si no). Una tabla con `views` se ve también en tarjetas (Expedientes y Business Travel empiezan en tarjetas; Clientes y Proveedores, en tabla); la vista elegida va en las mismas preferencias. Las pestañas de la página van en el hueco `tabs` de `TableTools` y el resumen, dentro. En el móvil, una tabla con la clase `is-listing` se ve en tarjetas: cada celda lleva su `data-label`, y la fila, `data-href` para abrirse entera. |
 
 ## Pruebas
 
@@ -116,14 +116,15 @@ Los **números de expediente** también salen de un contador (`src/repos/expedie
 mismo `db.batch` que el alta: el contador sube y el INSERT usa ese valor dentro de la misma transacción. El contador nunca
 baja del mayor número usado ni del primer número de Ajustes, porque Administración puede cambiar un número a mano.
 
-Ya están en capas Proveedores, Contratos, Clientes y **Pagos** (la pestaña Pagos del expediente, la ficha de cada
+Ya están en capas Proveedores, Contratos, Clientes, la **lista de Expedientes** (`src/services/expedientes.js`,
+`src/repos/expedientes.js`: pestañas, filtros, orden, páginas y sumas en una sola ida a la base) y **Pagos** (la pestaña Pagos del expediente, la ficha de cada
 pago con sus facturas, proformas y justificante, y la bandeja `/pagos`; `src/services/payments.js`). Las
 **liquidaciones de gastos** son pagos de tipo `liquidacion` (`payments.kind`): el mismo servicio, la misma ficha y el
 mismo reembolso; lo que cambia lo decide `isLiquidation` (`src/lib/finance.js`), que las deja fuera de los avisos de
 factura sin tocar el cálculo del coste. El resto
-(cobros, facturas al cliente, expedientes, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está
+(cobros, facturas al cliente, la ficha y el cierre de los expedientes, Inicio, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está
 en las listas `LEGACY_*` de `tests/architecture.test.mjs`, que **sólo pueden encoger**. Orden propuesto:
-cobros (facturas al cliente y PO) → expedientes → usuarios y ajustes. Cada paso, sin cambios para quien usa la
+cobros (facturas al cliente y PO) → ficha y cierre de expedientes → usuarios y ajustes. Cada paso, sin cambios para quien usa la
 aplicación y con sus pruebas de servicio.
 
 Mientras tanto, dos puentes (se quitan al pasar Expedientes a capas):

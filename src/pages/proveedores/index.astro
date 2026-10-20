@@ -131,7 +131,44 @@ const filters = [
     {money && total > 0 && <> · contratado en {year}: <b class="money">{eur(sums.this_year)}</b> · en total: <b class="money">{eur(sums.contracted)}</b> <span class="small">(sin IVA, eventos no cancelados)</span></>}
   </TableTools>
 
-  {rows.length ? (
+  {!rows.length ? (
+    <div class="empty mt">
+      <p>{filtered ? 'Ningún proveedor con esos filtros.' : 'Todavía no hay proveedores. Se dan de alta con «Nuevo proveedor» o al elegir el proveedor de un pago.'}</p>
+    </div>
+  ) : state.view === 'tarjetas' ? (
+    <ul class="list mt suppliers-list">
+      {rows.map((r) => {
+        const c = contractOf.get(r.id);
+        return (
+          <li>
+            <a class="item is-row" href={`/proveedores/${r.id}`}>
+              <div class="item-body">
+                <span class="item-title">{r.name}</span>
+                <span class="item-meta">
+                  {r.type && <span><strong>{r.type}</strong></span>}
+                  {r.city && <span>{r.city}</span>}
+                  {r.contact_name && <span>{r.contact_name}</span>}
+                  {r.phone && <span>{r.phone}</span>}
+                </span>
+                <span class="item-flags">
+                  {r.status !== 'activo' && <span class:list={['pill', r.status === 'bloqueado' ? 'pill-danger' : 'pill-muted']}>{SUPPLIER_STATUS[r.status]}</span>}
+                  <span class="pill pill-muted">{r.exps ? plural(r.exps, 'expediente', 'expedientes') : 'Sin expedientes'}</span>
+                  {r.last_date && <span class="pill pill-muted">Último: {formatDate(r.last_date)}</span>}
+                  {c && <Pill state={{ ...c.state, label: `Contrato · ${c.state.label}` }} />}
+                </span>
+              </div>
+              {money && (
+                <div class="item-amount">
+                  <span class="big-money money">{eur(r.contracted)}</span>
+                  <small>contratado · {eur(r.this_year)} en {year}</small>
+                </div>
+              )}
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  ) : (
     <div class="table-scroll mt">
       <table class="dtable suppliers is-listing">
         <thead>
@@ -161,10 +198,6 @@ const filters = [
           ))}
         </tbody>
       </table>
-    </div>
-  ) : (
-    <div class="empty mt">
-      <p>{filtered ? 'Ningún proveedor con esos filtros.' : 'Todavía no hay proveedores. Se dan de alta con «Nuevo proveedor» o al elegir el proveedor de un pago.'}</p>
     </div>
   )}
   <Pager info={info} url={Astro.url} noun={def.noun} />

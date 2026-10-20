@@ -104,7 +104,7 @@ test('columnas de cada persona: se guardan (sólo las que puede ver) y se vuelve
   assert.equal(await prefs.forTable(ev, 'clientes'), null);
   assert.equal((await prefs.saveTable(ev, 'inventada', { columns: [] })).code, 'invalid');
   // La vista (tarjetas o tabla), sólo en las tablas que la tienen; se conserva al cambiar las columnas o volver a las de siempre
-  assert.equal((await prefs.saveTable(ev, 'clientes', { view: 'tabla' })).code, 'invalid');
+  assert.equal((await prefs.saveTable(ev, 'contratos', { view: 'tabla' })).code, 'invalid');
   assert.equal((await prefs.saveTable(ev, 'viajes', { view: 'otra' })).code, 'invalid');
   assert.deepEqual((await prefs.saveTable(ev, 'viajes', { view: 'tabla' })).value, { view: 'tabla' });
   assert.deepEqual((await prefs.saveTable(ev, 'viajes', { columns: ['estado', 'fee'], per: '50' })).value, { columns: ['estado'], per: 50, view: 'tabla' });
