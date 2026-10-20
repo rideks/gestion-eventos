@@ -10,6 +10,8 @@ export { PAYMENT_SELECT, PAYMENT_JOINS };
 // Las bandejas de pagos están en sus repositorios; se re-exportan para el inicio (aún no está en capas)
 export { pending as pendingPayments, paidWithoutInvoice, paid as paidPayments } from '../repos/payments.js';
 export { toReview as invoicesToReview } from '../repos/supplier-docs.js';
+// Las bandejas de cobros están en el repositorio de facturas al cliente; se re-exportan para el inicio (aún no está en capas)
+export { openInvoices, posWithBalance, toInvoiceByExpediente, collectedInvoices } from '../repos/invoices.js';
 
 /** Expediente con los nombres del responsable y de quien lo pidió (la consulta está en src/repos/expedientes.js) */
 export { header as getExpediente } from '../repos/expedientes.js';
@@ -112,77 +114,9 @@ export const LIST_COLUMNS = `
   (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status = 'cobrada') AS collected,
   (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status IN ('emitida', 'cobrada')) AS invoiced_total`;
 
-/** Facturas a cliente por emitir y pendientes de cobro, con sus PO; con búsqueda opcional */
-export function openInvoices(db, q = '') {
-  return db.prepare(
-    `SELECT * FROM (
-       SELECT i.*, e.number AS exp_number, e.name AS exp_name, e.manager_id AS exp_manager_id, f.name AS file_name,
-              (SELECT group_concat(po.number, ', ') FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = i.id) AS po_numbers
-         FROM invoices i JOIN expedientes e ON e.id = i.expediente_id LEFT JOIN files f ON f.id = i.file_id
-        WHERE i.status IN ('por_emitir', 'emitida') AND e.status != 'cancelado'
-     ) WHERE (?1 = '%%' OR billed_to LIKE ?1 OR number LIKE ?1 OR concept LIKE ?1 OR exp_name LIKE ?1 OR CAST(exp_number AS TEXT) LIKE ?1 OR po_numbers LIKE ?1)
-     ORDER BY status = 'emitida', due_date IS NULL, due_date, id`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
-}
-
-/**
- * Lo que falta por facturar de cada expediente en marcha (solicitudes y abiertos): su presupuesto (la
- * última versión, sin IVA) menos lo ya facturado o pedido (facturas no anuladas). Sale en cuanto se
- * crea el expediente con su presupuesto. Con búsqueda opcional.
- */
-export function toInvoiceByExpediente(db, q = '') {
-  return db.prepare(
-    `SELECT * FROM (
-       SELECT e.id, e.number, e.name, e.company, e.status, e.start_date, e.end_date, e.manager_id,
-              COALESCE((SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1), 0) AS budget_base,
-              (SELECT b.version FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1) AS budget_version,
-              (SELECT b.base_cents FROM budgets b WHERE b.expediente_id = e.id ORDER BY b.version DESC LIMIT 1 OFFSET 1) AS prev_budget_base,
-              (SELECT COALESCE(SUM(i.base_cents), 0) FROM invoices i WHERE i.expediente_id = e.id AND i.status != 'anulada') AS invoiced_base,
-              -- PO: su importe; las cerradas, sólo lo que se llegó a facturar de ellas
-              (SELECT COALESCE(SUM(CASE WHEN po.closed_at IS NULL THEN po.amount_cents
-                        ELSE COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
-                                        WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) END), 0)
-                 FROM purchase_orders po WHERE po.expediente_id = e.id) AS po_total
-         FROM expedientes e
-        WHERE e.status IN ('solicitado', 'abierto')
-     ) WHERE (?1 = '%%' OR name LIKE ?1 OR company LIKE ?1 OR CAST(number AS TEXT) LIKE ?1)
-     ORDER BY start_date, id`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
-}
-
-/**
- * PO con importe aún sin llevar a ninguna factura, de los expedientes que siguen en marcha
- * (en uno cerrado ya no se factura más); con búsqueda opcional.
- */
-export function posWithBalance(db, q = '') {
-  return db.prepare(
-    `SELECT * FROM (
-       SELECT po.*, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status, e.manager_id AS exp_manager_id, f.name AS file_name,
-              po.amount_cents - COALESCE((SELECT SUM(ip.amount_cents) FROM invoice_pos ip JOIN invoices i ON i.id = ip.invoice_id
-                                           WHERE ip.po_id = po.id AND i.status != 'anulada'), 0) AS left_cents
-         FROM expedientes e JOIN purchase_orders po ON po.expediente_id = e.id LEFT JOIN files f ON f.id = po.file_id
-        WHERE e.status IN ('abierto', 'solicitado') AND po.closed_at IS NULL
-     ) WHERE left_cents > 0
-         AND (?1 = '%%' OR number LIKE ?1 OR billed_to LIKE ?1 OR exp_name LIKE ?1 OR CAST(exp_number AS TEXT) LIKE ?1)
-     ORDER BY exp_number, id`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
-}
-
 /** ¿Está libre ese número de expediente? */
 export async function numberTaken(db, number, exceptId = 0) {
   return !!(await db.prepare('SELECT 1 FROM expedientes WHERE number = ? AND id != ?').bind(number, exceptId).first());
-}
-
-/** Facturas a cliente ya cobradas (historial), las más recientes primero; con búsqueda opcional */
-export function collectedInvoices(db, q = '') {
-  return db.prepare(
-    `SELECT i.*, e.number AS exp_number, e.name AS exp_name, f.name AS file_name,
-            (SELECT group_concat(po.number, ', ') FROM invoice_pos ip JOIN purchase_orders po ON po.id = ip.po_id WHERE ip.invoice_id = i.id) AS po_numbers
-       FROM invoices i JOIN expedientes e ON e.id = i.expediente_id LEFT JOIN files f ON f.id = i.file_id
-      WHERE i.status = 'cobrada'
-        AND (?1 = '%%' OR i.billed_to LIKE ?1 OR i.number LIKE ?1 OR i.concept LIKE ?1 OR e.name LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1)
-      ORDER BY i.collected_on DESC, i.id DESC LIMIT 300`,
-  ).bind(likeTerm(q)).all().then((r) => r.results);
 }
 
 export { byMonth } from './dates.js';

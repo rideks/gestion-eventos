@@ -26,9 +26,11 @@ import { docName, isConforme, hasConformeInvoice, canRemoveDocument } from '../l
 import { PaymentSchema, LiquidationSchema, PaySchema, SupplierDocSchema, ConformSchema, forecastRowSchema, parseRows, validate, formToObject } from '../lib/validate.js';
 import { parseVatLines } from '../lib/vat.js';
 import { getFile, UploadError } from '../lib/files.js';
-import { PAYMENT_METHODS, PAID_LOCKED, conformBlocker, plural, isLiquidation } from '../lib/finance.js';
+import { PAYMENT_METHODS, PAID_LOCKED, SOON_DAYS, conformBlocker, plural, isLiquidation } from '../lib/finance.js';
+import { TABLES } from '../lib/tables.js';
+import { allowedColumns } from '../lib/table.js';
 import { eur } from '../lib/money.js';
-import { formatDate, nowIso } from '../lib/dates.js';
+import { formatDate, nowIso, addDays } from '../lib/dates.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
 
 /** @typedef {import('./types').Context} Context */
@@ -129,6 +131,53 @@ export async function inbox(ctx, view, q = '') {
     view === 'pagados' ? repo.paid(ctx.db, q) : [],
   ]);
   return done({ pending, noInvoice, review, paid });
+}
+
+/** La columna de orden (una que se pueda ordenar y ver) y su sentido @param {Context} ctx @param {string} table @param {string} order @param {string | null} dir */
+function sortOf(ctx, table, order, dir) {
+  const sortable = allowedColumns(TABLES[table], (p) => can(ctx.user, p)).filter((c) => c.sort);
+  const col = sortable.find((c) => c.key === order) ?? sortable.find((c) => c.key === TABLES[table].sort) ?? sortable[0];
+  return { sort: col.key, dir: /** @type {'asc' | 'desc'} */ (dir === 'asc' || dir === 'desc' ? dir : col.sort) };
+}
+const KINDS = ['proveedor', 'liquidacion'];
+
+/**
+ * Bandeja, pagos pendientes en tabla (por páginas) o, con un límite grande, todos para las tarjetas por plazos.
+ * plazo: vencidos, semana, mes, luego, sinfecha o reembolsos · kind: proveedor o liquidacion.
+ * Devuelve la página, el total y la suma de lo filtrado, y cuántos hay y cuánto suman en cada plazo.
+ * @param {Context} ctx
+ * @param {{ q?: string, plazo?: string, kind?: string, order?: string, dir?: string | null, limit?: number, offset?: number }} [o]
+ */
+export async function pendingTable(ctx, { q = '', plazo = '', kind = '', order = 'vence', dir = null, limit = 25, offset = 0 } = {}) {
+  if (!can(ctx.user, 'pagos')) return forbidden();
+  const s = sortOf(ctx, 'pagos', order, dir);
+  const res = await repo.pendingTable(ctx.db, {
+    q: q.trim().slice(0, 80), plazo, kind: KINDS.includes(kind) ? kind : '', today: ctx.now, soon: addDays(ctx.now, SOON_DAYS), month: addDays(ctx.now, 30),
+    ...s, limit: Math.min(Math.max(1, limit), 1000), offset: Math.max(0, offset),
+  });
+  return done({ ...res, order: s.sort, dir: s.dir });
+}
+
+/**
+ * Bandeja, pagos hechos en tabla (por páginas) o, con un límite, los últimos para las tarjetas por meses.
+ * month: 'YYYY-MM' · method: la forma de pago · kind: proveedor o liquidacion.
+ * @param {Context} ctx
+ * @param {{ q?: string, month?: string, method?: string, kind?: string, order?: string, dir?: string | null, limit?: number, offset?: number }} [o]
+ */
+export async function paidTable(ctx, { q = '', month = '', method = '', kind = '', order = 'pagado', dir = null, limit = 25, offset = 0 } = {}) {
+  if (!can(ctx.user, 'pagos')) return forbidden();
+  const s = sortOf(ctx, 'pagados', order, dir);
+  const res = await repo.paidTable(ctx.db, {
+    q: q.trim().slice(0, 80), month: /^\d{4}-\d{2}$/.test(month) ? month : '', method: Object.hasOwn(PAYMENT_METHODS, method) ? method : '',
+    kind: KINDS.includes(kind) ? kind : '', ...s, limit: Math.min(Math.max(1, limit), 1000), offset: Math.max(0, offset),
+  });
+  return done({ ...res, order: s.sort, dir: s.dir });
+}
+
+/** Bandeja: pagos hechos de los que falta la factura del proveedor @param {Context} ctx @param {string} [q] */
+export async function paidWithoutInvoice(ctx, q = '') {
+  if (!can(ctx.user, 'pagos')) return forbidden();
+  return done(await repo.paidWithoutInvoice(ctx.db, q));
 }
 
 // ── Pagos ──────────────────────────────────────────────────────────────────

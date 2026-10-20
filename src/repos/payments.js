@@ -5,6 +5,8 @@
 
 /** @typedef {import('../services/types').Db} Db */
 
+import { orderBy } from '../lib/table.js';
+
 /** Texto de búsqueda para LIKE (sin comodines del usuario); '%%' = sin búsqueda */
 export const likeTerm = (/** @type {unknown} */ q) => `%${String(q ?? '').trim().slice(0, 80).replace(/[%_]/g, '')}%`;
 
@@ -88,6 +90,70 @@ export function paidWithoutInvoice(db, q = '') {
         AND NOT EXISTS (SELECT 1 ${DOCS_OF("d.kind = 'factura'")})
       ORDER BY p.paid_on, p.id`,
   ).bind(likeTerm(q)).all().then((r) => r.results);
+}
+
+// ── Tablas de la bandeja (por páginas) ─────────────────────────────────────
+
+// Plazo de un pago pendiente, como los grupos de la bandeja (?2 = hoy, ?3 = dentro de 7 días, ?4 = dentro de 30)
+const PLAZOS = {
+  vencidos: 'due_date < ?2',
+  semana: 'due_date >= ?2 AND due_date <= ?3',
+  mes: 'due_date > ?3 AND due_date <= ?4',
+  luego: 'due_date > ?4',
+  sinfecha: "due_date IS NULL AND kind = 'proveedor'",
+  reembolsos: "due_date IS NULL AND kind = 'liquidacion'",
+};
+// Columna de la tabla (src/lib/tables.js → pagos y pagados) → expresión para ordenar
+const SORT = {
+  proveedor: 'supplier COLLATE NOCASE', expediente: 'exp_number', vence: 'due_date', pagado: 'paid_on', forma: 'method',
+  tipo: 'kind', base: 'base_cents', total: 'total_cents', alta: 'created_at',
+  estado: "CASE WHEN due_date < ?2 THEN 1 WHEN due_date <= ?3 THEN 2 WHEN due_date IS NULL THEN 4 ELSE 3 END",
+};
+
+/**
+ * Pagos pendientes por páginas (la tabla de la bandeja; con limit grande, la lista entera para las tarjetas).
+ * plazo: uno de PLAZOS · kind: 'proveedor' | 'liquidacion'. Devuelve la página, el total y la suma de lo filtrado, y
+ * cuántos hay y cuánto suman en cada plazo (con el buscador y el tipo, sin el plazo).
+ * @param {Db} db
+ * @param {{ q?: string, plazo?: string, kind?: string, today: string, soon: string, month: string, sort?: string, dir?: 'asc' | 'desc', limit?: number, offset?: number }} o
+ */
+export async function pendingTable(db, { q = '', plazo = '', kind = '', today, soon, month, sort = 'vence', dir = 'asc', limit = 25, offset = 0 }) {
+  const base = `
+    SELECT ${PAYMENT_SELECT}, ${WITH_EXP}
+      FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
+     WHERE p.status = 'pendiente' AND e.status != 'cancelado' AND ${SEARCH}
+       AND (?5 = '' OR p.kind = ?5)`;
+  const cond = PLAZOS[/** @type {keyof typeof PLAZOS} */ (plazo)] ?? '1 = 1';
+  const args = [likeTerm(q), today, soon, month, kind];
+  const [count, page] = await db.batch([
+    db.prepare(`SELECT COALESCE(SUM(CASE WHEN ${cond} THEN 1 ELSE 0 END), 0) AS n, COALESCE(SUM(CASE WHEN ${cond} THEN total_cents END), 0) AS sum,
+                       ${Object.entries(PLAZOS).map(([k, w]) => `COALESCE(SUM(CASE WHEN ${w} THEN 1 ELSE 0 END), 0) AS ${k}_n, COALESCE(SUM(CASE WHEN ${w} THEN total_cents END), 0) AS ${k}_sum`).join(', ')}
+                  FROM (${base})`).bind(...args),
+    db.prepare(`SELECT * FROM (${base}) WHERE ${cond} ORDER BY ${orderBy(SORT, sort, dir, 'vence', 'id')} LIMIT ?6 OFFSET ?7`).bind(...args, limit, offset),
+  ]);
+  const c = count.results[0];
+  const groups = Object.fromEntries(Object.keys(PLAZOS).map((k) => [k, { n: c[`${k}_n`], sum: c[`${k}_sum`] }]));
+  return { rows: page.results, total: c.n, sum: c.sum, groups };
+}
+
+/**
+ * Pagos hechos por páginas (el historial; con limit grande, los últimos para las tarjetas por meses).
+ * month: 'YYYY-MM' (pagados ese mes) · method: la forma de pago · kind: 'proveedor' | 'liquidacion'.
+ * @param {Db} db
+ * @param {{ q?: string, month?: string, method?: string, kind?: string, sort?: string, dir?: 'asc' | 'desc', limit?: number, offset?: number }} o
+ */
+export async function paidTable(db, { q = '', month = '', method = '', kind = '', sort = 'pagado', dir = 'desc', limit = 25, offset = 0 } = {}) {
+  const base = `
+    SELECT ${PAYMENT_SELECT}, e.number AS exp_number, e.name AS exp_name, e.status AS exp_status
+      FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
+     WHERE p.status = 'pagado' AND ${SEARCH}
+       AND (?2 = '' OR substr(p.paid_on, 1, 7) = ?2) AND (?3 = '' OR p.method = ?3) AND (?4 = '' OR p.kind = ?4)`;
+  const args = [likeTerm(q), month, method, kind];
+  const [count, page] = await db.batch([
+    db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total_cents), 0) AS sum FROM (${base})`).bind(...args),
+    db.prepare(`SELECT * FROM (${base}) ORDER BY ${orderBy(SORT, sort, dir, 'pagado', 'id')} LIMIT ?5 OFFSET ?6`).bind(...args, limit, offset),
+  ]);
+  return { rows: page.results, total: count.results[0].n, sum: count.results[0].sum };
 }
 
 /** Pagos ya hechos (historial), los más recientes primero; con búsqueda opcional @param {Db} db @param {string} [q] */

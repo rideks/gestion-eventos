@@ -14,6 +14,8 @@ import { getExpediente, loadFinance, suggestions, knownClients } from '../../../
 import { SendSchema, validate, formToObject } from '../../../../lib/validate.js';
 import { getFile, fileUrl, UploadError } from '../../../../lib/files.js';
 import { storeFile, deleteFiles } from '../../../../services/files.js';
+import { serviceContext } from '../../../../services/context.js';
+import * as invoices from '../../../../services/invoices.js';
 import { invoiceState, sentState } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
 import { loadRates, rawVatLines, linesOf } from '../../../../lib/vat.js';
@@ -21,7 +23,7 @@ import {
   readInvoiceForm, invoiceValues, INVOICE_FIELDS, issueInvoice, markSent, peekInvoiceNumber, invoiceSettings, invoiceEmail, DUE_DAYS,
 } from '../../../../lib/invoicing.js';
 import { today, nowIso, addDays, formatDate, formatStamp } from '../../../../lib/dates.js';
-import { isLocked, LOCKED_MSG, markCollected } from '../../../../lib/actions.js';
+import { isLocked, LOCKED_MSG } from '../../../../lib/actions.js';
 
 // Sólo Administración ve los cobros
 const denied = deny(Astro, 'cobros');
@@ -73,7 +75,7 @@ if (Astro.request.method === 'POST') {
     if (locked) {
       error = LOCKED_MSG;
     } else if (input.intent === 'collect') {
-      const r = await markCollected(db, who, input, id);
+      const r = await invoices.collect(serviceContext(Astro), input, { expedienteId: id });
       if (r.ok) return Astro.redirect(`${back}?ok=cobrada`, 303);
       error = r.message;
     } else if (input.intent === 'uncollect' && admin && inv.status === 'cobrada') {

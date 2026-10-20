@@ -1,0 +1,43 @@
+---
+// Ventana para registrar el cobro de una factura desde una tabla (bandeja de Cobros): la fecha en que se cobró.
+// Una sola ventana para toda la tabla: cada fila lleva un enlace
+//   <a href="ficha de la factura" data-collect-open data-id data-what>
+// que la abre con esa factura; sin JavaScript, el enlace lleva a la ficha, donde se cobra igual.
+import Icon from './Icon.astro';
+
+const { now } = Astro.props;
+---
+<dialog id="cobrar" class="confirm-dialog picker-dialog cancel-dialog" aria-labelledby="cobrar-title" data-collect-dialog>
+  <form method="post" class="cancel-form">
+    <h2 id="cobrar-title"><Icon name="banknote" /> Registrar el cobro</h2>
+    <p class="muted" data-collect-what></p>
+    <input type="hidden" name="intent" value="collect" />
+    <input type="hidden" name="invoice_id" value="" data-collect-id />
+    <div class="field">
+      <label for="cobrar-fecha">Fecha de cobro</label>
+      <input id="cobrar-fecha" type="date" name="collected_on" value={now} required />
+    </div>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" type="button" data-collect-close>Volver</button>
+      <button class="btn btn-primary" type="submit" data-busy="Guardando…"><Icon name="check" size={18} /> Cobrada</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const dialog = document.querySelector('dialog[data-collect-dialog]');
+  if (dialog instanceof HTMLDialogElement) {
+    document.querySelectorAll('[data-collect-open]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        if (typeof dialog.showModal !== 'function') return;
+        e.preventDefault();
+        const id = dialog.querySelector('[data-collect-id]');
+        if (id instanceof HTMLInputElement) id.value = a.getAttribute('data-id') ?? '';
+        const what = dialog.querySelector('[data-collect-what]');
+        if (what) what.textContent = a.getAttribute('data-what') ?? '';
+        dialog.showModal();
+      });
+    });
+    dialog.querySelector('[data-collect-close]')?.addEventListener('click', () => dialog.close());
+  }
+</script>

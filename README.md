@@ -199,7 +199,12 @@ Reparto inicial:
 - **Pagos** y **Cobros**: bandejas de trabajo con todos los expedientes, con **buscador** en todas las pestañas:
   pendientes, **facturas de proveedor por revisar** y el **historial** de lo pagado y lo cobrado por meses.
   Para pagar por transferencia se adjunta el **justificante en la misma fila** (o desde el aviso, si falta) y queda
-  pagado de una vez, sin entrar en la ficha.
+  pagado de una vez, sin entrar en la ficha. Los pendientes y los pagados (y en Cobros, las facturas por emitir o
+  cobrar y las cobradas) se ven en **tarjetas** (por plazos, por meses o el embudo, como siempre) o en **tabla**: por
+  páginas, con «Columnas», orden por cabecera y filtros (plazo y tipo; mes y forma de pago; estado; mes de cobro).
+  En la tabla, **«Pagar»** (o «Reembolsar», en una liquidación) y **«Cobrada»** abren una ventana con la fecha, la
+  forma de pago y el justificante; y al terminar se vuelve a la misma página de la tabla. En tarjetas, los pagados y
+  las cobradas son los 300 más recientes; en tabla, todos por páginas.
 - **Resumen del expediente**: «Presupuesto» (el vigente; igual en la pestaña Presupuesto) y «Coste», iguales para los
   dos perfiles; Administración ve además «Cobrado». El **beneficio** no se calcula mientras el expediente está en marcha (los costes y las ventas aún cambian):
   sale en **Cierre** y, una vez cerrado, también en el resumen y en la lista de expedientes. En la pestaña Cobros,
@@ -245,7 +250,7 @@ Reparto inicial:
   **Facturas al cliente**: formato del número (`G/{n}/{yy}/01`: `{n}` el número con 6 cifras, `{yy}` o `{yyyy}` el año;
   si lleva el año, cada año empieza en 1), el **próximo número** (para seguir la numeración que ya lleváis; no deja
   poner uno ya usado) y los datos de la empresa que salen en la factura (razón social, CIF, dirección, IBAN, email).
-- **Tablas** (Expedientes, Clientes, Proveedores, Contratos y Business Travel), todas iguales:
+- **Tablas** (Expedientes, Clientes, Proveedores, Contratos, Business Travel, Pagos y Cobros), todas iguales:
   - el buscador y los filtros en una línea; debajo, el resumen (cuántas hay y sus totales) con «Columnas» a la derecha;
   - se pulsa en cualquier parte de la fila para abrir la ficha; la flecha del orden sólo sale en la columna ordenada
     (en las demás, al pasar por encima);
@@ -260,9 +265,10 @@ Reparto inicial:
     quien no lo tiene, ni aunque se pidan a mano;
   - los **totales** de encima son de todo lo filtrado, no sólo de la página; la búsqueda, el orden y la página van
     en la dirección, así que se puede enviar el enlace a una búsqueda;
-  - **Tarjetas o tabla** (Expedientes, Business Travel, Clientes y Proveedores): cada persona elige cómo verlas y se
-    le recuerda. Expedientes y Business Travel empiezan en tarjetas; Clientes y Proveedores, en tabla. En tarjetas,
-    el orden se elige en un desplegable.
+  - **Tarjetas o tabla** (Expedientes, Business Travel, Clientes, Proveedores, Pagos y Cobros): cada persona elige
+    cómo verlas y se le recuerda (en Pagos y Cobros, cada pestaña la suya). Expedientes, Business Travel, Pagos y
+    Cobros empiezan en tarjetas; Clientes y Proveedores, en tabla. En tarjetas, el orden se elige en un desplegable
+    (salvo en Pagos y Cobros, que van por plazos, por meses o por el embudo).
 - **Business Travel**: como Expedientes, en pestañas **En curso · Por cerrar · Mías · Cerradas · Canceladas · Todas**
   (con el número de las que están en curso, por cerrar y las tuyas), con buscador (referencia, cliente, pasajero,
   proveedor o localizador), cliente y mes. Se ven en **tarjetas** (nº de reserva, descripción, cliente, fechas,

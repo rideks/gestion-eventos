@@ -2,69 +2,91 @@
 // Bandeja de facturación a clientes de TODOS los expedientes, como un embudo:
 //  · Pendientes: 1. por facturar (presupuesto de cada expediente menos lo ya facturado, con sus PO) →
 //    2. facturas por emitir → 3. facturas por cobrar (vencidas primero).
-//  · Cobradas: el historial por meses, con buscador.
-import { env } from 'cloudflare:workers';
+//  · Cobradas: el historial.
+// Las facturas se ven como tarjetas (el embudo, o las cobradas por meses) o como tabla: por páginas, con columnas a
+// elegir, orden por cabecera y filtros; cada persona elige y se recuerda. En la tabla, «Cobrada» abre una ventana
+// con la fecha (CollectDialog). Todo pasa por src/services/invoices.js.
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
+import Pill from '../components/Pill.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import BillingItem from '../components/BillingItem.astro';
-import SearchBox from '../components/SearchBox.astro';
-import { actor, readForm, can, deny } from '../lib/app.js';
-import { openInvoices, posWithBalance, collectedInvoices, byMonth, toInvoiceByExpediente } from '../lib/data.js';
-import { markCollected, isLocked } from '../lib/actions.js';
+import TableTools from '../components/TableTools.astro';
+import SortTh from '../components/SortTh.astro';
+import Pager from '../components/Pager.astro';
+import CollectDialog from '../components/CollectDialog.astro';
+import { readForm, can } from '../lib/app.js';
+import { isLocked } from '../lib/actions.js';
 import { formToObject } from '../lib/validate.js';
+import { TABLES } from '../lib/tables.js';
+import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../lib/table.js';
+import { plural, invoiceState, sentState } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
-import { today, formatMonth } from '../lib/dates.js';
-import { plural, billingStatus } from '../lib/finance.js';
+import { formatMonth, formatDate, dueText, byMonth } from '../lib/dates.js';
+import { serviceContext, failure } from '../services/context.js';
+import * as invoices from '../services/invoices.js';
+import * as prefs from '../services/prefs.js';
 
-// Sólo Administración ve los cobros
-const denied = deny(Astro, 'cobros');
-if (denied) return denied;
-const db = env.DB;
-const now = today();
-const admin = can(Astro.locals.user, 'invoice.issue');
-const managePo = can(Astro.locals.user, 'po.manage');
-const view = Astro.url.searchParams.get('ver') === 'cobradas' ? 'cobradas' : 'pendientes';
-const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const ctx = serviceContext(Astro);
+const me = Astro.locals.user;
+const now = ctx.now;
+const params = Astro.url.searchParams;
+const admin = can(me, 'invoice.issue');
+const managePo = can(me, 'po.manage');
+const view = params.get('ver') === 'cobradas' ? 'cobradas' : 'pendientes';
 let error = null;
 
 if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
-  if (input.intent === 'collect') {
-    const r = await markCollected(db, actor(Astro), input);
-    if (r.ok) return Astro.redirect('/cobros?ok=cobrada', 303);
-    error = r.message;
-  }
-  Astro.response.status = 400;
+  const r = input.intent === 'collect' ? await invoices.collect(ctx, input) : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.' };
+  // De vuelta a la misma lista (con su búsqueda, sus filtros y su página)
+  if (r.ok) return Astro.redirect(hrefWith(Astro.url, { ok: 'cobrada', pagina: params.get('pagina') }), 303);
+  const back = failure(Astro, r, '/cobros');
+  if (back) return back;
+  error = r.message;
 }
 
-const pendingQ = view === 'pendientes' ? q : '';
-const [invoices, pos, expedientes, collected] = await Promise.all([
-  view === 'pendientes' ? openInvoices(db, pendingQ) : [],
-  view === 'pendientes' ? posWithBalance(db) : [],
-  view === 'pendientes' ? toInvoiceByExpediente(db, pendingQ) : [],
-  view === 'cobradas' ? collectedInvoices(db, q) : [],
+// La tabla (o las tarjetas) con su buscador, filtros, orden y páginas
+const def = view === 'cobradas' ? TABLES.cobradas : TABLES.cobros;
+const state = tableState(def, params, { prefs: await prefs.forTable(ctx, def.key), can: (p) => can(me, p) });
+const cards = state.view === 'tarjetas';
+// En tarjetas, todas las pendientes (el embudo) o las 300 últimas cobradas (por meses); en tabla, la página
+const page = cards ? { limit: view === 'cobradas' ? 300 : 1000, offset: 0 } : { limit: state.per, offset: state.offset };
+const sorted = cards ? {} : { order: state.sort, dir: state.dir };
+const [res, bill] = await Promise.all([
+  view === 'cobradas'
+    ? invoices.collectedTable(ctx, { q: state.q, month: state.filters.mes ?? '', ...sorted, ...page })
+    : invoices.openTable(ctx, { q: state.q, state: state.filters.estado ?? '', ...sorted, ...page }),
+  view === 'pendientes' ? invoices.toBill(ctx, state.q) : null,
 ]);
-// 1. Por facturar: cada expediente con lo que le falta según su presupuesto VIGENTE (y sus PO con saldo, para
-//    facturarlas directamente). También los que piden revisar algo: facturado de más o PO por encima del presupuesto.
-const posOf = new Map();
-for (const po of pos) posOf.set(po.expediente_id, [...(posOf.get(po.expediente_id) ?? []), po]);
-const toBill = expedientes
-  .map((e) => {
-    const its = posOf.get(e.id) ?? [];
-    const poLeft = its.reduce((a, po) => a + po.left_cents, 0);
-    return { ...e, pos: its, poLeft, ...billingStatus(e, poLeft) };
-  })
-  .filter((e) => e.left > 0 || e.overInvoiced > 0 || e.poExcess > 0);
-const months = byMonth(collected, 'collected_on');
-const toIssue = invoices.filter((i) => i.status === 'por_emitir');
-const toCollect = invoices.filter((i) => i.status === 'emitida');
+if (!res.ok) return failure(Astro, res, '/');
+const { rows, total, sum, groups: counts = {} } = res.value;
+const info = pageInfo(total, state);
+if (!cards && state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
+const toBill = bill?.ok ? bill.value : [];
+const filtered = isFiltered(state);
+const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
+
+const STATES = { por_emitir: 'Por emitir', emitida: 'Pendientes de cobro', vencida: 'Con el cobro vencido' };
+const months = Array.from({ length: 24 }, (_, i) => {
+  const d = new Date(Date.UTC(Number(now.slice(0, 4)), Number(now.slice(5, 7)) - 1 - i, 1));
+  return d.toISOString().slice(0, 7);
+});
+const filters = view === 'cobradas'
+  ? [{ ...def.filters[0], options: months.map((m) => [m, formatMonth(m)]) }]
+  : [{ ...def.filters[0], options: Object.entries(STATES) }];
+// El embudo en tarjetas: 2. por emitir y 3. por cobrar (las vencidas, primero)
+const toIssue = rows.filter((i) => i.status === 'por_emitir');
+const toCollect = rows.filter((i) => i.status === 'emitida').sort((a, b) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999'));
 const overdue = toCollect.filter((i) => i.due_date && i.due_date < now);
-const total = (rows, f = 'total_cents') => rows.reduce((a, r) => a + r[f], 0);
+const byMonths = view === 'cobradas' && cards ? byMonth(rows, 'collected_on') : [];
+const totalOf = (list, f = 'total_cents') => list.reduce((a, r) => a + r[f], 0);
 const managePoOf = (e) => managePo && !isLocked(e);
+const expLabel = (i) => (i.exp_number ? `EXP ${i.exp_number}` : 'Solicitud');
 ---
-<App title="Cobros" section="cobros" error={error} origin={view === 'cobradas' ? 'Cobradas' : 'Cobros pendientes'}>
+<App title="Cobros" section="cobros" error={error} origin={view === 'cobradas' ? 'Cobradas' : 'Cobros pendientes'} wide={!cards}>
   <div class="page-top">
     <div>
       <h1>Cobros a clientes</h1>
@@ -77,26 +99,36 @@ const managePoOf = (e) => managePo && !isLocked(e);
     <a href="/cobros?ver=cobradas" aria-current={view === 'cobradas' ? 'page' : undefined}>Cobradas</a>
   </nav>
 
-  <SearchBox action="/cobros" view={view === 'cobradas' ? 'cobradas' : null} q={q} placeholder="Cliente, expediente o nº de factura" />
-  {view === 'pendientes' && q && <p class="muted mt">{plural(toBill.length, 'expediente', 'expedientes')} por facturar y {plural(toIssue.length + toCollect.length, 'factura', 'facturas')} para «{q}»</p>}
+  <TableTools def={def} state={state} filters={filters} url={Astro.url} keep={['ver']} cardSort={false} label="Buscar facturas">
+    {view === 'pendientes' ? (
+      <>{plural(toBill.length, 'expediente', 'expedientes')} por facturar · {plural(total, 'factura', 'facturas')} por emitir o cobrar{filtered && ' con esos filtros'}
+        {total > 0 && <> · <b class="money">{eur(sum)}</b> <span class="small">(con IVA)</span></>}</>
+    ) : (
+      <>{plural(total, 'factura cobrada', 'facturas cobradas')}{filtered && ' con esos filtros'}
+        {total > 0 && <> · <b class="money">{eur(sum)}</b> <span class="small">(con IVA)</span></>}
+        {cards && total > rows.length && <span class="small"> · aquí, las {rows.length} más recientes (en «Tabla», todas por páginas)</span>}</>
+    )}
+  </TableTools>
 
-  {view === 'pendientes' ? (
+  {view === 'pendientes' && (
+    <section id="facturar" class="funnel-step">
+      <div class="sec-head">
+        <h2><Icon name="folder" /> 1. Por facturar ({toBill.length})</h2>
+        {toBill.length > 0 && <span class="money"><strong>{eur(totalOf(toBill, 'left'))}</strong> <span class="muted small">sin IVA</span></span>}
+        <p>Cada expediente sale aquí desde que se crea: su presupuesto vigente menos lo ya facturado o pedido. Si sube una versión nueva del presupuesto, se recalcula (las PO y las facturas se mantienen).</p>
+      </div>
+      {toBill.length
+        ? <ul class="list">{toBill.map((e) => <BillingItem e={e} pos={e.pos} canIssue={admin} canInvoicePo={managePoOf(e)} />)}</ul>
+        : <p class="muted">{state.q ? 'Ningún expediente por facturar coincide.' : 'Todo lo presupuestado está facturado o pedido.'}</p>}
+    </section>
+  )}
+
+  {view === 'pendientes' && cards ? (
     <>
-      <section id="facturar" class="funnel-step">
-        <div class="sec-head">
-          <h2><Icon name="folder" /> 1. Por facturar ({toBill.length})</h2>
-          {toBill.length > 0 && <span class="money"><strong>{eur(total(toBill, 'left'))}</strong> <span class="muted small">sin IVA</span></span>}
-          <p>Cada expediente sale aquí desde que se crea: su presupuesto vigente menos lo ya facturado o pedido. Si sube una versión nueva del presupuesto, se recalcula (las PO y las facturas se mantienen).</p>
-        </div>
-        {toBill.length
-          ? <ul class="list">{toBill.map((e) => <BillingItem e={e} pos={e.pos} canIssue={admin} canInvoicePo={managePoOf(e)} />)}</ul>
-          : <p class="muted">{q ? 'Ningún expediente por facturar coincide.' : 'Todo lo presupuestado está facturado o pedido.'}</p>}
-      </section>
-
       <section id="emitir" class="funnel-step">
         <div class="sec-head">
           <h2><Icon name="send" /> 2. Por emitir ({toIssue.length})</h2>
-          {toIssue.length > 0 && <span class="money"><strong>{eur(total(toIssue))}</strong></span>}
+          {toIssue.length > 0 && <span class="money"><strong>{eur(totalOf(toIssue))}</strong></span>}
           <p>{admin ? 'Facturas pedidas o en borrador: revísalas, emítelas (el número se asigna solo) y envíalas al cliente.' : 'Facturas pedidas que Administración aún no ha emitido.'}</p>
         </div>
         {toIssue.length ? <ul class="list">{toIssue.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="muted">No hay facturas por emitir.</p>}
@@ -105,25 +137,82 @@ const managePoOf = (e) => managePo && !isLocked(e);
       <section id="cobrar" class="funnel-step">
         <div class="sec-head">
           <h2><Icon name="banknote" /> 3. Por cobrar ({toCollect.length})</h2>
-          {toCollect.length > 0 && <span class="money"><strong>{eur(total(toCollect))}</strong>{overdue.length > 0 && <> <span class="pill pill-danger">{eur(total(overdue))} vencido</span></>}</span>}
+          {toCollect.length > 0 && <span class="money"><strong>{eur(totalOf(toCollect))}</strong>{overdue.length > 0 && <> <span class="pill pill-danger">{eur(totalOf(overdue))} vencido</span></>}</span>}
           <p>Facturas emitidas que el cliente aún no ha pagado; las vencidas, primero. Lo cobrado está en «Cobradas».</p>
         </div>
         {toCollect.length ? <ul class="list">{toCollect.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul> : <p class="muted">No hay facturas por cobrar.</p>}
       </section>
     </>
-  ) : (
+  ) : cards ? (
     <>
-      {q && <p class="muted mt">{plural(collected.length, 'factura', 'facturas')} para «{q}» · {eur(total(collected))}</p>}
-      {months.map((m) => (
+      {byMonths.map((m) => (
         <section>
           <div class="group-title">
             <h3>{formatMonth(m.key)} ({m.rows.length})</h3>
-            <span class="money">{eur(total(m.rows))}</span>
+            <span class="money">{eur(totalOf(m.rows))}</span>
           </div>
           <ul class="list">{m.rows.map((i) => <InvoiceItem i={i} now={now} showExp canIssue={admin} />)}</ul>
         </section>
       ))}
-      {!collected.length && <p class="empty mt">{q ? 'No hay facturas que coincidan.' : 'Todavía no hay facturas cobradas.'}</p>}
+      {!rows.length && <p class="empty mt">{filtered ? 'No hay facturas que coincidan.' : 'Todavía no hay facturas cobradas.'}</p>}
     </>
+  ) : (
+    <section id="facturas" class:list={{ 'funnel-step': view === 'pendientes' }}>
+      {view === 'pendientes' && (
+        <div class="sec-head">
+          <h2><Icon name="banknote" /> 2 y 3. Por emitir y por cobrar ({total})</h2>
+          {!state.filters.estado && (
+            <p>{Object.entries(STATES).map(([k, label], n) => <>{n > 0 && ' · '}<a href={hrefWith(Astro.url, { estado: k })}>{label}: {counts[k]?.n ?? 0}</a> <span class="money">({eur(counts[k]?.sum ?? 0)})</span></>)}</p>
+          )}
+        </div>
+      )}
+      {!rows.length ? (
+        <p class="empty mt">{filtered ? 'Ninguna factura con esos filtros.' : view === 'cobradas' ? 'Todavía no hay facturas cobradas.' : 'No hay facturas por emitir ni por cobrar.'}</p>
+      ) : (
+        <div class="table-scroll mt">
+          <table class:list={['dtable', 'invoices', 'is-listing', view]}>
+            <thead>
+              <tr>
+                {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
+                {view === 'pendientes' && admin && <th scope="col"><span class="visually-hidden">Acciones</span></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((i) => {
+                const ficha = `/expedientes/${i.expediente_id}/facturas/${i.id}`;
+                const sent = sentState(i);
+                return (
+                  <tr data-href={ficha}>
+                    <td>
+                      <a href={ficha}><strong>{i.number ?? 'Por emitir'}</strong></a>
+                      {i.concept && <div class="small muted">{i.concept}</div>}
+                    </td>
+                    {has('cliente') && <td data-label={L.cliente}>{i.billed_to}</td>}
+                    {has('expediente') && <td data-label={L.expediente}><a href={`/expedientes/${i.expediente_id}/cobros`}>{expLabel(i)}</a><div class="small muted">{i.exp_name}</div></td>}
+                    {has('estado') && <td data-label={L.estado}><Pill state={invoiceState(i, now)} /></td>}
+                    {has('emitida') && <td data-label={L.emitida}>{i.issued_on ? formatDate(i.issued_on) : '—'}</td>}
+                    {has('vence') && <td data-label={L.vence}>{i.due_date ? <>{formatDate(i.due_date)}{i.status === 'emitida' && <div class="small muted">{dueText(i.due_date, now)}</div>}</> : '—'}</td>}
+                    {has('cobrada') && <td data-label={L.cobrada}>{formatDate(i.collected_on)}</td>}
+                    {has('envio') && <td data-label={L.envio}>{sent ? <Pill state={sent} /> : '—'}</td>}
+                    {has('po') && <td data-label={L.po}>{i.po_numbers ?? '—'}</td>}
+                    {has('base') && <td data-label={L.base} class="num money">{eur(i.base_cents)}</td>}
+                    {has('total') && <td data-label={L.total} class:list={['num', 'money', { neg: i.total_cents < 0 }]}><strong>{eur(i.total_cents)}</strong></td>}
+                    {view === 'pendientes' && admin && (
+                      <td class="row-actions">
+                        {i.status === 'emitida'
+                          ? <a class="btn btn-sm" href={ficha} data-collect-open data-id={i.id} data-what={`Factura ${i.number} · ${i.billed_to} · ${eur(i.total_cents)}`}><Icon name="check" size={16} /> Cobrada</a>
+                          : <a class="btn btn-primary btn-sm" href={ficha}><Icon name="send" size={16} /> Emitir</a>}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Pager info={info} url={Astro.url} noun={def.noun} />
+      {view === 'pendientes' && admin && <CollectDialog now={now} />}
+    </section>
   )}
 </App>

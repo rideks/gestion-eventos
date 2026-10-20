@@ -1,29 +1,40 @@
 ---
 // Bandeja de pagos a proveedores de TODOS los expedientes.
-//  · Pendientes: por fecha límite (vencidos, próximos días, este mes…). La lista de trabajo de Administración.
+//  · Pendientes: por plazo (vencidos, próximos días, este mes…). La lista de trabajo de Administración.
 //  · Por revisar: facturas de proveedor subidas que Administración aún no ha dado por buenas.
-//  · Pagados: el historial por meses.
-// Las tres con buscador (proveedor, nº de factura, expediente).
+//  · Pagados: el historial.
+// Pendientes y Pagados se ven como tarjetas (agrupadas por plazo o por meses, como siempre) o como tabla: por
+// páginas, con columnas a elegir, orden por cabecera y filtros; cada persona elige y se recuerda. En la tabla, el
+// botón «Pagar» abre una ventana con la fecha, la forma de pago y el justificante (PayDialog).
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
+import Pill from '../components/Pill.astro';
 import PaymentItem from '../components/PaymentItem.astro';
 import ReviewItem from '../components/ReviewItem.astro';
 import SearchBox from '../components/SearchBox.astro';
+import TableTools from '../components/TableTools.astro';
+import SortTh from '../components/SortTh.astro';
+import Pager from '../components/Pager.astro';
+import PayDialog from '../components/PayDialog.astro';
 import { readForm, can } from '../lib/app.js';
-import { getFile } from '../lib/files.js';
+import { getFile, fileUrl } from '../lib/files.js';
 import { formToObject } from '../lib/validate.js';
-import { plural, isLiquidation, SOON_DAYS } from '../lib/finance.js';
+import { TABLES } from '../lib/tables.js';
+import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../lib/table.js';
+import { plural, isLiquidation, paymentState, supplierInvoiceState, PAYMENT_KINDS, PAYMENT_METHODS, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
-import { addDays, formatMonth, byMonth } from '../lib/dates.js';
+import { formatMonth, formatDate, formatStamp, dueText, byMonth } from '../lib/dates.js';
 import { serviceContext, failure } from '../services/context.js';
 import * as payments from '../services/payments.js';
+import * as prefs from '../services/prefs.js';
 
 const ctx = serviceContext(Astro);
+const me = Astro.locals.user;
 const now = ctx.now;
+const params = Astro.url.searchParams;
 const VIEWS = ['pendientes', 'revisar', 'pagados'];
-const view = VIEWS.includes(Astro.url.searchParams.get('ver')) ? Astro.url.searchParams.get('ver') : 'pendientes';
-const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
-const reviewer = can(Astro.locals.user, 'supplier.review');
+const view = VIEWS.includes(params.get('ver')) ? params.get('ver') : 'pendientes';
+const reviewer = can(me, 'supplier.review');
 let error = null;
 
 if (Astro.request.method === 'POST') {
@@ -31,8 +42,8 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   if (input.intent === 'pay') {
     const r = await payments.markPaid(ctx, input, { receipt: getFile(form, 'receipt') });
-    const ok = r.ok && r.value.kind === 'liquidacion' ? 'reembolsada' : 'pagado';
-    if (r.ok) return Astro.redirect(`/pagos${q ? `?q=${encodeURIComponent(q)}&ok=${ok}` : `?ok=${ok}`}`, 303);
+    // De vuelta a la misma lista (con su búsqueda, sus filtros y su página)
+    if (r.ok) return Astro.redirect(hrefWith(Astro.url, { ok: r.value.kind === 'liquidacion' ? 'reembolsada' : 'pagado', pagina: params.get('pagina') }), 303);
     const back = failure(Astro, r, '/pagos');
     if (back) return back;
     error = r.message;
@@ -47,28 +58,70 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const total = (rows) => rows.reduce((a, p) => a + p.total_cents, 0);
-const box = await payments.inbox(ctx, view, q);
+// Facturas por revisar (la pestaña y su número)
+const q = (params.get('q') ?? '').trim().slice(0, 80);
+const box = await payments.inbox(ctx, 'revisar', view === 'revisar' ? q : '');
 if (!box.ok) return failure(Astro, box, '/');
-const { pending, noInvoice, review, paid } = box.value;
+const { review } = box.value;
 // Se conforman las de pagos ya hechos; las demás esperan a su pago
 const ready = review.filter((si) => !si.unpaid_count);
 const waiting = review.filter((si) => si.unpaid_count > 0);
-const soonLimit = addDays(now, SOON_DAYS);
-const monthLimit = addDays(now, 30);
-const groups = [
-  { key: 'vencidos', title: 'Vencidos', danger: true, rows: pending.filter((p) => p.due_date && p.due_date < now) },
-  { key: 'semana', title: `Próximos ${SOON_DAYS} días`, rows: pending.filter((p) => p.due_date && p.due_date >= now && p.due_date <= soonLimit) },
-  { key: 'mes', title: 'Este mes', rows: pending.filter((p) => p.due_date && p.due_date > soonLimit && p.due_date <= monthLimit) },
-  { key: 'luego', title: 'Más adelante', rows: pending.filter((p) => p.due_date && p.due_date > monthLimit) },
-  { key: 'sinfecha', title: 'Sin fecha límite', rows: pending.filter((p) => !p.due_date && !isLiquidation(p)) },
-  // Lo que alguien adelantó de su bolsillo: se le reembolsa (no tiene fecha límite)
-  { key: 'reembolsos', title: 'Liquidaciones de gastos por reembolsar', rows: pending.filter((p) => !p.due_date && isLiquidation(p)) },
-];
-const months = byMonth(paid, 'paid_on');
-const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura o expediente' : 'Proveedor, nº de factura o expediente';
+
+// Pendientes y Pagados: la tabla (o las tarjetas) con su buscador, filtros, orden y páginas
+const def = view === 'pagados' ? TABLES.pagados : TABLES.pagos;
+const state = tableState(def, params, { prefs: view === 'revisar' ? null : await prefs.forTable(ctx, def.key), can: (p) => can(me, p) });
+const cards = state.view === 'tarjetas';
+// En tarjetas, todo (agrupado por plazo) o los últimos 300 pagos (por meses); en tabla, la página
+const page = cards ? { limit: view === 'pagados' ? 300 : 1000, offset: 0 } : { limit: state.per, offset: state.offset };
+const [res, noInvoice] = await Promise.all([
+  view === 'pendientes' ? payments.pendingTable(ctx, { q: state.q, plazo: state.filters.plazo ?? '', kind: state.filters.tipo ?? '', ...(cards ? {} : { order: state.sort, dir: state.dir }), ...page })
+    : view === 'pagados' ? payments.paidTable(ctx, { q: state.q, month: state.filters.mes ?? '', method: state.filters.forma ?? '', kind: state.filters.tipo ?? '', ...(cards ? {} : { order: state.sort, dir: state.dir }), ...page })
+      : null,
+  view === 'pendientes' ? payments.paidWithoutInvoice(ctx, state.q) : null,
+]);
+if (res && !res.ok) return failure(Astro, res, '/');
+const { rows = [], total = 0, sum = 0, groups: counts = {} } = res?.value ?? {};
+const info = pageInfo(total, state);
+if (res && !cards && state.page > info.last) return Astro.redirect(hrefWith(Astro.url, { pagina: info.last }), 303);
+const filtered = isFiltered(state);
+const has = (k) => shows(state, k);
+const L = Object.fromEntries(def.columns.map((c) => [c.key, c.label])); // la etiqueta de cada dato en el móvil
+
+const PLAZOS = {
+  vencidos: 'Vencidos', semana: `Próximos ${SOON_DAYS} días`, mes: 'Este mes', luego: 'Más adelante',
+  sinfecha: 'Sin fecha límite', reembolsos: 'Liquidaciones de gastos por reembolsar',
+};
+// Los meses para el filtro de Pagados: los dos últimos años
+const months = Array.from({ length: 24 }, (_, i) => {
+  const d = new Date(Date.UTC(Number(now.slice(0, 4)), Number(now.slice(5, 7)) - 1 - i, 1));
+  return d.toISOString().slice(0, 7);
+});
+const filters = view === 'pagados'
+  ? [
+    { ...def.filters[0], options: months.map((m) => [m, formatMonth(m)]) },
+    { ...def.filters[1], options: Object.entries(PAYMENT_METHODS) },
+    { ...def.filters[2], options: Object.entries(PAYMENT_KINDS) },
+  ]
+  : [
+    { ...def.filters[0], options: Object.entries(PLAZOS) },
+    { ...def.filters[1], options: Object.entries(PAYMENT_KINDS) },
+  ];
+// Tarjetas: por plazo (pendientes) o por meses (pagados)
+const groups = Object.entries(PLAZOS).map(([key, title]) => ({ key, title, danger: key === 'vencidos', rows: rows.filter((p) => plazoOf(p) === key) }));
+function plazoOf(p) {
+  if (!p.due_date) return isLiquidation(p) ? 'reembolsos' : 'sinfecha';
+  const soon = new Date(Date.parse(now) + SOON_DAYS * 864e5).toISOString().slice(0, 10);
+  const month = new Date(Date.parse(now) + 30 * 864e5).toISOString().slice(0, 10);
+  return p.due_date < now ? 'vencidos' : p.due_date <= soon ? 'semana' : p.due_date <= month ? 'mes' : 'luego';
+}
+const byMonths = view === 'pagados' && cards ? byMonth(rows, 'paid_on') : [];
+const totalOf = (list) => list.reduce((a, p) => a + p.total_cents, 0);
+// Quién puede marcar pagado desde la tabla (Eventos, sólo con tarjeta; un reembolso, nunca)
+const cardOnly = !can(me, 'payment.any_method');
+const payable = (p) => p.exp_status !== 'cerrado' && can(me, 'pagos') && !(isLiquidation(p) && cardOnly);
+const who = (p) => (isLiquidation(p) ? `Gastos de ${p.supplier}` : p.supplier);
 ---
-<App title="Pagos" section="pagos" error={error} origin={{ pendientes: 'Pagos pendientes', revisar: 'Facturas por revisar', pagados: 'Pagos hechos' }[view]}>
+<App title="Pagos" section="pagos" error={error} origin={{ pendientes: 'Pagos pendientes', revisar: 'Facturas por revisar', pagados: 'Pagos hechos' }[view]} wide={!cards && view !== 'revisar'}>
   <div class="page-top">
     <div>
       <h1>Pagos a proveedores</h1>
@@ -82,47 +135,9 @@ const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura
     <a href="/pagos?ver=pagados" aria-current={view === 'pagados' ? 'page' : undefined}>Pagados</a>
   </nav>
 
-  <SearchBox action="/pagos" view={view === 'pendientes' ? null : view} q={q} placeholder={placeholder} />
-
-  {view === 'pendientes' && (
+  {view === 'revisar' ? (
     <>
-      {q
-        ? <p class="muted mt">{plural(pending.length, 'pago pendiente', 'pagos pendientes')} para «{q}» · {eur(total(pending))}</p>
-        : (
-          <div class="kpis mt">
-            {groups.slice(0, 4).map((g) => (
-              <a class:list={['kpi', { 'is-danger': g.danger && g.rows.length > 0 }]} href={`#${g.key}`}>
-                <span>{g.title}</span><b class="money">{eur(total(g.rows))}</b><small>{plural(g.rows.length, 'pago', 'pagos')}</small>
-              </a>
-            ))}
-          </div>
-        )}
-
-      {groups.filter((g) => g.rows.length).map((g) => (
-        <section id={g.key}>
-          <div class:list={['group-title', { 'is-danger': g.danger }]}>
-            <h3>{g.title} ({g.rows.length})</h3>
-            <span class="money">{eur(total(g.rows))}</span>
-          </div>
-          <ul class="list">{g.rows.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
-        </section>
-      ))}
-      {!pending.length && <p class="empty mt">{q ? 'No hay pagos pendientes que coincidan.' : <><Icon name="circle-check" /> No hay nada pendiente de pagar.</>}</p>}
-
-      {noInvoice.length > 0 && (
-        <section id="sin-factura">
-          <div class="sec-head">
-            <h2><Icon name="paperclip" /> Pagados sin factura del proveedor ({noInvoice.length})</h2>
-            <p>Pagos hechos (anticipos, tarjeta…) de los que aún falta la factura. Reclámala y súbela en el pago.</p>
-          </div>
-          <ul class="list">{noInvoice.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
-        </section>
-      )}
-    </>
-  )}
-
-  {view === 'revisar' && (
-    <>
+      <SearchBox action="/pagos" view="revisar" q={q} placeholder="Proveedor, nº de factura o expediente" />
       <p class="muted mt">{reviewer
         ? 'El orden es: justificante → pagado → conforme. Las facturas de pagos ya hechos: abre el documento, comprueba que es correcta, anota su número y dale a «Conforme».'
         : 'Facturas subidas que Administración aún no ha revisado. Se conforman cuando el pago está hecho.'}</p>
@@ -142,21 +157,106 @@ const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura
         </section>
       )}
     </>
-  )}
-
-  {view === 'pagados' && (
+  ) : (
     <>
-      {q && <p class="muted mt">{plural(paid.length, 'pago', 'pagos')} para «{q}» · {eur(total(paid))}</p>}
-      {months.map((m) => (
-        <section>
-          <div class="group-title">
-            <h3>{formatMonth(m.key)} ({m.rows.length})</h3>
-            <span class="money">{eur(total(m.rows))}</span>
+      <TableTools def={def} state={state} filters={filters} url={Astro.url} keep={['ver']} cardSort={false} label="Buscar pagos">
+        {plural(total, view === 'pagados' ? 'pago hecho' : 'pago pendiente', view === 'pagados' ? 'pagos hechos' : 'pagos pendientes')}{filtered && ' con esos filtros'}
+        {total > 0 && <> · <b class="money">{eur(sum)}</b> <span class="small">(con IVA)</span></>}
+        {cards && view === 'pagados' && total > rows.length && <span class="small"> · aquí, los {rows.length} más recientes (en «Tabla», todos por páginas)</span>}
+      </TableTools>
+
+      {view === 'pendientes' && !state.filters.plazo && (
+        <div class="kpis mt">
+          {['vencidos', 'semana', 'mes', 'luego'].map((k) => (
+            <a class:list={['kpi', { 'is-danger': k === 'vencidos' && counts[k]?.n > 0 }]} href={cards ? `#${k}` : hrefWith(Astro.url, { plazo: k })}>
+              <span>{PLAZOS[k]}</span><b class="money">{eur(counts[k]?.sum ?? 0)}</b><small>{plural(counts[k]?.n ?? 0, 'pago', 'pagos')}</small>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {!rows.length ? (
+        <p class="empty mt">{filtered ? 'Ningún pago con esos filtros.' : view === 'pagados' ? 'Todavía no hay pagos hechos.' : <><Icon name="circle-check" /> No hay nada pendiente de pagar.</>}</p>
+      ) : cards && view === 'pendientes' ? (
+        groups.filter((g) => g.rows.length).map((g) => (
+          <section id={g.key}>
+            <div class:list={['group-title', { 'is-danger': g.danger }]}>
+              <h3>{g.title} ({g.rows.length})</h3>
+              <span class="money">{eur(totalOf(g.rows))}</span>
+            </div>
+            <ul class="list">{g.rows.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
+          </section>
+        ))
+      ) : cards ? (
+        byMonths.map((m) => (
+          <section>
+            <div class="group-title">
+              <h3>{formatMonth(m.key)} ({m.rows.length})</h3>
+              <span class="money">{eur(totalOf(m.rows))}</span>
+            </div>
+            <ul class="list">{m.rows.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
+          </section>
+        ))
+      ) : (
+        <div class="table-scroll mt">
+          <table class:list={['dtable', 'payments', 'is-listing', view]}>
+            <thead>
+              <tr>
+                {state.columns.filter((c) => has(c.key)).map((c) => <SortTh col={c} state={state} url={Astro.url} />)}
+                {view === 'pendientes' && <th scope="col"><span class="visually-hidden">Acciones</span></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p) => {
+                const ficha = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
+                const inv = supplierInvoiceState(p);
+                const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name });
+                return (
+                  <tr data-href={ficha}>
+                    <td>
+                      <a href={ficha}><strong>{who(p)}</strong></a>
+                      {p.concept && <div class="small muted">{p.concept}</div>}
+                    </td>
+                    {has('expediente') && <td data-label={L.expediente}><a href={`/expedientes/${p.expediente_id}/pagos`}>EXP {p.exp_number}</a><div class="small muted">{p.exp_name}</div></td>}
+                    {has('vence') && <td data-label={L.vence}>{p.due_date ? <>{formatDate(p.due_date)}<div class="small muted">{dueText(p.due_date, now)}</div></> : '—'}</td>}
+                    {has('pagado') && <td data-label={L.pagado}>{formatDate(p.paid_on)}</td>}
+                    {has('forma') && <td data-label={L.forma}>{PAYMENT_METHODS[p.method] ?? '—'}</td>}
+                    {has('estado') && <td data-label={L.estado}><Pill state={paymentState(p, now)} /></td>}
+                    {has('factura') && <td data-label={L.factura}>{isLiquidation(p) ? <span class="pill pill-accent">Liquidación</span> : inv ? <><Pill state={inv} />{p.invoice_number && <div class="small muted">{p.invoice_number}</div>}</> : '—'}</td>}
+                    {has('justificante') && <td data-label={L.justificante}>{receipt ? <a href={receipt} target="_blank" rel="noopener"><Icon name="paperclip" size={14} /> Ver</a> : '—'}</td>}
+                    {has('tipo') && <td data-label={L.tipo}>{isLiquidation(p) ? 'Liquidación' : 'Pago'}</td>}
+                    {has('base') && <td data-label={L.base} class="num money">{eur(p.base_cents)}</td>}
+                    {has('total') && <td data-label={L.total} class:list={['num', 'money', { neg: p.total_cents < 0 }]}><strong>{eur(p.total_cents)}</strong></td>}
+                    {has('alta') && <td data-label={L.alta}>{formatStamp(p.created_at, { year: true })}</td>}
+                    {view === 'pendientes' && (
+                      <td class="row-actions">
+                        {payable(p) && (
+                          <a class="btn btn-sm" href={`${ficha}#justificante`} data-pay-open data-id={p.id} data-kind={p.kind}
+                            data-has-receipt={p.receipt_file_id ? '1' : '0'} data-what={`${who(p)} · ${eur(p.total_cents)} · EXP ${p.exp_number}`}>
+                            <Icon name="check" size={16} /> {isLiquidation(p) ? 'Reembolsar' : 'Pagar'}
+                          </a>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!cards && <Pager info={info} url={Astro.url} noun={def.noun} />}
+      {view === 'pendientes' && !cards && <PayDialog now={now} />}
+
+      {view === 'pendientes' && noInvoice?.ok && noInvoice.value.length > 0 && (
+        <section id="sin-factura" class="mt">
+          <div class="sec-head">
+            <h2><Icon name="paperclip" /> Pagados sin factura del proveedor ({noInvoice.value.length})</h2>
+            <p>Pagos hechos (anticipos, tarjeta…) de los que aún falta la factura. Reclámala y súbela en el pago.</p>
           </div>
-          <ul class="list">{m.rows.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
+          <ul class="list">{noInvoice.value.map((p) => <PaymentItem p={p} now={now} showExp canEdit={p.exp_status !== 'cerrado'} />)}</ul>
         </section>
-      ))}
-      {!paid.length && <p class="empty mt">{q ? 'No hay pagos que coincidan.' : 'Todavía no hay pagos hechos.'}</p>}
+      )}
     </>
   )}
 </App>

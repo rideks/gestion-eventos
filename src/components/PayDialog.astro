@@ -1,0 +1,83 @@
+---
+// Ventana para marcar un pago como hecho desde una tabla (bandeja de Pagos): fecha, forma de pago y, quien puede
+// subirlo, el justificante (obligatorio por transferencia: lo avisa App antes de enviar, y lo comprueba el servidor).
+// Una sola ventana para toda la tabla: cada fila lleva un enlace
+//   <a href="ficha#justificante" data-pay-open data-id data-what data-kind data-has-receipt>
+// que la abre con ese pago; sin JavaScript, el enlace lleva a la ficha del pago, donde se paga igual.
+// Una liquidación de gastos se «reembolsa» (mismos datos).
+import Icon from './Icon.astro';
+import FileField from './FileField.astro';
+import { PAYMENT_METHODS } from '../lib/finance.js';
+import { can } from '../lib/app.js';
+
+const { now } = Astro.props;
+// Eventos sólo marca pagos con tarjeta; el justificante lo sube Administración
+const cardOnly = !can(Astro.locals.user, 'payment.any_method');
+const canReceipt = can(Astro.locals.user, 'payment.receipt');
+---
+<dialog id="pagar" class="confirm-dialog picker-dialog cancel-dialog pay-dialog" aria-labelledby="pagar-title" data-pay-dialog>
+  <form method="post" enctype="multipart/form-data" class="cancel-form" data-has-receipt="0">
+    <h2 id="pagar-title"><Icon name="banknote" /> <span data-pay-title>Marcar como pagado</span></h2>
+    <p class="muted" data-pay-what></p>
+    <input type="hidden" name="intent" value="pay" />
+    <input type="hidden" name="payment_id" value="" data-pay-id />
+    <div class="row row-2">
+      <div class="field">
+        <label for="pagar-fecha" data-pay-date>Fecha de pago</label>
+        <input id="pagar-fecha" type="date" name="paid_on" value={now} required />
+      </div>
+      {cardOnly ? (
+        <div class="field">
+          <span class="label">Forma de pago</span>
+          <input type="hidden" name="method" value="tarjeta" />
+          <p class="muted">{PAYMENT_METHODS.tarjeta}: desde Eventos sólo se marcan los pagos hechos con tarjeta.</p>
+        </div>
+      ) : (
+        <div class="field">
+          <label for="pagar-forma" data-pay-method>Forma de pago</label>
+          <select id="pagar-forma" name="method">
+            {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k}>{l}</option>)}
+          </select>
+        </div>
+      )}
+    </div>
+    {canReceipt && <FileField id="pagar-justificante" name="receipt" optional={false} label="Justificante bancario (PDF o foto)" hint="Obligatorio si es por transferencia." />}
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" type="button" data-pay-close>Volver</button>
+      <button class="btn btn-primary" type="submit" data-receipt-check data-busy="Guardando…"><Icon name="check" size={18} /> <span data-pay-submit>Pagado</span></button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const dialog = document.querySelector('dialog[data-pay-dialog]');
+  if (dialog instanceof HTMLDialogElement) {
+    const form = dialog.querySelector('form');
+    const set = (sel, text) => { const el = dialog.querySelector(sel); if (el) el.textContent = text; };
+    document.querySelectorAll('[data-pay-open]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        if (!(form instanceof HTMLFormElement) || typeof dialog.showModal !== 'function') return;
+        e.preventDefault();
+        const id = form.querySelector('[data-pay-id]');
+        if (id instanceof HTMLInputElement) id.value = a.getAttribute('data-id') ?? '';
+        // Para el aviso del justificante (App): si ya tiene uno, y a dónde ir si no se adjunta aquí
+        form.dataset.hasReceipt = a.getAttribute('data-has-receipt') ?? '0';
+        form.dataset.receiptHref = a.getAttribute('href') ?? '';
+        const liq = a.getAttribute('data-kind') === 'liquidacion';
+        set('[data-pay-title]', liq ? 'Marcar como reembolsada' : 'Marcar como pagado');
+        set('[data-pay-submit]', liq ? 'Reembolsada' : 'Pagado');
+        set('[data-pay-date]', liq ? 'Fecha del reembolso' : 'Fecha de pago');
+        set('[data-pay-method]', liq ? 'Forma de reembolso' : 'Forma de pago');
+        set('[data-pay-what]', a.getAttribute('data-what') ?? '');
+        // El justificante elegido para otra fila no vale para ésta
+        const file = form.querySelector('input[type="file"][name="receipt"]');
+        if (file instanceof HTMLInputElement && file.value) {
+          file.value = '';
+          file.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        dialog.showModal();
+      });
+    });
+    dialog.querySelector('[data-pay-close]')?.addEventListener('click', () => dialog.close());
+  }
+</script>

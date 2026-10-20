@@ -22,7 +22,7 @@ const imports = (code, what) => new RegExp(`from\\s+['"][^'"]*${what}`).test(cod
 const all = files(SRC);
 
 // Deuda conocida: módulos y páginas que aún hacen SQL directamente (se irán pasando a repos y servicios)
-const LEGACY_LIB = ['lib/actions.js', 'lib/app.js', 'lib/auth.js', 'lib/data.js', 'lib/invoicing.js', 'lib/users.js'];
+const LEGACY_LIB = ['lib/app.js', 'lib/auth.js', 'lib/data.js', 'lib/invoicing.js', 'lib/users.js'];
 const LEGACY_PAGES = [
   'ajustes.astro', 'archivos/[id]/[name].js', 'buscar.astro', 'cuenta.astro', 'expedientes/[id]/cierre.astro', 'expedientes/[id]/cobros.astro',
   'expedientes/[id]/editar.astro', 'expedientes/[id]/facturas/[fid].astro', 'expedientes/[id]/facturas/[fid]/documento.astro',
@@ -53,7 +53,7 @@ test('los repositorios no deciden permisos ni dependen de los servicios', () => 
 });
 
 // Áreas ya en capas: sus páginas sólo usan servicios (cada área nueva se añade aquí)
-const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/expedientes/index.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/', 'pages/preferencias/'];
+const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/cobros.astro', 'pages/expedientes/index.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/', 'pages/preferencias/'];
 
 test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes, Pagos, Business Travel) sólo hablan con los servicios', () => {
   for (const p of all.filter((f) => LAYERED.some((dir) => rel(f).startsWith(dir)))) {

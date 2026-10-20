@@ -923,3 +923,5 @@ a.file-chip-name { text-decoration: underline; }
 .dtable .cancel-note { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 26ch; }
 /* Expedientes en tabla: muchas columnas; un poco menos de aire para que quepan sin desplazar */
 .dtable.expedientes th, .dtable.expedientes td { padding-left: 8px; padding-right: 8px; }
+/* La columna de acciones de una tabla (p. ej. «Pagar» en la bandeja de pagos) */
+.dtable .row-actions { white-space: nowrap; text-align: right; }

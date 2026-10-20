@@ -6,14 +6,15 @@
 // El orden y las filas por página se conservan; en la vista de tarjetas, el orden se elige en un desplegable.
 //   def: la tabla (src/lib/tables.js) · state: tableState() · filters: [{ key, label, all, options: [[valor, texto]] }]
 //   keep: otros parámetros de la página que se conservan al buscar (p. ej. la pestaña: 'ver')
+//   cardSort: false si las tarjetas tienen su propio orden (p. ej. agrupadas por plazos o por meses): sin desplegable
 import Icon from './Icon.astro';
 import { hrefWith, isFiltered, PER_PAGE } from '../lib/table.js';
 
-const { def, state, filters = [], url, label = null, keep: extra = [] } = Astro.props;
+const { def, state, filters = [], url, label = null, keep: extra = [], cardSort = true } = Astro.props;
 const back = `${url.pathname}${url.search}`;
 const cards = state.view === 'tarjetas';
 // En tarjetas no hay cabeceras: el orden va en un desplegable (y cada columna en su sentido natural)
-const sortable = cards ? state.columns.filter((c) => c.sort) : [];
+const sortable = cards && cardSort ? state.columns.filter((c) => c.sort) : [];
 const keep = [...(cards ? [] : ['orden', 'dir']), 'por', ...extra].filter((k) => url.searchParams.get(k));
 const clear = hrefWith(url, { q: null, ...Object.fromEntries(filters.map((f) => [f.key, null])) });
 const optional = state.columns.filter((c) => !c.fixed);

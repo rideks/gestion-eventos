@@ -10,12 +10,12 @@ import Pill from '../components/Pill.astro';
 import PaymentItem from '../components/PaymentItem.astro';
 import InvoiceItem from '../components/InvoiceItem.astro';
 import ReviewItem from '../components/ReviewItem.astro';
-import { actor, readForm, can } from '../lib/app.js';
+import { readForm, can } from '../lib/app.js';
 import { pendingPayments, paidWithoutInvoice, openInvoices, posWithBalance, invoicesToReview, toInvoiceByExpediente, LIST_COLUMNS } from '../lib/data.js';
 import { serviceContext, failure } from '../services/context.js';
 import * as contracts from '../services/contracts.js';
 import * as payments from '../services/payments.js';
-import { markCollected } from '../lib/actions.js';
+import * as invoiceService from '../services/invoices.js';
 import { getFile } from '../lib/files.js';
 import { formToObject } from '../lib/validate.js';
 import { expedienteState, expLabel, plural, leftToInvoice, SOON_DAYS } from '../lib/finance.js';
@@ -37,7 +37,7 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   const ctx = serviceContext(Astro);
   const r = input.intent === 'pay' ? await payments.markPaid(ctx, input, { receipt: getFile(form, 'receipt') })
-    : input.intent === 'collect' ? await markCollected(db, actor(Astro), input)
+    : input.intent === 'collect' ? await invoiceService.collect(ctx, input)
       : input.intent === 'conform' ? await payments.conform(ctx, Number(input.supplier_invoice_id), input)
         : { ok: false, message: 'Acción no válida.' };
   const OK = { pay: 'pagado', collect: 'cobrada', conform: 'revisada' };

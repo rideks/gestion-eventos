@@ -115,6 +115,87 @@ export const TABLES = {
     ],
   },
 
+  // Bandeja de pagos: los pendientes (por plazo) y los ya hechos (historial). En tarjetas, por grupos; en tabla, por páginas
+  pagos: {
+    key: 'pagos', sort: 'vence', noun: ['pago', 'pagos'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
+    search: 'Proveedor, concepto, nº de factura o expediente',
+    columns: [
+      { key: 'proveedor', label: 'Proveedor', fixed: true, sort: 'asc' },
+      { key: 'expediente', label: 'Expediente', sort: 'desc' },
+      { key: 'vence', label: 'Fecha límite', sort: 'asc' },
+      { key: 'estado', label: 'Plazo', sort: 'asc' },
+      { key: 'factura', label: 'Factura' },
+      { key: 'tipo', label: 'Tipo', hidden: true, sort: 'asc' },
+      { key: 'base', label: 'Sin IVA', num: true, hidden: true, sort: 'desc' },
+      { key: 'total', label: 'Importe', num: true, sort: 'desc' },
+      { key: 'alta', label: 'Alta', hidden: true, sort: 'desc' },
+    ],
+    filters: [
+      { key: 'plazo', label: 'Plazo', all: 'Todos los plazos' },
+      { key: 'tipo', label: 'Tipo', all: 'Pagos y liquidaciones' },
+    ],
+  },
+
+  pagados: {
+    key: 'pagados', sort: 'pagado', noun: ['pago', 'pagos'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
+    search: 'Proveedor, nº de factura o expediente',
+    columns: [
+      { key: 'proveedor', label: 'Proveedor', fixed: true, sort: 'asc' },
+      { key: 'expediente', label: 'Expediente', sort: 'desc' },
+      { key: 'pagado', label: 'Pagado el', sort: 'desc' },
+      { key: 'forma', label: 'Forma de pago', sort: 'asc' },
+      { key: 'factura', label: 'Factura' },
+      { key: 'justificante', label: 'Justificante', hidden: true },
+      { key: 'tipo', label: 'Tipo', hidden: true, sort: 'asc' },
+      { key: 'base', label: 'Sin IVA', num: true, hidden: true, sort: 'desc' },
+      { key: 'total', label: 'Importe', num: true, sort: 'desc' },
+    ],
+    filters: [
+      { key: 'mes', label: 'Mes', all: 'Todos los meses' },
+      { key: 'forma', label: 'Forma de pago', all: 'Todas las formas' },
+      { key: 'tipo', label: 'Tipo', all: 'Pagos y liquidaciones' },
+    ],
+  },
+
+  // Cobros: las facturas por emitir y por cobrar, y las cobradas (historial). En tarjetas, como embudo o por meses
+  cobros: {
+    key: 'cobros', sort: 'estado', noun: ['factura', 'facturas'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
+    search: 'Cliente, expediente, nº de factura o PO',
+    columns: [
+      { key: 'factura', label: 'Factura', fixed: true, sort: 'asc' },
+      { key: 'cliente', label: 'Cliente', sort: 'asc' },
+      { key: 'expediente', label: 'Expediente', sort: 'desc' },
+      { key: 'estado', label: 'Estado', sort: 'asc' },
+      { key: 'emitida', label: 'Emitida', hidden: true, sort: 'desc' },
+      { key: 'vence', label: 'Vence', sort: 'asc' },
+      { key: 'envio', label: 'Envío al cliente', hidden: true },
+      { key: 'po', label: 'PO', hidden: true },
+      { key: 'base', label: 'Sin IVA', num: true, hidden: true, sort: 'desc' },
+      { key: 'total', label: 'Importe', num: true, sort: 'desc' },
+    ],
+    filters: [
+      { key: 'estado', label: 'Estado', all: 'Por emitir y por cobrar' },
+    ],
+  },
+
+  cobradas: {
+    key: 'cobradas', sort: 'cobrada', noun: ['factura', 'facturas'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
+    search: 'Cliente, expediente, nº de factura o PO',
+    columns: [
+      { key: 'factura', label: 'Factura', fixed: true, sort: 'asc' },
+      { key: 'cliente', label: 'Cliente', sort: 'asc' },
+      { key: 'expediente', label: 'Expediente', sort: 'desc' },
+      { key: 'emitida', label: 'Emitida', hidden: true, sort: 'desc' },
+      { key: 'cobrada', label: 'Cobrada el', sort: 'desc' },
+      { key: 'po', label: 'PO', hidden: true },
+      { key: 'base', label: 'Sin IVA', num: true, hidden: true, sort: 'desc' },
+      { key: 'total', label: 'Importe', num: true, sort: 'desc' },
+    ],
+    filters: [
+      { key: 'mes', label: 'Mes', all: 'Todos los meses' },
+    ],
+  },
+
   viajes: {
     key: 'viajes', sort: 'reserva', noun: ['reserva', 'reservas'], views: ['tarjetas', 'tabla'], view: 'tarjetas',
     search: 'Referencia, cliente, pasajero, proveedor o localizador',
