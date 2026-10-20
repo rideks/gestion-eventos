@@ -24,6 +24,7 @@ import { formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
 import { isLocked } from '../../../../lib/actions.js';
 import { serviceContext, failure } from '../../../../services/context.js';
 import * as payments from '../../../../services/payments.js';
+import { keepUploads } from '../../../../services/files.js';
 
 const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
@@ -39,6 +40,8 @@ let input = null;
 let lines = null;
 let openEdit = Astro.url.searchParams.has('editar');
 let openUpload = false;
+// Los documentos elegidos en un intento con error (vuelven ya puestos): { file, receipt }
+let kept = {};
 
 if (id && pid && Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
@@ -60,10 +63,15 @@ if (id && pid && Astro.request.method === 'POST') {
     save: [() => payments.update(ctx, id, pid, form ?? new FormData()), `${self}?ok=guardado`],
   };
   const action = Object.hasOwn(ACTIONS, input.intent) ? ACTIONS[input.intent] : null;
+  const up = await keepUploads(ctx, form, ['file', 'receipt']);
   const r = action ? await action[0]() : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
-  if (r.ok) return Astro.redirect(typeof action[1] === 'function' ? action[1](r.value) : action[1], 303);
+  if (r.ok) {
+    await up.done();
+    return Astro.redirect(typeof action[1] === 'function' ? action[1](r.value) : action[1], 303);
+  }
   const bounce = failure(Astro, r, self);
   if (bounce) return bounce;
+  kept = await up.keep();
   error = r.message;
   errors = r.fields ?? {};
   openEdit = input.intent === 'save';
@@ -88,7 +96,7 @@ const canReceipt = can(me, 'payment.receipt');
 // Al justificante de un pago hecho por transferencia no se le puede quitar
 const receiptLocked = paid && needsReceipt(p.method);
 const v = openEdit && input ? { ...p, ...input } : { ...p };
-const docValues = openUpload && input ? input : {};
+const docValues = openUpload && input ? { ...input, kept } : {};
 lines ??= linesOf(p);
 const state = paymentState(p, now);
 const invState = supplierInvoiceState(p);
@@ -319,7 +327,7 @@ const flow = [
         <input type="hidden" name="payment_id" value={p.id} />
         {canReceipt && (
           <FileField id="pay-receipt" name="receipt" optional={false} label={p.receipt_file_id ? 'Cambiar el justificante' : 'Justificante bancario (PDF o foto)'}
-            hint="Obligatorio para marcar como pagado un pago por transferencia." />
+            hint="Obligatorio para marcar como pagado un pago por transferencia." kept={input?.intent === 'pay' ? kept.receipt : null} />
         )}
         <>
             <div class="row row-2">
@@ -355,7 +363,7 @@ const flow = [
       <details class="add mt" open={needed}>
         <summary class="btn btn-ghost btn-sm"><Icon name="upload" size={16} /> {needed ? 'Añadir el justificante que falta' : 'Añadir justificante (opcional)'}</summary>
         <form method="post" enctype="multipart/form-data" class="form-section">
-          <FileField id="pay-receipt" name="receipt" optional={false} label="Justificante (PDF o foto)" required />
+          <FileField id="pay-receipt" name="receipt" optional={false} label="Justificante (PDF o foto)" required kept={input?.intent === 'receipt' ? kept.receipt : null} />
           <div><button class="btn btn-primary btn-sm" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={16} /> Subir justificante</button></div>
         </form>
       </details>

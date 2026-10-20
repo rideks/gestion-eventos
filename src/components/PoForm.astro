@@ -28,7 +28,7 @@ const amount = typeof v.amount === 'string' ? v.amount : amountInput(v.amount_ce
     <input id={`${id}-issued_on`} name="issued_on" type="date" value={v.issued_on ?? ''} />
   </div>
 </div>
-<FileField id={`${id}-file`} label="PO (PDF o el correo del cliente)" current={current} removable={removable} />
+<FileField id={`${id}-file`} label="PO (PDF o el correo del cliente)" current={current} removable={removable} kept={v.kept?.file} />
 <div class:list={['field', { 'has-error': errors.notes }]}>
   <label for={`${id}-notes`}>Notas <span class="opt">(opcional)</span></label>
   <input id={`${id}-notes`} name="notes" type="text" maxlength="1000" value={v.notes ?? ''} placeholder="Para qué es: hotel, audiovisuales…" />

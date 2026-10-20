@@ -21,5 +21,17 @@ export default {
         env.DB.prepare("DELETE FROM activity WHERE expediente_id IS NULL AND at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-365 days')"),
       ]).then(() => console.log('[cron] limpieza completada')),
     );
+    // Documentos temporales (los de un formulario que no se llegó a guardar) de más de un día: de R2 y de la base
+    ctx.waitUntil(
+      env.DB.prepare("SELECT id, key FROM files WHERE staged_token IS NOT NULL AND staged_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 day') LIMIT 500")
+        .all()
+        .then(async ({ results }) => {
+          if (!results.length) return;
+          await env.DOCS.delete(results.map((r) => r.key));
+          // Los ids en un solo parámetro (D1 admite como mucho 100 por consulta)
+          await env.DB.prepare('DELETE FROM files WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(results.map((r) => r.id))).run();
+          console.log(`[cron] ${results.length} documentos temporales borrados`);
+        }),
+    );
   },
 };

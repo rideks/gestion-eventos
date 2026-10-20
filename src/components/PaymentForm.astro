@@ -65,7 +65,7 @@ const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHOD
       {cardOnly && <p class="hint">Sólo los pagos con tarjeta. Si se ha pagado por transferencia u otro medio, déjalo «Por pagar»: lo marca Administración.</p>}
     </div>
   </div>
-  {receipt && canReceipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} />}
+  {receipt && canReceipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} kept={v.kept?.receipt} />}
 </div>
 )}
 <div class:list={['field', { 'has-error': errors.notes }]}>

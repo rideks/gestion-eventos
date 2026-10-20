@@ -14,7 +14,8 @@ import { parseId, readForm, actor, can, activityStmt, deny } from '../../../lib/
 import { getExpediente, loadFinance, suggestions } from '../../../lib/data.js';
 import { PoSchema, validate, formToObject } from '../../../lib/validate.js';
 import { getFile, UploadError } from '../../../lib/files.js';
-import { storeFile } from '../../../services/files.js';
+import { storeFile, keepUploads } from '../../../services/files.js';
+import { serviceContext } from '../../../services/context.js';
 import { eur } from '../../../lib/money.js';
 import { today } from '../../../lib/dates.js';
 import { billingStatus } from '../../../lib/finance.js';
@@ -57,6 +58,8 @@ if (Astro.request.method === 'POST') {
     error = 'Las PO del cliente sólo las sube Administración.';
   } else if (input.intent === 'add_po') {
     open = 'po';
+    // La PO elegida en un intento anterior con error vuelve al formulario (src/services/files.js)
+    const up = await keepUploads(serviceContext(Astro), form, ['file']);
     poValues = input;
     const parsed = validate(PoSchema, input);
     if (!parsed.ok) {
@@ -71,6 +74,7 @@ if (Astro.request.method === 'POST') {
           'INSERT INTO purchase_orders (expediente_id, number, billed_to, amount_cents, issued_on, file_id, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id',
         ).bind(id, d.number, d.billed_to, d.amount, d.issued_on, fileId, d.notes, me.id).first();
         await activityStmt(db, who, id, 'po.add', `subió la PO ${d.number} de ${d.billed_to} (${eur(d.amount)} sin IVA)`).run();
+        await up.done();
         // «Guardar PO y crear la factura»: directamente a la factura, con esta PO y su importe
         if (input.then === 'invoice') return Astro.redirect(`/expedientes/${id}/facturas/nueva?po=${po.id}`, 303);
         return Astro.redirect(`/expedientes/${id}/cobros?ok=creado`, 303);
@@ -79,6 +83,7 @@ if (Astro.request.method === 'POST') {
         error = err.message;
       }
     }
+    poValues = { ...input, kept: await up.keep() };
   }
   Astro.response.status = 400;
 }

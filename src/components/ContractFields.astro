@@ -67,4 +67,4 @@ const val = (k) => v[k] ?? '';
     <textarea id="ct-notes" name="notes" rows="3" maxlength="2000">{val('notes')}</textarea>
   </div>
 </div>
-{withFile && <FileField label="Documento del contrato" hint="El PDF firmado (o una foto). Se puede subir después." error={errors.file} />}
+{withFile && <FileField label="Documento del contrato" hint="El PDF firmado (o una foto). Se puede subir después." error={errors.file} kept={v.kept?.file} />}

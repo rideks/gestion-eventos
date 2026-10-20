@@ -67,3 +67,97 @@ export async function deleteFiles(db, bucket, ids) {
   await bucket.delete(rows.map((r) => r.key)).catch((/** @type {unknown} */ err) => console.error('[archivos]', err));
   await repo.deleteStmt(db, rows.map((r) => r.id)).run();
 }
+
+// ── Documentos que no se pierden ─────────────────────────────────────────
+// El navegador no puede volver a poner un archivo en un formulario. Si al guardar falta algún dato, el documento
+// elegido se guarda como temporal (comprobado como cualquier otro) y la página vuelve con su ficha
+// («factura.pdf · Listo») y un campo oculto <campo>__kept con su clave. Al volver a enviar, keepUploads lo vuelve a
+// poner en el formulario como si se acabara de elegir, así que el resto del código no cambia.
+
+/** El campo oculto con la clave del temporal: <campo>__kept */
+export const KEPT = '__kept';
+/** Horas que dura un temporal (la limpieza diaria borra los más viejos) */
+export const STAGED_HOURS = 24;
+
+/**
+ * @typedef {{ token: string, id: number, name: string, size: number }} Kept
+ */
+
+/**
+ * Prepara los documentos de un formulario (antes de usarlo): recupera los que se guardaron en un intento anterior
+ * con error. Después, con lo que devuelve: done() si salió bien (borra los temporales, que ya se han guardado
+ * aparte) o keep() si hubo un error (guarda como temporales los documentos elegidos y devuelve sus fichas).
+ * @param {{ db: any, bucket: any, user?: { id: number } | null, now?: string }} ctx
+ * @param {FormData | null} form
+ * @param {string[]} fields los campos de archivo del formulario (p. ej. ['file', 'receipt'])
+ */
+export async function keepUploads(ctx, form, fields) {
+  const userId = ctx.user?.id ?? null;
+  const since = new Date(Date.now() - STAGED_HOURS * 3600e3).toISOString();
+  /** @type {Record<string, { id: number, key: string, name: string, mime: string, size: number, token: string }>} */
+  const restored = {};
+  if (form && userId) {
+    for (const field of fields) {
+      const token = String(form.get(`${field}${KEPT}`) ?? '').trim();
+      // Si se ha elegido otro archivo, ése sustituye al guardado
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(token) || getFile(form, field)) continue;
+      const row = await repo.staged(ctx.db, token, userId, since);
+      const object = row ? await ctx.bucket.get(row.key) : null;
+      if (!row || !object) continue;
+      form.set(field, new File([await object.arrayBuffer()], row.name, { type: row.mime }));
+      restored[field] = { ...row, token };
+    }
+  }
+  return {
+    restored,
+    /** Ha salido bien: los temporales ya no hacen falta */
+    async done() {
+      await deleteFiles(ctx.db, ctx.bucket, Object.values(restored).map((r) => r.id));
+    },
+    /**
+     * Ha habido un error: los documentos elegidos se guardan como temporales para no tener que volver a subirlos
+     * (uno que no vale, p. ej. un PDF falso, no: su error ya sale en el campo)
+     * @returns {Promise<Record<string, Kept>>}
+     */
+    async keep() {
+      /** @type {Record<string, Kept>} */
+      const kept = {};
+      for (const field of fields) {
+        const prev = restored[field];
+        if (prev) {
+          kept[field] = { token: prev.token, id: prev.id, name: prev.name, size: prev.size };
+          continue;
+        }
+        const file = form ? getFile(form, field) : null;
+        if (!file || !userId) continue;
+        try {
+          kept[field] = await stage(ctx, file, userId);
+        } catch (err) {
+          if (!(err instanceof UploadError)) throw err;
+        }
+      }
+      return kept;
+    },
+  };
+}
+
+/**
+ * Guarda un temporal (con las mismas comprobaciones que storeFile)
+ * @param {{ db: any, bucket: any }} ctx @param {File} file @param {number} userId
+ * @returns {Promise<Kept>}
+ */
+async function stage(ctx, file, userId) {
+  const info = uploadInfo(file.name, file.size);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  checkSignature(info, bytes);
+  const token = randomToken(16);
+  const key = `tmp/${userId}/${token}.${info.ext}`;
+  await ctx.bucket.put(key, bytes, { httpMetadata: { contentType: info.mime } });
+  try {
+    const id = await repo.insertStaged(ctx.db, { key, name: info.name, mime: info.mime, size: bytes.length, userId, token, at: new Date().toISOString() });
+    return { token, id, name: info.name, size: bytes.length };
+  } catch (err) {
+    await ctx.bucket.delete(key).catch(() => {});
+    throw err;
+  }
+}

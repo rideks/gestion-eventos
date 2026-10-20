@@ -16,7 +16,8 @@ import { BudgetSchema, validate, formToObject } from '../../../lib/validate.js';
 import { loadRates, parseVatLines, rawVatLines, linesOf } from '../../../lib/vat.js';
 import { billingStatus } from '../../../lib/finance.js';
 import { getFile, fileUrl, ACCEPT, UploadError } from '../../../lib/files.js';
-import { storeFile } from '../../../services/files.js';
+import { storeFile, keepUploads } from '../../../services/files.js';
+import { serviceContext } from '../../../services/context.js';
 import { eur } from '../../../lib/money.js';
 import { today, formatStamp } from '../../../lib/dates.js';
 import { isLocked, LOCKED_MSG } from '../../../lib/actions.js';
@@ -33,6 +34,7 @@ let error = null;
 let errors = {};
 let v = {};
 let lines = [];
+let kept = {};
 let attachFor = null; // versión a la que se intentaba subir el documento (para enseñar ahí el error)
 
 if (Astro.request.method === 'POST') {
@@ -67,7 +69,8 @@ if (Astro.request.method === 'POST') {
       }
     }
   } else {
-    // Versión nueva del presupuesto
+    // Versión nueva del presupuesto (el documento elegido en un intento anterior con error vuelve al formulario)
+    const up = await keepUploads(serviceContext(Astro), form, ['file']);
     v = input;
     lines = rawVatLines(form);
     const parsed = validate(BudgetSchema, input);
@@ -94,12 +97,14 @@ if (Astro.request.method === 'POST') {
           activityStmt(db, who, id, 'budget.add', `subió la versión ${version} del presupuesto: ${eur(d.base)} sin IVA`
             + (last ? ` (${diff >= 0 ? '+' : ''}${eur(diff)})` : '') + (d.note ? `. ${d.note}` : '')),
         ]);
+        await up.done();
         return Astro.redirect(`/expedientes/${id}/presupuesto?ok=creado&nueva=${version}`, 303);
       } catch (err) {
         if (!(err instanceof UploadError)) throw err;
         error = err.message;
       }
     }
+    kept = await up.keep();
   }
   Astro.response.status = 400;
 }
@@ -147,7 +152,7 @@ const cobros = can(me, 'cobros');
       <form method="post" enctype="multipart/form-data" class="form-section">
         <h2><Icon name="file-spreadsheet" /> Nueva versión del presupuesto</h2>
         <p class="muted">Cuando el cliente cambia algo (más habitaciones, otro menú…), sube el presupuesto actualizado: pasa a ser el vigente y se guarda el historial.</p>
-        <FileField label="Presupuesto actualizado" />
+        <FileField label="Presupuesto actualizado" kept={kept.file} />
         <VatLines id="budget" lines={lines} rates={rates} error={errors.amount} labelBase="Total sin IVA" labelTotal="Total con IVA" />
         <div class="field">
           <label for="note">¿Qué ha cambiado? <span class="opt">(opcional)</span></label>

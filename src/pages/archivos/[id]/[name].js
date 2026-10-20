@@ -11,7 +11,7 @@ export async function GET({ params, locals }) {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) return notFound();
   const row = await env.DB.prepare(
-    `SELECT f.key, f.name, f.mime,
+    `SELECT f.key, f.name, f.mime, f.staged_token IS NOT NULL AS staged, f.uploaded_by,
             EXISTS (SELECT 1 FROM invoices i WHERE i.file_id = f.id) OR EXISTS (SELECT 1 FROM purchase_orders po WHERE po.file_id = f.id) AS billing,
             EXISTS (SELECT 1 FROM supplier_contracts c WHERE c.file_id = f.id) AS contract
        FROM files f WHERE f.id = ?`,
@@ -19,6 +19,8 @@ export async function GET({ params, locals }) {
   // Los documentos de cobros (facturas al cliente y PO) sólo los ve quien puede ver los cobros,
   // y los contratos de proveedor, quien puede ver los contratos
   if (!row || (row.billing && !can(locals.user, 'cobros')) || (row.contract && !can(locals.user, 'contratos'))) return notFound();
+  // Un documento temporal (de un formulario que aún no se ha guardado) sólo lo ve quien lo subió
+  if (row.staged && row.uploaded_by !== locals.user.id) return notFound();
   const object = await env.DOCS.get(row.key);
   if (!object) return notFound();
 

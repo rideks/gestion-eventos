@@ -905,3 +905,15 @@ section.funnel-step > .sec-head h2 + .money { margin-left: auto; }
 .cancel-info strong { color: var(--danger); }
 .cancel-note { color: var(--danger); font-size: 0.85rem; }
 .cancel-dialog textarea { min-height: 0; height: 5.5rem; }
+
+/* Ficha del documento elegido (en vez del recuadro): nombre, tamaño y que está listo; «Cambiar» y «Quitar» */
+.file-chip { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 14px; border: 2px solid var(--ok);
+  border-radius: 14px; background: var(--ok-bg); }
+.file-chip-icon { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: #fff; color: var(--ok); }
+.file-chip-body { flex: 1 1 180px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.file-chip-name { font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+a.file-chip-name { text-decoration: underline; }
+.file-chip-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 0.85rem; color: var(--muted); }
+.file-chip-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); font-weight: 700; }
+.file-chip-actions { display: flex; gap: 6px; margin-left: auto; }
+.file-chip.is-kept { border-style: dashed; }

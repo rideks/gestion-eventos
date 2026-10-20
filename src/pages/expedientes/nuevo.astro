@@ -16,7 +16,7 @@ import { loadRates, parseVatLines, rawVatLines } from '../../lib/vat.js';
 import { activeUsers } from '../../lib/data.js';
 import { nextNumberStmt, NUMBER } from '../../repos/expedientes.js';
 import { getFile, UploadError } from '../../lib/files.js';
-import { storeFile, fileProblem } from '../../services/files.js';
+import { storeFile, fileProblem, keepUploads } from '../../services/files.js';
 import { eur } from '../../lib/money.js';
 import { nowIso } from '../../lib/dates.js';
 import { serviceContext } from '../../services/context.js';
@@ -30,11 +30,14 @@ let errors = {};
 let v = { manager_id: me.id };
 let forecast = [];
 let budgetLines = [];
+let kept = {};
 const rates = await loadRates(db);
 
 if (Astro.request.method === 'POST') {
   const who = actor(Astro);
   const form = await readForm(Astro.request);
+  // El presupuesto elegido en un intento anterior con error vuelve al formulario (src/services/files.js)
+  const up = await keepUploads(serviceContext(Astro), form, ['file']);
   const input = form ? formToObject(form) : {};
   v = { ...input };
   const e = validate(ExpedienteSchema, input);
@@ -104,8 +107,13 @@ if (Astro.request.method === 'POST') {
       if (!(err instanceof UploadError)) throw err;
       error = err.message;
     }
-    if (!error) return Astro.redirect(`/expedientes/${exp.id}?ok=creado`, 303);
+    if (!error) {
+      await up.done();
+      return Astro.redirect(`/expedientes/${exp.id}?ok=creado`, 303);
+    }
   }
+  // Para no tener que volver a elegir el presupuesto
+  kept = await up.keep();
   Astro.response.status = 400;
 }
 
@@ -128,7 +136,7 @@ const { options = [], types = [] } = picker.ok ? picker.value : {};
     <section class="form-section">
       <h2><Icon name="file-spreadsheet" /> Presupuesto aprobado</h2>
       <p class="muted">El Excel o PDF que ha aceptado el cliente y su total. Si cambia más adelante, se sube una versión nueva desde el expediente.</p>
-      <FileField label="Presupuesto aprobado" hint="Cada presupuesto es distinto: se guarda el archivo tal cual." />
+      <FileField label="Presupuesto aprobado" hint="Cada presupuesto es distinto: se guarda el archivo tal cual." kept={kept.file} />
       <VatLines id="budget" lines={budgetLines} rates={rates} error={errors.amount} labelBase="Total sin IVA" labelTotal="Total con IVA"
         hint="Una línea por tipo de IVA, como en el presupuesto: p. ej. alojamiento al 10 % y servicios al 21 %. En cada línea basta con escribir un importe." />
     </section>

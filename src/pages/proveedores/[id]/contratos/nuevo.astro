@@ -9,6 +9,7 @@ import { parseId, readForm } from '../../../../lib/app.js';
 import { formToObject } from '../../../../lib/validate.js';
 import { getFile } from '../../../../lib/files.js';
 import { serviceContext, failure } from '../../../../services/context.js';
+import { keepUploads } from '../../../../services/files.js';
 import * as contracts from '../../../../services/contracts.js';
 
 const ctx = serviceContext(Astro);
@@ -26,12 +27,17 @@ let v = dr.value.values;
 
 if (Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
+  // El documento elegido en un intento anterior con error vuelve al formulario (src/services/files.js)
+  const up = await keepUploads(ctx, form, ['file']);
   const input = form ? formToObject(form) : {};
   const r = await contracts.create(ctx, id, input, { renewsId, file: form ? getFile(form, 'file') : null });
-  if (r.ok) return Astro.redirect(`/proveedores/${id}/contratos/${r.value.id}?ok=${r.value.renewed ? 'renovado' : 'creado'}`, 303);
+  if (r.ok) {
+    await up.done();
+    return Astro.redirect(`/proveedores/${id}/contratos/${r.value.id}?ok=${r.value.renewed ? 'renovado' : 'creado'}`, 303);
+  }
   const back = failure(Astro, r, `/proveedores/${id}`);
   if (back) return back;
-  v = input;
+  v = { ...input, kept: await up.keep() };
   error = r.message;
   errors = r.fields;
 }

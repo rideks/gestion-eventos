@@ -7,7 +7,11 @@ export function memoryBucket() {
   return {
     files,
     async put(key, value) { files.set(key, value); },
-    async get(key) { return files.get(key) ?? null; },
+    // Como R2: el objeto, con su contenido en arrayBuffer()
+    async get(key) {
+      const bytes = files.get(key);
+      return bytes ? { size: bytes.length, async arrayBuffer() { return bytes.slice().buffer; } } : null;
+    },
     async delete(keys) { for (const k of [].concat(keys)) files.delete(k); },
   };
 }

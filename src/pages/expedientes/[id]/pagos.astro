@@ -19,6 +19,7 @@ import { eur } from '../../../lib/money.js';
 import { plural } from '../../../lib/finance.js';
 import { serviceContext, failure } from '../../../services/context.js';
 import * as payments from '../../../services/payments.js';
+import { keepUploads } from '../../../services/files.js';
 
 const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
@@ -45,7 +46,11 @@ if (id && Astro.request.method === 'POST') {
     v = input;
     open = 'uno';
     lines = form ? rawVatLines(form) : [];
+    // Los documentos elegidos no se pierden si falta algún dato: vuelven ya puestos (y se recuperan al reenviar)
+    const up = await keepUploads(ctx, form, ['file', 'receipt']);
     r = await payments.create(ctx, id, form ?? new FormData());
+    if (r.ok) await up.done();
+    else v = { ...input, kept: await up.keep() };
     // El pago ya está guardado aunque su documento no se haya podido subir: se lleva a su ficha para reintentarlo
     if (r.ok && r.value.docError) return Astro.redirect(`${self}/${r.value.id}?aviso_doc=${encodeURIComponent(r.value.docError)}`, 303);
     if (r.ok) return Astro.redirect(`${self}?ok=creado`, 303);
@@ -106,7 +111,7 @@ const suppliersHere = [...new Map(fin.payments.filter((p) => p.supplier_id).map(
           <h3 class="form-sub"><Icon name="paperclip" size={18} /> Factura o proforma del proveedor <span class="opt muted">(si ya la tienes)</span></h3>
           <SupplierDocFields v={v} errors={errors} id="newinv" comment="none" />
           <div class="actions-inline">
-            <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…">Guardar</button>
+            <button class="btn btn-primary" type="submit" name="intent" value="add" data-busy="Guardando…" data-receipt-check="status">Guardar</button>
           </div>
         </form>
       </details>

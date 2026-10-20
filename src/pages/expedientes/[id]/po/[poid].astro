@@ -13,7 +13,8 @@ import { parseId, readForm, actor, can, activityStmt, deny } from '../../../../l
 import { getExpediente, loadFinance, suggestions } from '../../../../lib/data.js';
 import { PoSchema, PoCloseSchema, validate, formToObject } from '../../../../lib/validate.js';
 import { getFile, fileUrl, UploadError } from '../../../../lib/files.js';
-import { storeFile, deleteFiles } from '../../../../services/files.js';
+import { storeFile, deleteFiles, keepUploads } from '../../../../services/files.js';
+import { serviceContext } from '../../../../services/context.js';
 import { invoiceState } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
 import { today, nowIso, formatDate, formatStamp } from '../../../../lib/dates.js';
@@ -99,6 +100,8 @@ if (Astro.request.method === 'POST') {
       return Astro.redirect(`${back}?ok=borrado`, 303);
     }
   } else if (input.intent === 'save') {
+    // El documento elegido en un intento anterior con error vuelve al formulario (src/services/files.js)
+    const up = await keepUploads(serviceContext(Astro), form, ['file']);
     v = { ...po, ...input };
     const parsed = validate(PoSchema, input);
     if (!parsed.ok) {
@@ -118,12 +121,14 @@ if (Astro.request.method === 'POST') {
           activityStmt(db, who, id, 'po.update', `editó la PO ${d.number}${d.amount !== po.amount_cents ? ` (${eur(po.amount_cents)} → ${eur(d.amount)})` : ''}`),
         ]);
         if (file && po.file_id) await deleteFiles(db, env.DOCS, [po.file_id]);
+        await up.done();
         return Astro.redirect(`${back}?ok=guardado`, 303);
       } catch (err) {
         if (!(err instanceof UploadError)) throw err;
         error = err.message;
       }
     }
+    v.kept = await up.keep();
   }
   Astro.response.status = 400;
 }

@@ -206,6 +206,8 @@ const roleLabel = user?.role_name ?? '';
         if (!(method instanceof HTMLSelectElement) || !needsReceipt(method.value) || form.dataset.hasReceipt === '1') return;
         const file = form.querySelector('input[type="file"][name="receipt"]');
         if (file instanceof HTMLInputElement && file.files?.length) return;
+        // El justificante ya subido en un intento anterior (ver FileField: receipt__kept)
+        if (form.querySelector('input[name="receipt__kept"]')) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         if (!(alertBox instanceof HTMLDialogElement) || typeof alertBox.showModal !== 'function') {

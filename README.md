@@ -205,6 +205,11 @@ Reparto inicial:
   mayor, duplicado o error, otros) y un **comentario** (obligatorio con «Otros»). Queda en el expediente o la reserva, en su
   actividad o historial y en la **ficha del cliente** («Cancelaciones», con su % de cancelados). Al reabrir, el motivo
   se quita (queda en la actividad). Los duplicados y errores no cuentan en las cifras del cliente.
+- **Documentos** (facturas y proformas, justificantes, presupuestos, PO, contratos): al elegir el archivo sale su
+  **ficha** (nombre, tamaño, «Listo para guardar», **Cambiar** y **Quitar**) en vez del recuadro. Si al guardar falta
+  algún dato, el documento **no se pierde**: la página vuelve con él ya puesto («Ya subido: no hace falta volver a
+  elegirlo») y se guarda al corregir el resto. Con un documento elegido, hay que decir si es factura o proforma antes
+  de enviar, y un justificante ya subido no se vuelve a pedir al marcar «Ya pagado».
 - **Cierre**: las comprobaciones de «Antes de cerrar» sólo salen en verde cuando está hecho de verdad: costes apuntados
   y pagados, todo el presupuesto facturado (o avisa si se ha facturado de más), emitido y cobrado, y las PO facturadas
   (si las hay). Un expediente recién creado no sale «todo terminado».
@@ -372,6 +377,11 @@ que se incrementa en la misma transacción que el alta, así que dos altas a la 
 del mayor número usado (si Administración cambia uno a mano en «Editar», se sigue desde él) ni del primer número de
 Ajustes (`settings.first_number`, 1001 por defecto). Un número dado no se vuelve a dar aunque se borre el expediente.
 
+**Documentos que no se pierden (migración 0017)**: sólo añade dos columnas a `files` (`staged_token`,
+`staged_at`) y un índice. Mientras se corrige un formulario, el documento elegido se guarda como **temporal** en R2
+(`tmp/<usuario>/…`, sin expediente): sólo lo ve y lo recupera quien lo subió, con su clave y durante 24 horas. Al
+guardar el formulario se borra; los que nadie llega a guardar los borra la limpieza diaria (el cron).
+
 **Motivo de cancelación (migración 0016)**: sólo añade columnas: quién cancela, el motivo y el comentario en
 `expedientes` y en `bt_bookings` (y, en las reservas, cuándo y quién). Las canceladas de antes quedan «sin motivo
 apuntado» (la fecha de las reservas sale de su historial).
@@ -412,7 +422,8 @@ La misma base que el panel de club-futsal: contraseñas PBKDF2, sesiones en D1 c
 alta sólo por invitación, Turnstile y límite de intentos en el acceso, CSRF (Fetch Metadata + Origin),
 CSP estricta con hashes y límite de escrituras por usuario. Además: **toda la aplicación exige sesión**
 y los documentos nunca tienen URL pública (se sirven desde `/archivos/…` con sesión, sin caché y en
-un sandbox). Se comprueba el tipo real de cada archivo por sus primeros bytes.
+un sandbox). Se comprueba el tipo real de cada archivo por sus primeros bytes. Los documentos temporales (los de un
+formulario con error) sólo los abre quien los subió, caducan a las 24 horas y se borran a diario.
 
 ## Estructura
 

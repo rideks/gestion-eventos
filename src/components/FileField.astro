@@ -1,14 +1,20 @@
 ---
 // Campo para adjuntar un documento (PDF, foto, Excel, Word o correo).
+// Al elegir el archivo se enseña su ficha (nombre, tamaño, «Listo para guardar» y «Quitar») en vez del recuadro.
+// kept: el documento que se eligió en un intento anterior con error (src/services/files.js → keepUploads): sale ya
+// puesto («Ya subido: no hace falta volver a elegirlo») y se envía su clave en <name>__kept.
 import Icon from './Icon.astro';
 import { ACCEPT, MAX_FILE_BYTES, fileUrl } from '../lib/files.js';
 
 // removable: botón «Quitar» junto al documento actual (envía intent=remove_file en el mismo formulario)
 // optional: «(opcional)» junto a la etiqueta si no es obligatorio (no se pone si depende de otra cosa)
-const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, optional = true, error = null } = Astro.props;
+const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, optional = true, error = null, kept = null } = Astro.props;
 const href = fileUrl(current);
+const keptHref = kept ? fileUrl({ file_id: kept.id, file_name: kept.name }) : null;
+const kb = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const isImage = (n) => /\.(jpe?g|png|webp|heic)$/i.test(n ?? '');
 ---
-<div class:list={['field', { 'has-error': error }]}>
+<div class:list={['field', 'file-field', { 'has-error': error }]} data-file-wrap>
   <span class="label">{label}{!required && optional && <span class="opt"> (opcional)</span>}</span>
   {href && (
     <p class="file-current">
@@ -22,25 +28,69 @@ const href = fileUrl(current);
       )}
     </p>
   )}
-  <label class="dropzone" for={id} data-file-field>
+  <div class:list={['file-chip', { 'is-kept': kept }]} data-file-chip hidden={!kept}>
+    <span class="file-chip-icon" data-chip-icon><Icon name={kept && isImage(kept.name) ? 'eye' : 'file-text'} size={22} /></span>
+    <span class="file-chip-body">
+      {keptHref
+        ? <a class="file-chip-name" href={keptHref} target="_blank" rel="noopener" data-chip-name>{kept.name}</a>
+        : <strong class="file-chip-name" data-chip-name></strong>}
+      <span class="file-chip-meta">
+        <span data-chip-size>{kept ? kb(kept.size) : ''}</span>
+        <span class="file-chip-ok"><Icon name="circle-check" size={14} /> <span data-chip-status>{kept ? 'Ya subido: no hace falta volver a elegirlo' : 'Listo para guardar'}</span></span>
+      </span>
+    </span>
+    <span class="file-chip-actions">
+      <button type="button" class="btn btn-ghost btn-sm" data-chip-change><Icon name="upload" size={14} /> Cambiar</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-chip-clear aria-label={`Quitar el documento de «${label}»`}><Icon name="x" size={14} /> Quitar</button>
+    </span>
+    {kept && <input type="hidden" name={`${name}__kept`} value={kept.token} data-kept-input />}
+  </div>
+  <label class="dropzone" for={id} data-file-field hidden={!!kept}>
     <Icon name="upload" size={22} />
     <strong data-file-label>Toca para elegir o arrastra aquí el archivo</strong>
     <span class="small">PDF, foto, Excel, Word o correo · máx. {MAX_FILE_BYTES / 1024 / 1024} MB</span>
-    <input id={id} name={name} type="file" accept={ACCEPT} required={required} title="" data-invalid="Elige el archivo (PDF o foto)." />
+    <input id={id} name={name} type="file" accept={ACCEPT} required={required && !kept} data-required={required ? '' : undefined} title=""
+      data-invalid="Elige el archivo (PDF o foto)." />
   </label>
   {hint && <p class="hint">{hint}</p>}
 </div>
 
 <script>
-  document.querySelectorAll('[data-file-field]').forEach((zone) => {
-    const input = zone.querySelector('input[type="file"]');
-    const label = zone.querySelector('[data-file-label]');
-    if (!(input instanceof HTMLInputElement) || !label) return;
-    const initial = label.textContent;
+  const kb = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  document.querySelectorAll('[data-file-wrap]').forEach((wrap) => {
+    const zone = wrap.querySelector('[data-file-field]');
+    const input = wrap.querySelector('input[type="file"]');
+    const chip = wrap.querySelector('[data-file-chip]');
+    if (!(zone instanceof HTMLElement) || !(input instanceof HTMLInputElement) || !(chip instanceof HTMLElement)) return;
+    const name = chip.querySelector('[data-chip-name]');
+    const size = chip.querySelector('[data-chip-size]');
+    const status = chip.querySelector('[data-chip-status]');
+    const show = (file) => {
+      const kept = chip.querySelector('[data-kept-input]');
+      const has = !!file || !!kept;
+      chip.hidden = !has;
+      zone.hidden = has;
+      chip.classList.toggle('is-kept', !file && !!kept);
+      // Con un documento ya subido, el campo deja de ser obligatorio (el servidor lo recupera)
+      input.required = input.hasAttribute('data-required') && !kept;
+      if (file && name && size && status) {
+        name.textContent = file.name;
+        if (name instanceof HTMLAnchorElement) name.removeAttribute('href');
+        size.textContent = kb(file.size);
+        status.textContent = 'Listo para guardar';
+      }
+      wrap.dispatchEvent(new CustomEvent('file-change', { bubbles: true, detail: { has } }));
+    };
     input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      zone.classList.toggle('has-file', !!file);
-      label.textContent = file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB` : initial;
+      // Un archivo nuevo sustituye al que ya estaba subido
+      if (input.files?.length) chip.querySelector('[data-kept-input]')?.remove();
+      show(input.files?.[0] ?? null);
+    });
+    chip.querySelector('[data-chip-change]')?.addEventListener('click', () => input.click());
+    chip.querySelector('[data-chip-clear]')?.addEventListener('click', () => {
+      input.value = '';
+      chip.querySelector('[data-kept-input]')?.remove();
+      show(null);
     });
     zone.addEventListener('dragover', () => zone.classList.add('is-over'));
     zone.addEventListener('dragleave', () => zone.classList.remove('is-over'));
