@@ -5,6 +5,7 @@
 // única factura). Una factura conforme ya no se puede borrar.
 // El orden: ① justificante → ② pagado → ③ factura conforme. Un pago hecho ya no se modifica
 // (Administración puede «Deshacer pagado» para corregirlo) y la factura se conforma después del pago.
+// Una liquidación de gastos (lo que alguien adelantó, sin factura) tiene dos pasos: ① su hoja → ② el reembolso.
 import App from '../../../../layouts/App.astro';
 import Icon from '../../../../components/Icon.astro';
 import ExpHeader from '../../../../components/ExpHeader.astro';
@@ -18,7 +19,7 @@ import { formToObject } from '../../../../lib/validate.js';
 import { rawVatLines, linesOf } from '../../../../lib/vat.js';
 import { docName, isConforme, hasConformeInvoice, canRemoveDocument } from '../../../../lib/supplier.js';
 import { getFile, fileUrl } from '../../../../lib/files.js';
-import { paymentState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, PAYMENT_METHODS, DOC_KINDS } from '../../../../lib/finance.js';
+import { paymentState, supplierInvoiceState, documentState, needsReceipt, conformBlocker, isLiquidation, PAYMENT_METHODS, DOC_KINDS } from '../../../../lib/finance.js';
 import { eur } from '../../../../lib/money.js';
 import { formatDate, formatStamp, dueText } from '../../../../lib/dates.js';
 import { isLocked } from '../../../../lib/actions.js';
@@ -50,10 +51,12 @@ if (id && pid && Astro.request.method === 'POST') {
   // Cada acción, a dónde vuelve si sale bien
   const ACTIONS = {
     // Se puede subir el justificante y marcarlo pagado de una vez
-    pay: [() => payments.markPaid(ctx, input, { expedienteId: id, receipt: getFile(form, 'receipt') }), `${self}?ok=pagado`],
+    pay: [() => payments.markPaid(ctx, input, { expedienteId: id, receipt: getFile(form, 'receipt') }), (v) => `${self}?ok=${v.kind === 'liquidacion' ? 'reembolsada' : 'pagado'}`],
     receipt: [() => payments.saveReceipt(ctx, id, pid, getFile(form, 'receipt')), `${self}?ok=justificante#justificante`],
     receipt_remove: [() => payments.removeReceipt(ctx, id, pid), `${self}?ok=guardado#justificante`],
-    unpay: [() => payments.unpay(ctx, id, pid), `${self}?ok=deshecho#justificante`],
+    unpay: [() => payments.unpay(ctx, id, pid), (v) => `${self}?ok=${v.kind === 'liquidacion' ? 'reembolso_deshecho' : 'deshecho'}#justificante`],
+    // La hoja de una liquidación de gastos
+    sheet: [() => payments.replaceSheet(ctx, id, pid, getFile(form, 'sheet')), `${self}?ok=hoja#hoja`],
     delete: [() => payments.remove(ctx, id, pid), `${back}?ok=borrado`],
     doc_new: [() => payments.addDocument(ctx, id, pid, input, getFile(form, 'file')), (v) => `${self}?ok=${v.kind === 'factura' ? 'subida' : 'proforma'}#factura`],
     doc_link: [() => payments.linkDocument(ctx, id, pid, documentId), `${self}?ok=guardado#factura`],
@@ -63,7 +66,7 @@ if (id && pid && Astro.request.method === 'POST') {
     save: [() => payments.update(ctx, id, pid, form ?? new FormData()), `${self}?ok=guardado`],
   };
   const action = Object.hasOwn(ACTIONS, input.intent) ? ACTIONS[input.intent] : null;
-  const up = await keepUploads(ctx, form, ['file', 'receipt']);
+  const up = await keepUploads(ctx, form, ['file', 'receipt', 'sheet']);
   const r = action ? await action[0]() : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
   if (r.ok) {
     await up.done();
@@ -81,7 +84,10 @@ if (id && pid && Astro.request.method === 'POST') {
 
 const f = id && pid ? await payments.ficha(ctx, id, pid) : { ok: false, code: 'not_found' };
 if (!f.ok) return failure(Astro, f, back);
-const { exp, payment: p, docs, choices, coverage: shared, rates, editable, options, types } = f.value;
+const { exp, payment: p, docs, choices, coverage: shared, rates, editable, options, types, people } = f.value;
+const liq = isLiquidation(p);
+// «el pago» / «la liquidación» en los textos
+const name = liq ? `Gastos de ${p.supplier}` : p.supplier;
 const locked = isLocked(exp);
 const admin = can(me, 'supplier.review');
 const withConforme = hasConformeInvoice(docs);
@@ -89,8 +95,10 @@ const paid = p.status === 'pagado';
 // Un pago hecho no se modifica ni se borra; uno con una factura conforme tampoco se borra (se borraría con ella)
 const canDelete = !locked && !paid && !withConforme && (can(me, 'delete') || p.created_by === me.id);
 const canUnpay = !locked && paid && can(me, 'payment.unpay');
-// Eventos sólo marca pagados los pagos con tarjeta (las transferencias las marca Administración)
+// Eventos sólo marca pagados los pagos con tarjeta (las transferencias las marca Administración); un reembolso no
+// se hace con tarjeta, así que lo marca Administración
 const cardOnly = !can(me, 'payment.any_method');
+const canPay = !locked && !paid && can(me, 'pagos') && !(liq && cardOnly);
 // El justificante bancario lo sube (o lo quita) sólo Administración
 const canReceipt = can(me, 'payment.receipt');
 // Al justificante de un pago hecho por transferencia no se le puede quitar
@@ -107,8 +115,18 @@ const showUpload = openUpload || !docs.length;
 // ¿Están hechos todos los pagos que cubre el documento? (para conformar la factura)
 const docPaid = (d) => !conformBlocker(d.payment_count > 1 ? shared.get(d.id) ?? [] : [p]);
 const needed = needsReceipt(p.method);
+const sheetHref = liq ? fileUrl({ file_id: p.sheet_file_id, file_name: p.sheet_name }) : null;
 // ① factura o proforma del proveedor → ② justificante y pago → ③ factura conforme (después del pago)
-const flow = [
+// Liquidación de gastos: ① hoja de liquidación → ② reembolso
+const flow = liq ? [
+  { n: 1, href: '#hoja', title: 'Hoja de liquidación', ...(sheetHref ? { state: 'is-done', text: 'Subida' } : { state: 'is-warn', text: 'Falta la hoja' }) },
+  {
+    n: 2, href: '#justificante', title: 'Reembolso',
+    ...(paid && needed && !p.receipt_file_id ? { state: 'is-warn', text: 'Reembolsada · falta el justificante' }
+      : paid ? { state: 'is-done', text: `El ${formatDate(p.paid_on)}${p.method ? ` · ${PAYMENT_METHODS[p.method]}` : ''}` }
+      : { state: 'is-current', text: `Por reembolsar a ${p.supplier}` }),
+  },
+] : [
   {
     n: 1, href: '#factura', title: 'Factura o proforma',
     ...(p.invoice_count ? { state: 'is-done', text: p.invoice_count > 1 ? 'Facturas recibidas' : 'Factura recibida' }
@@ -130,22 +148,26 @@ const flow = [
   },
 ];
 ---
-<App title={`${p.supplier} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
-  <ExpHeader exp={exp} tab="pagos" current={p.concept ? `${p.supplier} · ${p.concept}` : p.supplier} />
+<App title={`${name} · ${exp.number ? `EXP ${exp.number}` : exp.name}`} section="expedientes" error={error} fieldErrors={errors}>
+  <ExpHeader exp={exp} tab="pagos" current={p.concept ? `${name} · ${p.concept}` : name} />
 
   <section class="card">
     <div class="sec-head">
-      <h2><Icon name="wallet" /> {p.supplier_id && can(me, 'proveedores') ? <a href={`/proveedores/${p.supplier_id}`} title="Ficha del proveedor">{p.supplier}</a> : p.supplier} <Pill state={state} /></h2>
+      {liq
+        ? <h2><Icon name="hand-coins" /> {name} <Pill state={state} /> <span class="pill pill-accent">Liquidación de gastos</span></h2>
+        : <h2><Icon name="wallet" /> {p.supplier_id && can(me, 'proveedores') ? <a href={`/proveedores/${p.supplier_id}`} title="Ficha del proveedor">{p.supplier}</a> : p.supplier} <Pill state={state} /></h2>}
       <span class:list={['big-money money', { neg: p.total_cents < 0 }]}>{eur(p.total_cents)}</span>
     </div>
     <dl class="kv">
+      {liq && <><dt>Adelantado por</dt><dd>{p.supplier} <span class="muted">· se le reembolsa</span></dd></>}
+      {liq && p.spent_on && <><dt>Fecha de los gastos</dt><dd>{formatDate(p.spent_on)}</dd></>}
       {p.concept && <><dt>Concepto</dt><dd>{p.concept}</dd></>}
       <dt>Importe</dt>
       <dd>
         {saved.map((l) => <span class="vat-line money">{l.label}: {eur(l.total)} con IVA → {eur(l.base)} sin IVA</span>)}
         {saved.length > 1 && <span class="vat-line money">Total: {eur(p.total_cents)} con IVA → {eur(p.base_cents)} sin IVA</span>}
       </dd>
-      {p.status !== 'pagado' && <><dt>Fecha límite</dt><dd>{p.due_date ? `${formatDate(p.due_date)} · ${dueText(p.due_date, now)}` : 'Sin fecha límite'}</dd></>}
+      {!liq && p.status !== 'pagado' && <><dt>Fecha límite</dt><dd>{p.due_date ? `${formatDate(p.due_date)} · ${dueText(p.due_date, now)}` : 'Sin fecha límite'}</dd></>}
       <dt>Alta</dt>
       <dd>{p.planned ? 'Previsión de la solicitud · ' : ''}{p.created_by_name ?? '—'} · {formatStamp(p.created_at)}</dd>
       {p.notes && <><dt>Notas</dt><dd class="msg-body">{p.notes}</dd></>}
@@ -155,31 +177,34 @@ const flow = [
       <div class="actions-inline mt no-print">
         {!paid && (
           <details class="add edit-inline" id="editar" open={openEdit}>
-            <summary class="btn btn-sm"><Icon name="pencil" size={16} /> <span class="when-closed">Modificar pago</span><span class="when-open">Cerrar sin guardar</span></summary>
+            <summary class="btn btn-sm"><Icon name="pencil" size={16} /> <span class="when-closed">{liq ? 'Modificar liquidación' : 'Modificar pago'}</span><span class="when-open">Cerrar sin guardar</span></summary>
             <form method="post" class="form edit-form">
-              <PaymentForm v={v} errors={errors} rates={rates} lines={lines} withStatus={false} keepId={p.supplier_id} id="edit" />
+              <PaymentForm v={v} errors={errors} rates={rates} lines={lines} withStatus={false} keepId={p.supplier_id} liquidation={liq} people={people} id="edit" />
               <div class="actions-inline">
                 <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar cambios</button>
               </div>
             </form>
           </details>
         )}
-        <a class="btn btn-ghost btn-sm" href={sameSupplier}><Icon name="plus" size={16} /> Otro pago a {p.supplier}</a>
+        {liq
+          ? <a class="btn btn-ghost btn-sm" href={`${back}?nuevo=liquidacion#liquidacion`}><Icon name="plus" size={16} /> Otra liquidación de gastos</a>
+          : <a class="btn btn-ghost btn-sm" href={sameSupplier}><Icon name="plus" size={16} /> Otro pago a {p.supplier}</a>}
         {canDelete && (
           <form method="post">
             <button class="btn btn-danger btn-sm" type="submit" name="intent" value="delete"
-              data-confirm={`¿Borrar el pago a ${p.supplier} de ${eur(p.total_cents)}?${docs.some((d) => d.payment_count === 1) ? ' También se borran sus documentos.' : ''}`}
-              data-confirm-ok="Borrar pago"><Icon name="trash-2" size={16} /> Borrar pago</button>
+              data-confirm={liq ? `¿Borrar la liquidación de gastos de ${p.supplier} de ${eur(p.total_cents)}? También se borra su hoja.`
+                : `¿Borrar el pago a ${p.supplier} de ${eur(p.total_cents)}?${docs.some((d) => d.payment_count === 1) ? ' También se borran sus documentos.' : ''}`}
+              data-confirm-ok={liq ? 'Borrar liquidación' : 'Borrar pago'}><Icon name="trash-2" size={16} /> {liq ? 'Borrar liquidación' : 'Borrar pago'}</button>
           </form>
         )}
       </div>
     )}
-    {!locked && paid && <p class="muted small mt"><Icon name="lock" size={14} /> El pago está hecho: no se puede modificar ni borrar.{!canUnpay && ' Si hay un error, avisa a Administración.'}</p>}
+    {!locked && paid && <p class="muted small mt"><Icon name="lock" size={14} /> {liq ? 'La liquidación está reembolsada' : 'El pago está hecho'}: no se puede modificar ni borrar.{!canUnpay && ' Si hay un error, avisa a Administración.'}</p>}
     {!locked && !paid && withConforme && <p class="muted small mt">Tiene una factura conforme: el pago no se puede borrar.</p>}
-    {!locked && !paid && !withConforme && !canDelete && <p class="muted small mt">Sólo Administración o quien añadió el pago puede borrarlo.</p>}
+    {!locked && !paid && !withConforme && !canDelete && <p class="muted small mt">Sólo Administración o quien {liq ? 'añadió la liquidación' : 'añadió el pago'} puede borrarlo.</p>}
   </section>
 
-  <ol class="flow-steps no-print" aria-label="Pasos del pago">
+  <ol class:list={['flow-steps no-print', { 'is-two': liq }]} aria-label={liq ? 'Pasos de la liquidación' : 'Pasos del pago'}>
     {flow.map((f) => (
       <li class={f.state}>
         <a href={f.href}>
@@ -191,6 +216,29 @@ const flow = [
   </ol>
 
 
+  {liq && (
+  <section class="card mt" id="hoja">
+    <div class="sec-head">
+      <h2><Icon name="file-text" /> 1. Hoja de liquidación</h2>
+      <p>La hoja con el detalle de los gastos y los tiques. Una liquidación no lleva factura de proveedor.</p>
+    </div>
+    {sheetHref
+      ? <div class="doc-current"><Icon name="paperclip" size={16} /><a href={sheetHref} target="_blank" rel="noopener">{p.sheet_name}</a></div>
+      : <p class="warn-text">Falta la hoja de liquidación: súbela aquí.</p>}
+    {!locked && !(paid && sheetHref) && (
+      <details class="add mt" open={!sheetHref || input?.intent === 'sheet'}>
+        <summary class="btn btn-ghost btn-sm"><Icon name="upload" size={16} /> {sheetHref ? 'Sustituir la hoja' : 'Subir la hoja'}</summary>
+        <form method="post" enctype="multipart/form-data" class="form-section">
+          <FileField id="liq-sheet" name="sheet" label="Hoja de liquidación (PDF o foto)" optional={false} required
+            error={input?.intent === 'sheet' ? errors.sheet : null} kept={input?.intent === 'sheet' ? kept.sheet : null} />
+          <div><button class="btn btn-primary btn-sm" type="submit" name="intent" value="sheet" data-busy="Subiendo…"><Icon name="upload" size={16} /> Subir hoja</button></div>
+        </form>
+      </details>
+    )}
+  </section>
+  )}
+
+  {!liq && (
   <section class="card mt" id="factura">
     <div class="sec-head">
       <h2><Icon name="paperclip" /> 1. Facturas y proformas {invState && <Pill state={invState} />}</h2>
@@ -297,17 +345,19 @@ const flow = [
       </>
     )}
   </section>
+  )}
 
   <section class="card mt" id="justificante">
     <div class="sec-head">
-      <h2><Icon name="banknote" /> 2. {canReceipt ? 'Justificante y pago' : 'Pago'}</h2>
+      <h2><Icon name="banknote" /> 2. {liq ? 'Reembolso' : canReceipt ? 'Justificante y pago' : 'Pago'}</h2>
       {receiptHref ? <span class="pill pill-ok">Con justificante</span>
         : receiptLocked ? <span class="pill pill-danger">Falta el justificante</span> : null}
-      {!canReceipt && !paid && !locked && <p>Las transferencias las paga Administración: sube el justificante y lo marca pagado. Si lo has pagado tú con la tarjeta, márcalo aquí.</p>}
+      {liq && !paid && !locked && <p>Se le devuelve a {p.supplier} lo que adelantó{cardOnly ? ': el reembolso lo marca Administración.' : '. Si es por transferencia, con su justificante.'}</p>}
+      {!liq && !canReceipt && !paid && !locked && <p>Las transferencias las paga Administración: sube el justificante y lo marca pagado. Si lo has pagado tú con la tarjeta, márcalo aquí.</p>}
     </div>
     {paid && (
       <dl class="kv">
-        <dt>Pagado</dt><dd>{formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</dd>
+        <dt>{liq ? 'Reembolsada' : 'Pagado'}</dt><dd>{formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</dd>
       </dl>
     )}
     {receiptHref && (
@@ -322,17 +372,17 @@ const flow = [
         )}
       </div>
     )}
-    {!locked && !paid && can(me, 'pagos') && (
+    {canPay && (
       <form method="post" enctype="multipart/form-data" class="form mt" data-has-receipt={p.receipt_file_id ? '1' : '0'}>
         <input type="hidden" name="payment_id" value={p.id} />
         {canReceipt && (
           <FileField id="pay-receipt" name="receipt" optional={false} label={p.receipt_file_id ? 'Cambiar el justificante' : 'Justificante bancario (PDF o foto)'}
-            hint="Obligatorio para marcar como pagado un pago por transferencia." kept={input?.intent === 'pay' ? kept.receipt : null} />
+            hint={liq ? 'Obligatorio para marcarla reembolsada si es por transferencia.' : 'Obligatorio para marcar como pagado un pago por transferencia.'} kept={input?.intent === 'pay' ? kept.receipt : null} />
         )}
         <>
             <div class="row row-2">
               <div class="field">
-                <label for="paid_on_quick">Fecha de pago</label>
+                <label for="paid_on_quick">{liq ? 'Fecha del reembolso' : 'Fecha de pago'}</label>
                 <input id="paid_on_quick" type="date" name="paid_on" value={now} />
               </div>
               {cardOnly ? (
@@ -343,7 +393,7 @@ const flow = [
                 </div>
               ) : (
                 <div class="field">
-                  <label for="method_quick">Forma de pago</label>
+                  <label for="method_quick">{liq ? 'Forma de reembolso' : 'Forma de pago'}</label>
                   <select id="method_quick" name="method">
                     {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option value={k}>{l}</option>)}
                   </select>
@@ -353,7 +403,7 @@ const flow = [
             <div class="actions-inline">
               {cardOnly
                 ? <button class="btn btn-primary" type="submit" name="intent" value="pay" data-busy="Guardando…"><Icon name="credit-card" size={18} /> Pagado con tarjeta</button>
-                : <button class="btn btn-primary" type="submit" name="intent" value="pay" data-receipt-check data-busy="Guardando…"><Icon name="check" size={18} /> Pagado</button>}
+                : <button class="btn btn-primary" type="submit" name="intent" value="pay" data-receipt-check data-busy="Guardando…"><Icon name="check" size={18} /> {liq ? 'Reembolsada' : 'Pagado'}</button>}
               {canReceipt && <button class="btn btn-ghost" type="submit" name="intent" value="receipt" data-busy="Subiendo…"><Icon name="upload" size={18} /> Sólo subir el justificante</button>}
             </div>
         </>
@@ -371,12 +421,13 @@ const flow = [
     {canUnpay && (
       <form method="post" class="actions-inline mt">
         <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="unpay"
-          data-confirm="¿Deshacer el pago? Vuelve a quedar por pagar para corregir lo que esté mal (importe, fecha, justificante) y se apunta en la actividad."
-          data-confirm-ok="Deshacer pagado"><Icon name="rotate-ccw" size={16} /> Deshacer pagado</button>
-        <span class="muted small">Sólo para corregir un error: el pago vuelve a «Por pagar».</span>
+          data-confirm={liq ? '¿Deshacer el reembolso? Vuelve a quedar por reembolsar para corregir lo que esté mal y se apunta en la actividad.'
+            : '¿Deshacer el pago? Vuelve a quedar por pagar para corregir lo que esté mal (importe, fecha, justificante) y se apunta en la actividad.'}
+          data-confirm-ok={liq ? 'Deshacer reembolso' : 'Deshacer pagado'}><Icon name="rotate-ccw" size={16} /> {liq ? 'Deshacer reembolso' : 'Deshacer pagado'}</button>
+        <span class="muted small">Sólo para corregir un error: {liq ? 'vuelve a «Por reembolsar»' : 'el pago vuelve a «Por pagar»'}.</span>
       </form>
     )}
   </section>
 
-  {editable && <EntityPickerKit kind="supplier" options={options} types={types} />}
+  {editable && !liq && <EntityPickerKit kind="supplier" options={options} types={types} />}
 </App>

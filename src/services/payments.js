@@ -8,6 +8,8 @@
 //     tarjeta (sin payment.any_method).
 //   · Una factura conforme no se borra; si se sube otra, hay que explicar por qué.
 //   · Un expediente cerrado o cancelado es de sólo lectura.
+// Las liquidaciones de gastos (lo que alguien adelantó de su bolsillo, sin factura) son pagos de tipo 'liquidacion':
+// a nombre de quien adelantó el dinero, con la hoja de liquidación; el reembolso es su pago (mismas reglas).
 // Permisos: «expedientes» para trabajar en los pagos de un expediente; «pagos» para la bandeja y marcar pagado;
 // «supplier.review» para conformar facturas; «delete» para borrar lo que han subido otras personas.
 // Los formularios llegan como FormData: los importes por tipo de IVA y las filas de varios pagos son listas.
@@ -18,13 +20,13 @@ import * as rates from '../repos/rates.js';
 import * as suppliers from './suppliers.js';
 import { storeFile, deleteFiles } from './files.js';
 import { can, activityStmt } from '../lib/app.js';
-import { loadFinance } from '../lib/data.js';
+import { loadFinance, activeUsers } from '../lib/data.js';
 import { isLocked, LOCKED_MSG, CARD_ONLY, paidProblem } from '../lib/actions.js';
 import { docName, isConforme, hasConformeInvoice, canRemoveDocument } from '../lib/supplier.js';
-import { PaymentSchema, PaySchema, SupplierDocSchema, ConformSchema, forecastRowSchema, parseRows, validate, formToObject } from '../lib/validate.js';
+import { PaymentSchema, LiquidationSchema, PaySchema, SupplierDocSchema, ConformSchema, forecastRowSchema, parseRows, validate, formToObject } from '../lib/validate.js';
 import { parseVatLines } from '../lib/vat.js';
 import { getFile, UploadError } from '../lib/files.js';
-import { PAYMENT_METHODS, PAID_LOCKED, conformBlocker, plural } from '../lib/finance.js';
+import { PAYMENT_METHODS, PAID_LOCKED, conformBlocker, plural, isLiquidation } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { formatDate, nowIso } from '../lib/dates.js';
 import { done, fail, forbidden, notFound, invalid } from './result.js';
@@ -33,6 +35,12 @@ import { done, fail, forbidden, notFound, invalid } from './result.js';
 
 const locked = () => fail('conflict', LOCKED_MSG);
 const uploadFailed = (/** @type {UploadError} */ err, field = 'file', label = '') => fail('invalid', `${label}${err.message}`, { fields: { [field]: `${label}${err.message}` } });
+const SHEET_MISSING = 'Adjunta la hoja de liquidación (PDF o foto de la hoja con los tiques).';
+const NO_INVOICE = 'Una liquidación de gastos no lleva factura: su documento es la hoja de liquidación.';
+// Quien sólo marca pagos con tarjeta (Eventos) no marca reembolsos: no se hacen con tarjeta
+const REIMBURSE_ADMIN = 'El reembolso de una liquidación de gastos lo marca Administración.';
+/** «el pago a Hotel X» · «la liquidación de gastos de Marta López» (para la actividad) */
+const what = (/** @type {{ kind?: string, supplier: string }} */ p) => (isLiquidation(p) ? `la liquidación de gastos de ${p.supplier}` : `el pago a ${p.supplier}`);
 
 /**
  * El expediente (que exista y se pueda tocar) y el pago de ese expediente
@@ -53,7 +61,8 @@ async function load(ctx, expedienteId, id, { write = true } = {}) {
 
 /**
  * Pestaña Pagos de un expediente: el expediente, sus importes (todos sus pagos con sus documentos), los tipos de
- * IVA y la lista de proveedores para el selector. supplierId: el proveedor con el que se abre el formulario.
+ * IVA, la lista de proveedores para el selector y los nombres del equipo (quién adelantó una liquidación de gastos).
+ * supplierId: el proveedor con el que se abre el formulario.
  * @param {Context} ctx
  * @param {number} expedienteId
  * @param {{ supplierId?: number | null }} [options]
@@ -63,16 +72,17 @@ export async function tab(ctx, expedienteId, { supplierId = null } = {}) {
   const exp = await expedientes.header(ctx.db, expedienteId);
   if (!exp) return notFound();
   const editable = !isLocked(exp);
-  const [fin, vatRates, picker, preset] = await Promise.all([
+  const [fin, vatRates, picker, preset, team] = await Promise.all([
     loadFinance(ctx.db, expedienteId, ctx.now),
     rates.list(ctx.db),
     editable ? suppliers.pickerData(ctx) : null,
     supplierId ? suppliers.resolveForPayment(ctx, { id: supplierId }) : null,
+    editable ? activeUsers(ctx.db) : [],
   ]);
   return done({
     exp, fin, rates: vatRates, editable,
     options: picker?.ok ? picker.value.options : [], types: picker?.ok ? picker.value.types : [],
-    preset: preset?.ok ? preset.value : null,
+    preset: preset?.ok ? preset.value : null, people: team.map((/** @type {{ name: string }} */ u) => u.name),
   });
 }
 
@@ -88,9 +98,11 @@ export async function ficha(ctx, expedienteId, id) {
   if (!r.ok) return r;
   const { exp, p } = r.value;
   const editable = !isLocked(exp) && p.status !== 'pagado';
-  const [docs, all, coverage, vatRates, picker] = await Promise.all([
-    docsRepo.forPayment(ctx.db, id), docsRepo.forExpediente(ctx.db, expedienteId), docsRepo.coverage(ctx.db, id), rates.list(ctx.db),
-    editable ? suppliers.pickerData(ctx) : null,
+  const liq = isLiquidation(p);
+  const [docs, all, coverage, vatRates, picker, team] = await Promise.all([
+    docsRepo.forPayment(ctx.db, id), liq ? [] : docsRepo.forExpediente(ctx.db, expedienteId), docsRepo.coverage(ctx.db, id), rates.list(ctx.db),
+    editable && !liq ? suppliers.pickerData(ctx) : null,
+    editable && liq ? activeUsers(ctx.db) : [],
   ]);
   // Documentos ya subidos en el expediente que no están en este pago (los del mismo proveedor, primero)
   const linked = new Set(docs.map((d) => d.id));
@@ -98,6 +110,7 @@ export async function ficha(ctx, expedienteId, id) {
   return done({
     exp, payment: p, docs, choices, coverage, rates: vatRates, editable,
     options: picker?.ok ? picker.value.options : [], types: picker?.ok ? picker.value.types : [],
+    people: team.map((/** @type {{ name: string }} */ u) => u.name),
   });
 }
 
@@ -182,6 +195,58 @@ export async function create(ctx, expedienteId, form) {
 }
 
 /**
+ * Liquidación de gastos nueva: quién adelantó el dinero, concepto, fecha de los gastos, importe por tipos de IVA y la
+ * hoja de liquidación (obligatoria). Queda por reembolsar; si ya se ha reembolsado, como un pago hecho (fecha, forma
+ * y, si es por transferencia, el justificante).
+ * @param {Context} ctx
+ * @param {number} expedienteId
+ * @param {FormData} form advanced_by, concept, spent_on, vl_*, status, paid_on, method, notes · archivos sheet y receipt
+ */
+export async function createLiquidation(ctx, expedienteId, form) {
+  if (!can(ctx.user, 'expedientes')) return forbidden();
+  const exp = await expedientes.header(ctx.db, expedienteId);
+  if (!exp) return notFound();
+  if (isLocked(exp)) return locked();
+  const parsed = validate(LiquidationSchema, formToObject(form));
+  if (!parsed.ok) return invalid(parsed);
+  const amounts = parseVatLines(form, await rates.list(ctx.db));
+  if (!amounts.ok) return fail('invalid', amounts.message, { fields: { amount: amounts.message } });
+  const d = parsed.data;
+  const sheet = getFile(form, 'sheet');
+  if (!sheet) return fail('invalid', SHEET_MISSING, { fields: { sheet: SHEET_MISSING } });
+  const paid = d.status === 'pagado';
+  const receipt = can(ctx.user, 'payment.receipt') ? getFile(form, 'receipt') : null;
+  if (paid && !can(ctx.user, 'payment.any_method')) return fail('invalid', REIMBURSE_ADMIN, { fields: { method: REIMBURSE_ADMIN } });
+  if (paid) {
+    const problem = paidProblem({ method: d.method, hasReceipt: !!receipt, cardOnly: !can(ctx.user, 'payment.any_method') });
+    if (problem) return fail('invalid', problem, { fields: d.method && problem !== CARD_ONLY ? { receipt: problem } : { method: problem } });
+  }
+  // Los archivos, antes: si alguno no vale, no se crea nada
+  const userId = ctx.user?.id ?? null;
+  const stored = [];
+  try {
+    stored.push(await storeFile({ db: ctx.db, bucket: ctx.bucket, file: sheet, expedienteId, userId }));
+  } catch (err) {
+    if (!(err instanceof UploadError)) throw err;
+    return uploadFailed(err, 'sheet', 'Hoja de liquidación · ');
+  }
+  try {
+    if (paid && receipt) stored.push(await storeFile({ db: ctx.db, bucket: ctx.bucket, file: receipt, expedienteId, userId }));
+  } catch (err) {
+    if (!(err instanceof UploadError)) throw err;
+    await deleteFiles(ctx.db, ctx.bucket, stored);
+    return uploadFailed(err, 'receipt', 'Justificante · ');
+  }
+  const payment = await repo.insert(ctx.db, expedienteId, {
+    kind: 'liquidacion', supplier: { id: null, name: d.advanced_by }, concept: d.concept, amounts, due_date: null, spent_on: d.spent_on,
+    status: d.status, paid_on: paid ? d.paid_on : null, method: paid ? d.method : null, sheet_file_id: stored[0], receipt_file_id: stored[1] ?? null, notes: d.notes,
+  }, userId);
+  await activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.add',
+    `añadió una liquidación de gastos de ${d.advanced_by} (${eur(amounts.total)}: ${d.concept})${paid ? ' ya reembolsada' : ''}`).run();
+  return done({ id: payment.id });
+}
+
+/**
  * Varios pagos previstos de golpe (al mismo proveedor o a varios): proveedor, concepto, fecha límite e importe.
  * @param {Context} ctx
  * @param {number} expedienteId
@@ -221,6 +286,7 @@ export async function update(ctx, expedienteId, id, form) {
   const { p } = r.value;
   if (p.status === 'pagado') return fail('conflict', PAID_LOCKED);
   const input = formToObject(form);
+  if (isLiquidation(p)) return updateLiquidation(ctx, expedienteId, p, input, form);
   const parsed = validate(PaymentSchema, { ...input, status: 'pendiente' });
   if (!parsed.ok) return invalid(parsed);
   const picked = await suppliers.resolveForPayment(ctx, { id: parsed.data.supplier_id, name: parsed.data.supplier }, { keepId: p.supplier_id });
@@ -234,6 +300,53 @@ export async function update(ctx, expedienteId, id, form) {
     activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.update',
       `${amounts.total !== p.total_cents ? `importe ${eur(p.total_cents)} → ${eur(amounts.total)}` : 'editó el pago'} · ${sup.name}`),
   ]);
+  return done({ id });
+}
+
+/**
+ * Cambiar los datos de una liquidación de gastos (quién, concepto, fecha, importe, notas); no su hoja ni su reembolso
+ * @param {Context} ctx @param {number} expedienteId @param {any} p @param {Record<string, any>} input @param {FormData} form
+ */
+async function updateLiquidation(ctx, expedienteId, p, input, form) {
+  const parsed = validate(LiquidationSchema, { ...input, status: 'pendiente' });
+  if (!parsed.ok) return invalid(parsed);
+  const amounts = parseVatLines(form, await rates.list(ctx.db));
+  if (!amounts.ok) return fail('invalid', amounts.message, { fields: { amount: amounts.message } });
+  const d = parsed.data;
+  await ctx.db.batch([
+    repo.updateStmt(ctx.db, p.id, { supplier: { id: null, name: d.advanced_by }, concept: d.concept, amounts, due_date: null, spent_on: d.spent_on, notes: d.notes }, nowIso()),
+    activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.update',
+      `${amounts.total !== p.total_cents ? `importe ${eur(p.total_cents)} → ${eur(amounts.total)}` : 'editó la liquidación de gastos'} · ${d.advanced_by}`),
+  ]);
+  return done({ id: p.id });
+}
+
+/**
+ * Sustituir la hoja de una liquidación de gastos (una vez reembolsada, ya no se cambia)
+ * @param {Context} ctx
+ * @param {number} expedienteId
+ * @param {number} id
+ * @param {File | null} file
+ */
+export async function replaceSheet(ctx, expedienteId, id, file) {
+  const r = await load(ctx, expedienteId, id);
+  if (!r.ok) return r;
+  const { p } = r.value;
+  if (!isLiquidation(p)) return fail('invalid', 'Este pago no es una liquidación de gastos.');
+  if (p.status === 'pagado' && p.sheet_file_id) return fail('conflict', PAID_LOCKED);
+  if (!file) return fail('invalid', SHEET_MISSING, { fields: { sheet: SHEET_MISSING } });
+  let fileId;
+  try {
+    fileId = await storeFile({ db: ctx.db, bucket: ctx.bucket, file, expedienteId, userId: ctx.user?.id ?? null });
+  } catch (err) {
+    if (!(err instanceof UploadError)) throw err;
+    return uploadFailed(err, 'sheet', 'Hoja de liquidación · ');
+  }
+  await ctx.db.batch([
+    repo.sheetStmt(ctx.db, id, fileId, nowIso()),
+    activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.sheet', `${p.sheet_file_id ? 'cambió' : 'subió'} la hoja de ${what(p)} (${eur(p.total_cents)})`),
+  ]);
+  if (p.sheet_file_id) await deleteFiles(ctx.db, ctx.bucket, [p.sheet_file_id]);
   return done({ id });
 }
 
@@ -254,10 +367,10 @@ export async function remove(ctx, expedienteId, id) {
   if (!can(ctx.user, 'delete') && p.created_by !== ctx.user?.id) return forbidden('Sólo Administración o quien añadió el pago puede borrarlo.');
   await ctx.db.batch([
     ...repo.deleteStmts(ctx.db, id),
-    activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.delete', `borró el pago a ${p.supplier} (${eur(p.total_cents)})`),
+    activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.delete', `borró ${what(p)} (${eur(p.total_cents)})`),
   ]);
   for (const d of docs) await dropIfOrphan(ctx, d.id);
-  if (p.receipt_file_id) await deleteFiles(ctx.db, ctx.bucket, [p.receipt_file_id]);
+  await deleteFiles(ctx.db, ctx.bucket, [p.receipt_file_id, p.sheet_file_id]);
   return done({ id });
 }
 
@@ -278,7 +391,8 @@ export async function markPaid(ctx, input, { expedienteId = null, receipt = null
   // Desde una lista: si mientras tanto lo han borrado, se avisa (no es una página que no exista)
   if (!p || (expedienteId && p.expediente_id !== expedienteId)) return fail('invalid', 'Ese pago ya no existe.');
   if (isLocked({ status: p.exp_status })) return locked();
-  if (p.status === 'pagado') return done({ expedienteId: p.expediente_id });
+  if (p.status === 'pagado') return done({ expedienteId: p.expediente_id, kind: p.kind });
+  if (isLiquidation(p) && !can(ctx.user, 'payment.any_method')) return forbidden(REIMBURSE_ADMIN);
   const { paid_on, method } = parsed.data;
   // El justificante sólo lo sube quien tiene ese permiso (a Eventos no se le ofrece)
   if (receipt && !can(ctx.user, 'payment.receipt')) return forbidden('No tienes permiso para subir el justificante.');
@@ -291,9 +405,9 @@ export async function markPaid(ctx, input, { expedienteId = null, receipt = null
   await ctx.db.batch([
     repo.paidStmt(ctx.db, id, paid_on, method, nowIso()),
     activityStmt(ctx.db, ctx.actor, p.expediente_id, 'payment.paid',
-      `marcó como pagado ${p.supplier} (${eur(p.total_cents)}) el ${formatDate(paid_on)}${method ? ` por ${PAYMENT_METHODS[method].toLowerCase()}` : ''}`),
+      `${isLiquidation(p) ? `marcó como reembolsada la liquidación de gastos de ${p.supplier}` : `marcó como pagado ${p.supplier}`} (${eur(p.total_cents)}) el ${formatDate(paid_on)}${method ? ` por ${PAYMENT_METHODS[method].toLowerCase()}` : ''}`),
   ]);
-  return done({ expedienteId: p.expediente_id });
+  return done({ expedienteId: p.expediente_id, kind: p.kind });
 }
 
 /**
@@ -307,13 +421,13 @@ export async function unpay(ctx, expedienteId, id) {
   const r = await load(ctx, expedienteId, id);
   if (!r.ok) return r;
   const { p } = r.value;
-  if (p.status !== 'pagado') return done({ id });
+  if (p.status !== 'pagado') return done({ id, kind: p.kind });
   await ctx.db.batch([
     repo.unpaidStmt(ctx.db, id, nowIso()),
     activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.unpaid',
-      `deshizo el pago a ${p.supplier} (${eur(p.total_cents)}) del ${formatDate(p.paid_on)}: vuelve a estar por pagar`),
+      `deshizo ${isLiquidation(p) ? `el reembolso de la liquidación de gastos de ${p.supplier}` : `el pago a ${p.supplier}`} (${eur(p.total_cents)}) del ${formatDate(p.paid_on)}: vuelve a estar ${isLiquidation(p) ? 'por reembolsar' : 'por pagar'}`),
   ]);
-  return done({ id });
+  return done({ id, kind: p.kind });
 }
 
 // ── Justificante ───────────────────────────────────────────────────────────
@@ -321,7 +435,7 @@ export async function unpay(ctx, expedienteId, id) {
 /**
  * Guarda el justificante (y borra el anterior, si lo había)
  * @param {Context} ctx
- * @param {{ id: number, expediente_id: number, supplier: string, total_cents: number, receipt_file_id: number | null }} p
+ * @param {{ id: number, expediente_id: number, supplier: string, kind?: string, total_cents: number, receipt_file_id: number | null }} p
  * @param {File} file
  */
 async function storeReceipt(ctx, p, file) {
@@ -335,7 +449,7 @@ async function storeReceipt(ctx, p, file) {
   await ctx.db.batch([
     repo.receiptStmt(ctx.db, p.id, fileId, nowIso()),
     activityStmt(ctx.db, ctx.actor, p.expediente_id, 'payment.receipt',
-      `${p.receipt_file_id ? 'cambió' : 'subió'} el justificante del pago a ${p.supplier} (${eur(p.total_cents)})`),
+      `${p.receipt_file_id ? 'cambió' : 'subió'} el justificante ${isLiquidation(p) ? `del reembolso de ${p.supplier}` : `del pago a ${p.supplier}`} (${eur(p.total_cents)})`),
   ]);
   if (p.receipt_file_id) await deleteFiles(ctx.db, ctx.bucket, [p.receipt_file_id]);
   return done({ fileId });
@@ -373,7 +487,7 @@ export async function removeReceipt(ctx, expedienteId, id) {
   if (p.status === 'pagado') return fail('conflict', PAID_LOCKED);
   await ctx.db.batch([
     repo.receiptStmt(ctx.db, id, null, nowIso()),
-    activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.receipt', `quitó el justificante del pago a ${p.supplier}`),
+    activityStmt(ctx.db, ctx.actor, expedienteId, 'payment.receipt', `quitó el justificante ${isLiquidation(p) ? `del reembolso de ${p.supplier}` : `del pago a ${p.supplier}`}`),
   ]);
   await deleteFiles(ctx.db, ctx.bucket, [p.receipt_file_id]);
   return done({ id });
@@ -421,6 +535,7 @@ export async function addDocument(ctx, expedienteId, id, input, file) {
   const r = await load(ctx, expedienteId, id);
   if (!r.ok) return r;
   const { p } = r.value;
+  if (isLiquidation(p)) return fail('invalid', NO_INVOICE);
   const parsed = validate(SupplierDocSchema, input);
   if (!parsed.ok) return invalid(parsed);
   const d = parsed.data;
@@ -449,6 +564,7 @@ export async function linkDocument(ctx, expedienteId, id, documentId) {
   const r = await load(ctx, expedienteId, id);
   if (!r.ok) return r;
   const { p } = r.value;
+  if (isLiquidation(p)) return fail('invalid', NO_INVOICE);
   const d = Number.isInteger(documentId) ? await docsRepo.byId(ctx.db, documentId) : null;
   if (!d || d.expediente_id !== expedienteId) return fail('invalid', 'Ese documento no es de este expediente.');
   await ctx.db.batch([

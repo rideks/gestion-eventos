@@ -321,3 +321,40 @@ test('lo que falta por facturar, repartido con los tipos de IVA del presupuesto'
   assert.deepEqual(splitLikeLines(budget, 0), []);
   assert.deepEqual(splitLikeLines([], 100), []);
 });
+
+test('liquidación de gastos: cuenta como coste, sin avisos de factura y «por reembolsar»', async () => {
+  const { isLiquidation, PAYMENT_KINDS } = await import('../src/lib/finance.js');
+  const { LiquidationSchema } = await import('../src/lib/validate.js');
+  const liq = { id: 6, kind: 'liquidacion', supplier: 'Marta López', invoice_count: 0, base_cents: 16945, total_cents: 18640, status: 'pendiente', planned: 0 };
+  assert.ok(isLiquidation(liq) && !isLiquidation(payments[0]));
+  assert.equal(PAYMENT_KINDS.liquidacion, 'Liquidación de gastos');
+  // Sin factura y sin aviso; estados propios
+  assert.equal(supplierInvoiceState(liq), null);
+  assert.equal(supplierInvoiceState({ ...liq, status: 'pagado' }), null);
+  assert.deepEqual(paymentState(liq, NOW), { key: 'pendiente', label: 'Por reembolsar', tone: 'info' });
+  assert.equal(paymentState({ ...liq, status: 'pagado' }, NOW).label, 'Reembolsada');
+  // En el coste y en lo pendiente, pero no entre los «sin factura»
+  const base = summarize({ payments, documents }, NOW);
+  const s = summarize({ payments: [...payments, liq], documents }, NOW);
+  assert.equal(s.cost.base, base.cost.base + 16945);
+  assert.equal(s.toPay, base.toPay + 18640);
+  assert.equal(s.toReimburse, 18640);
+  assert.deepEqual(s.withoutInvoice.map((p) => p.id), base.withoutInvoice.map((p) => p.id));
+  assert.ok(!s.paidWithoutInvoice.some(isLiquidation));
+  const paid = summarize({ payments: [...payments, { ...liq, status: 'pagado' }], documents }, NOW);
+  assert.ok(!paid.paidWithoutInvoice.some(isLiquidation) && paid.toReimburse === 0);
+  assert.ok(!nextSteps({ status: 'abierto' }, paid, NOW).some((x) => x.text.includes('Marta')));
+  // Antes de cerrar: lo que queda por reembolsar, aparte
+  const sp = (t) => t.replace(/\s/g, ' ');
+  const texts = closingChecks(s).map((c) => sp(c.text));
+  assert.ok(texts.some((t) => t.includes('por pagar a proveedores y 186,40 € por reembolsar de gastos')), texts.join(' | '));
+  const onlyLiq = closingChecks(summarize({ payments: [liq], documents: [] }, NOW));
+  assert.ok(onlyLiq.some((c) => !c.ok && sp(c.text) === 'Quedan 186,40 € por reembolsar de liquidaciones de gastos'));
+  assert.ok(onlyLiq.some((c) => c.ok && c.text === 'Todos los costes tienen factura (las liquidaciones de gastos no la llevan)'));
+  // Validación: quién, concepto y fecha obligatorios; si está reembolsada, cuándo
+  const ok = validate(LiquidationSchema, { advanced_by: 'Marta López', concept: 'Taxis', spent_on: '2026-10-08', status: 'pendiente' });
+  assert.ok(ok.ok);
+  const bad = validate(LiquidationSchema, { advanced_by: '', concept: '', spent_on: '', status: 'pagado' });
+  assert.ok(!bad.ok && bad.errors.advanced_by && bad.errors.concept && bad.errors.spent_on);
+  assert.ok(validate(LiquidationSchema, { advanced_by: 'Marta López', concept: 'Taxis', spent_on: '2026-10-08', status: 'pagado' }).errors.paid_on);
+});

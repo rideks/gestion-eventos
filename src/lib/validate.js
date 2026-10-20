@@ -278,6 +278,20 @@ export const PaymentSchema = z.object({
 }).refine((d) => d.status !== 'pagado' || d.paid_on, { path: ['paid_on'], message: 'Fecha de pago: indica cuándo se pagó' });
 
 /**
+ * Liquidación de gastos: quién adelantó el dinero (a quien se le reembolsa), de qué y cuándo. El importe va por
+ * tipos de IVA, como un pago; si ya se le ha reembolsado, cuándo y cómo.
+ */
+export const LiquidationSchema = z.object({
+  advanced_by: reqText('Quién adelantó el gasto', 2, 120),
+  concept: reqText('Concepto', 2, 160),
+  spent_on: reqDate('Fecha de los gastos'),
+  status: z.enum(['pendiente', 'pagado']),
+  paid_on: optDate('Fecha del reembolso'),
+  method,
+  notes: optText('Notas', 1000),
+}).refine((d) => d.status !== 'pagado' || d.paid_on, { path: ['paid_on'], message: 'Fecha del reembolso: indica cuándo se reembolsó' });
+
+/**
  * Documento de un proveedor: si es factura o proforma y lo que se anota de él.
  * El tipo se comprueba en cada pantalla (en el alta de un pago, el documento es opcional).
  * comment: por qué se sube (obligatorio si ya hay una factura conforme y se sube otra).

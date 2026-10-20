@@ -117,7 +117,10 @@ mismo `db.batch` que el alta: el contador sube y el INSERT usa ese valor dentro 
 baja del mayor número usado ni del primer número de Ajustes, porque Administración puede cambiar un número a mano.
 
 Ya están en capas Proveedores, Contratos, Clientes y **Pagos** (la pestaña Pagos del expediente, la ficha de cada
-pago con sus facturas, proformas y justificante, y la bandeja `/pagos`; `src/services/payments.js`). El resto
+pago con sus facturas, proformas y justificante, y la bandeja `/pagos`; `src/services/payments.js`). Las
+**liquidaciones de gastos** son pagos de tipo `liquidacion` (`payments.kind`): el mismo servicio, la misma ficha y el
+mismo reembolso; lo que cambia lo decide `isLiquidation` (`src/lib/finance.js`), que las deja fuera de los avisos de
+factura sin tocar el cálculo del coste. El resto
 (cobros, facturas al cliente, expedientes, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está
 en las listas `LEGACY_*` de `tests/architecture.test.mjs`, que **sólo pueden encoger**. Orden propuesto:
 cobros (facturas al cliente y PO) → expedientes → usuarios y ajustes. Cada paso, sin cambios para quien usa la

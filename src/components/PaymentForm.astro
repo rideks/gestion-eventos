@@ -13,51 +13,88 @@ import { can } from '../lib/app.js';
 // withStatus: «Por pagar / Ya pagado» (en el alta); en la ficha se paga en su paso, no al editar
 // keepId: el proveedor que ya tiene el pago (al editarlo); el proveedor se elige con EntityPicker
 // (la página lleva EntityPickerKit)
-const { v = {}, errors = {}, id = 'pay', rates = [], lines = [], receipt = false, withStatus = true, keepId = null } = Astro.props;
+// liquidation: liquidación de gastos (lo que alguien adelantó de su bolsillo): en vez del proveedor, quién adelantó el
+// dinero (people: los nombres que se sugieren) y la fecha de los gastos; «Ya pagado» es «Ya reembolsada».
+// La hoja de liquidación va aparte (FileField name="sheet"), como los documentos del proveedor.
+const { v = {}, errors = {}, id = 'pay', rates = [], lines = [], receipt = false, withStatus = true, keepId = null, liquidation = false, people = [] } = Astro.props;
 const status = v.status ?? 'pendiente';
 // Eventos sólo registra como pagados los pagos con tarjeta (el resto lo marca Administración)
 const cardOnly = !can(Astro.locals.user, 'payment.any_method');
+// Un reembolso no se hace con tarjeta: si sólo puede marcar pagos con tarjeta, la liquidación queda por reembolsar
+const showStatus = withStatus && !(liquidation && cardOnly);
+const advancedBy = v.advanced_by ?? (liquidation ? v.supplier : '') ?? '';
 // El justificante bancario sólo lo sube Administración
 const canReceipt = can(Astro.locals.user, 'payment.receipt');
 const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHODS;
 ---
 <div class="row row-2">
-  <div class:list={['field', { 'has-error': errors.supplier }]}>
-    <label for={`${id}-supplier`}>Proveedor</label>
-    <EntityPicker kind="supplier" name="supplier" id={`${id}-supplier`} value={v.supplier} valueId={v.supplier_id} keepId={keepId} required placeholder="Busca por nombre, tipo o ciudad" />
-  </div>
+  {liquidation ? (
+    <div class:list={['field', { 'has-error': errors.advanced_by }]}>
+      <label for={`${id}-advanced_by`}>¿Quién adelantó el dinero?</label>
+      <input id={`${id}-advanced_by`} name="advanced_by" type="text" required minlength="2" maxlength="120" value={advancedBy} list={`${id}-people`}
+        autocomplete="off" placeholder="Marta López" data-invalid="Escribe quién adelantó el dinero (a quien se le reembolsa)." />
+      <datalist id={`${id}-people`}>{people.map((name) => <option value={name} />)}</datalist>
+      <p class="hint">A quien hay que reembolsárselo.</p>
+    </div>
+  ) : (
+    <div class:list={['field', { 'has-error': errors.supplier }]}>
+      <label for={`${id}-supplier`}>Proveedor</label>
+      <EntityPicker kind="supplier" name="supplier" id={`${id}-supplier`} value={v.supplier} valueId={v.supplier_id} keepId={keepId} required placeholder="Busca por nombre, tipo o ciudad" />
+    </div>
+  )}
   <div class:list={['field', { 'has-error': errors.concept }]}>
-    <label for={`${id}-concept`}>Concepto <span class="opt">(opcional)</span></label>
-    <input id={`${id}-concept`} name="concept" type="text" maxlength="160" value={v.concept ?? ''} placeholder="Alojamiento, transferencia, comisión…" />
+    {liquidation
+      ? <label for={`${id}-concept`}>Concepto</label>
+      : <label for={`${id}-concept`}>Concepto <span class="opt">(opcional)</span></label>}
+    <input id={`${id}-concept`} name="concept" type="text" maxlength="160" value={v.concept ?? ''} required={liquidation}
+      placeholder={liquidation ? 'Taxis, material de montaje, comidas del equipo…' : 'Alojamiento, transferencia, comisión…'}
+      data-invalid={liquidation ? 'Escribe de qué son los gastos.' : undefined} />
   </div>
 </div>
 <VatLines id={id} lines={lines} rates={rates} error={errors.amount} totalFirst
-  hint="Escribe el importe con IVA de la factura y el sin IVA se calcula solo. Si hay varios tipos de IVA, añade una línea por tipo. Abonos y comisiones, en negativo." />
+  hint={liquidation
+    ? 'El total de la hoja con IVA y el sin IVA se calcula solo. Si los tiques llevan distintos tipos de IVA, añade una línea por tipo.'
+    : 'Escribe el importe con IVA de la factura y el sin IVA se calcula solo. Si hay varios tipos de IVA, añade una línea por tipo. Abonos y comisiones, en negativo.'} />
 <div class="row row-2">
-  <div class:list={['field', { 'has-error': errors.due_date }]}>
-    <label for={`${id}-due_date`}>Fecha límite de pago</label>
-    <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
-    <p class="hint">Sale en la bandeja de pagos ordenado por esta fecha.</p>
-  </div>
-  {withStatus && (
+  {liquidation ? (
+    <div class:list={['field', { 'has-error': errors.spent_on }]}>
+      <label for={`${id}-spent_on`}>Fecha de los gastos</label>
+      <input id={`${id}-spent_on`} name="spent_on" type="date" required value={v.spent_on ?? ''} data-invalid="Elige la fecha de los gastos." />
+      <p class="hint">Si son de varios días, la del último.</p>
+    </div>
+  ) : (
+    <div class:list={['field', { 'has-error': errors.due_date }]}>
+      <label for={`${id}-due_date`}>Fecha límite de pago</label>
+      <input id={`${id}-due_date`} name="due_date" type="date" value={v.due_date ?? ''} />
+      <p class="hint">Sale en la bandeja de pagos ordenado por esta fecha.</p>
+    </div>
+  )}
+  {showStatus && (
   <fieldset class="field">
-    <legend class="label">Estado</legend>
+    <legend class="label">{liquidation ? 'Reembolso' : 'Estado'}</legend>
     <div class="segmented">
-      <label><input type="radio" name="status" value="pendiente" checked={status !== 'pagado'} />Por pagar</label>
-      <label><input type="radio" name="status" value="pagado" checked={status === 'pagado'} />Ya pagado</label>
+      <label><input type="radio" name="status" value="pendiente" checked={status !== 'pagado'} />{liquidation ? 'Por reembolsar' : 'Por pagar'}</label>
+      <label><input type="radio" name="status" value="pagado" checked={status === 'pagado'} />{liquidation ? 'Ya reembolsada' : 'Ya pagado'}</label>
     </div>
   </fieldset>
   )}
+  {withStatus && !showStatus && (
+    <div class="field">
+      <span class="label">Reembolso</span>
+      <input type="hidden" name="status" value="pendiente" />
+      <p class="muted">Queda por reembolsar: el reembolso lo marca Administración.</p>
+    </div>
+  )}
 </div>
-{withStatus && (
+{showStatus && (
 <div class="paid-only" data-paid-only>
   <div class="row row-2">
     <div class:list={['field', { 'has-error': errors.paid_on }]}>
-      <label for={`${id}-paid_on`}>Fecha de pago</label>
+      <label for={`${id}-paid_on`}>{liquidation ? 'Fecha del reembolso' : 'Fecha de pago'}</label>
       <input id={`${id}-paid_on`} name="paid_on" type="date" value={v.paid_on ?? ''} />
     </div>
     <div class:list={['field', { 'has-error': errors.method }]}>
-      <label for={`${id}-method`}>Forma de pago</label>
+      <label for={`${id}-method`}>{liquidation ? 'Forma de reembolso' : 'Forma de pago'}</label>
       <select id={`${id}-method`} name="method">
         {!cardOnly && <option value="">—</option>}
         {Object.entries(methods).map(([k, l]) => <option value={k} selected={v.method === k}>{l}</option>)}
@@ -65,7 +102,8 @@ const methods = cardOnly ? { tarjeta: PAYMENT_METHODS.tarjeta } : PAYMENT_METHOD
       {cardOnly && <p class="hint">Sólo los pagos con tarjeta. Si se ha pagado por transferencia u otro medio, déjalo «Por pagar»: lo marca Administración.</p>}
     </div>
   </div>
-  {receipt && canReceipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label="Justificante de pago" hint="Obligatorio si se ha pagado por transferencia." error={errors.receipt} kept={v.kept?.receipt} />}
+  {receipt && canReceipt && <FileField id={`${id}-receipt`} name="receipt" optional={false} label={liquidation ? 'Justificante del reembolso' : 'Justificante de pago'}
+    hint={liquidation ? 'Obligatorio si se ha reembolsado por transferencia.' : 'Obligatorio si se ha pagado por transferencia.'} error={errors.receipt} kept={v.kept?.receipt} />}
 </div>
 )}
 <div class:list={['field', { 'has-error': errors.notes }]}>

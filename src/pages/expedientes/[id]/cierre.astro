@@ -7,7 +7,7 @@ import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
 import { parseId, readForm, actor, can, activityStmt } from '../../../lib/app.js';
 import { getExpediente, loadFinance } from '../../../lib/data.js';
-import { closingChecks } from '../../../lib/finance.js';
+import { closingChecks, isLiquidation } from '../../../lib/finance.js';
 import { eur, num, pct } from '../../../lib/money.js';
 import { today, nowIso, formatRange } from '../../../lib/dates.js';
 
@@ -77,9 +77,9 @@ const fromBudget = sales.length === 0;
         <thead><tr><th scope="col">Nº fact.</th><th scope="col">Proveedor</th><th scope="col" class="num">Neto sin IVA</th><th scope="col" class="num">Neto con IVA</th></tr></thead>
         <tbody>
           {costs.map((p) => (
-            <tr class:list={{ 'is-planned': !p.invoice_count }}>
-              <td>{p.invoice_number ?? (p.invoice_count ? 'sin nº (por revisar)' : p.proforma_count ? 'proforma' : 'pendiente')}</td>
-              <td>{p.supplier}{p.concept && ` · ${p.concept}`}</td>
+            <tr class:list={{ 'is-planned': !p.invoice_count && !isLiquidation(p) }}>
+              <td>{isLiquidation(p) ? 'Liquidación de gastos' : p.invoice_number ?? (p.invoice_count ? 'sin nº (por revisar)' : p.proforma_count ? 'proforma' : 'pendiente')}</td>
+              <td>{isLiquidation(p) ? `Gastos de ${p.supplier}` : p.supplier}{p.concept && ` · ${p.concept}`}</td>
               <td class:list={['num', { neg: p.base_cents < 0 }]}>{num(p.base_cents)} €</td>
               <td class:list={['num', { neg: p.total_cents < 0 }]}>{num(p.total_cents)} €</td>
             </tr>

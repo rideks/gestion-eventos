@@ -644,6 +644,7 @@ form:has(input[name='status'][value='pendiente']:checked) [data-paid-only] { dis
 
 /* Pasos de un pago: 1. justificante → 2. pagado → 3. factura conforme */
 .flow-steps { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.flow-steps.is-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .flow-steps a { display: flex; align-items: flex-start; gap: 10px; height: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); text-decoration: none; }
 .flow-steps a:hover { border-color: var(--line-2); }
 .flow-n { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-weight: 800; background: var(--bg); color: var(--muted); border: 1.5px solid var(--line-2); }
@@ -656,7 +657,7 @@ form:has(input[name='status'][value='pendiente']:checked) [data-paid-only] { dis
 .flow-steps .is-warn .flow-n { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
 .flow-steps .is-warn small { color: var(--danger); font-weight: 600; }
 .flow-steps .is-waiting a { background: var(--bg); }
-@media (max-width: 639px) { .flow-steps { grid-template-columns: 1fr; } }
+@media (max-width: 639px) { .flow-steps, .flow-steps.is-two { grid-template-columns: 1fr; } }
 /* Bandeja «Facturas por revisar»: listas para conformar y esperando el pago */
 .review-group { margin-top: 26px; }
 

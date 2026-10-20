@@ -18,17 +18,19 @@ const LAST_DOC_FILE = `(SELECT d.file_id FROM payment_documents pd JOIN supplier
  * Columnas de un pago con el resumen de sus documentos y su justificante:
  *  invoice_count / invoice_pending (facturas y cuántas sin revisar), proforma_count,
  *  invoice_number (los números de sus facturas), file_id / file_name (el último documento: factura si hay).
+ * kind: 'proveedor' o 'liquidacion' (gastos adelantados: supplier es quien los adelantó; spent_on y la hoja, sheet_*).
  */
 export const PAYMENT_SELECT = `
   p.id, p.expediente_id, p.supplier, p.supplier_id, p.concept, p.base_cents, p.total_cents, p.vat, p.vat_lines, p.due_date, p.status,
-  p.paid_on, p.method, p.planned, p.notes, p.created_by, p.created_at, p.updated_at,
-  p.receipt_file_id, rf.name AS receipt_name,
+  p.paid_on, p.method, p.planned, p.notes, p.created_by, p.created_at, p.updated_at, p.kind, p.spent_on,
+  p.receipt_file_id, rf.name AS receipt_name, p.sheet_file_id, sf.name AS sheet_name,
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura'")}) AS invoice_count,
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'factura' AND d.review = 'pendiente'")}) AS invoice_pending,
   (SELECT COUNT(*) ${DOCS_OF("d.kind = 'proforma'")}) AS proforma_count,
   (SELECT group_concat(number, ', ') FROM (SELECT d.number ${DOCS_OF("d.kind = 'factura' AND d.number IS NOT NULL")} ORDER BY pd.document_id)) AS invoice_number,
   df.id AS file_id, df.name AS file_name`;
-export const PAYMENT_JOINS = `LEFT JOIN files rf ON rf.id = p.receipt_file_id LEFT JOIN files df ON df.id = ${LAST_DOC_FILE}`;
+export const PAYMENT_JOINS = `LEFT JOIN files rf ON rf.id = p.receipt_file_id LEFT JOIN files sf ON sf.id = p.sheet_file_id
+  LEFT JOIN files df ON df.id = ${LAST_DOC_FILE}`;
 
 const SEARCH = `(?1 = '%%' OR p.supplier LIKE ?1 OR p.concept LIKE ?1 OR e.name LIKE ?1 OR CAST(e.number AS TEXT) LIKE ?1
   OR EXISTS (SELECT 1 ${DOCS_OF('d.number LIKE ?1')}))`;
@@ -53,7 +55,7 @@ export const byId = (db, expedienteId, id) => db.prepare(
  * @param {number} id
  */
 export const forPaying = (db, id) => db.prepare(
-  `SELECT p.id, p.supplier, p.total_cents, p.status, p.expediente_id, p.receipt_file_id, e.status AS exp_status
+  `SELECT p.id, p.supplier, p.total_cents, p.status, p.kind, p.expediente_id, p.receipt_file_id, e.status AS exp_status
      FROM payments p JOIN expedientes e ON e.id = p.expediente_id WHERE p.id = ?`,
 ).bind(id).first();
 
@@ -74,12 +76,15 @@ export function pending(db, q = '', { until = null } = {}) {
   ).bind(likeTerm(q), until).all().then((r) => r.results);
 }
 
-/** Pagos ya hechos para los que falta la factura del proveedor; con búsqueda opcional @param {Db} db @param {string} [q] */
+/**
+ * Pagos ya hechos para los que falta la factura del proveedor (las liquidaciones de gastos no la llevan);
+ * con búsqueda opcional @param {Db} db @param {string} [q]
+ */
 export function paidWithoutInvoice(db, q = '') {
   return db.prepare(
     `SELECT ${PAYMENT_SELECT}, ${WITH_EXP}
        FROM payments p JOIN expedientes e ON e.id = p.expediente_id ${PAYMENT_JOINS}
-      WHERE p.status = 'pagado' AND p.total_cents != 0 AND e.status != 'cancelado' AND ${SEARCH}
+      WHERE p.status = 'pagado' AND p.kind = 'proveedor' AND p.total_cents != 0 AND e.status != 'cancelado' AND ${SEARCH}
         AND NOT EXISTS (SELECT 1 ${DOCS_OF("d.kind = 'factura'")})
       ORDER BY p.paid_on, p.id`,
   ).bind(likeTerm(q)).all().then((r) => r.results);
@@ -98,21 +103,23 @@ export function paid(db, q = '') {
 // ── Cambios ────────────────────────────────────────────────────────────────
 
 /**
- * Un pago nuevo (con su proveedor de la lista y su desglose de IVA)
+ * Un pago nuevo (con su proveedor de la lista y su desglose de IVA). Una liquidación de gastos (kind 'liquidacion')
+ * va a nombre de quien adelantó el dinero (supplier.id null), con la fecha de los gastos y su hoja.
  * @param {Db} db
  * @param {number} expedienteId
- * @param {{ supplier: { id: number, name: string }, concept: string | null, amounts: { base: number, total: number, vat: string, lines: unknown[] },
+ * @param {{ supplier: { id: number | null, name: string }, concept: string | null, amounts: { base: number, total: number, vat: string, lines: unknown[] },
  *           due_date: string | null, status?: string, paid_on?: string | null, method?: string | null, receipt_file_id?: number | null,
- *           notes?: string | null }} d
+ *           notes?: string | null, kind?: string, spent_on?: string | null, sheet_file_id?: number | null }} d
  * @param {number | null} userId
  */
 export function insert(db, expedienteId, d, userId) {
   return db.prepare(
     `INSERT INTO payments (expediente_id, supplier, supplier_id, concept, base_cents, total_cents, vat, vat_lines,
-                           due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id, expediente_id, supplier, total_cents, status`,
+                           due_date, status, paid_on, method, receipt_file_id, planned, notes, created_by, kind, spent_on, sheet_file_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?) RETURNING id, expediente_id, supplier, total_cents, status, kind`,
   ).bind(expedienteId, d.supplier.name, d.supplier.id, d.concept, d.amounts.base, d.amounts.total, d.amounts.vat, JSON.stringify(d.amounts.lines),
-    d.due_date, d.status ?? 'pendiente', d.paid_on ?? null, d.method ?? null, d.receipt_file_id ?? null, d.notes ?? null, userId).first();
+    d.due_date, d.status ?? 'pendiente', d.paid_on ?? null, d.method ?? null, d.receipt_file_id ?? null, d.notes ?? null, userId,
+    d.kind ?? 'proveedor', d.spent_on ?? null, d.sheet_file_id ?? null).first();
 }
 
 /**
@@ -128,18 +135,18 @@ export const insertPlannedStmt = (db, expedienteId, r, userId) => db.prepare(
 ).bind(expedienteId, r.supplier.name, r.supplier.id, r.concept, r.base, r.total, r.vat, JSON.stringify(r.lines), r.due_date, userId);
 
 /**
- * Los datos del pago (no su estado: se paga en su paso)
+ * Los datos del pago (no su estado: se paga en su paso). spent_on: la fecha de los gastos (liquidaciones)
  * @param {Db} db
  * @param {number} id
- * @param {{ supplier: { id: number, name: string }, concept: string | null, amounts: { base: number, total: number, vat: string, lines: unknown[] },
- *           due_date: string | null, notes: string | null }} d
+ * @param {{ supplier: { id: number | null, name: string }, concept: string | null, amounts: { base: number, total: number, vat: string, lines: unknown[] },
+ *           due_date: string | null, notes: string | null, spent_on?: string | null }} d
  * @param {string} at
  */
 export const updateStmt = (db, id, d, at) => db.prepare(
   `UPDATE payments SET supplier = ?, supplier_id = ?, concept = ?, base_cents = ?, total_cents = ?, vat = ?, vat_lines = ?,
-          due_date = ?, notes = ?, updated_at = ? WHERE id = ?`,
+          due_date = ?, notes = ?, spent_on = ?, updated_at = ? WHERE id = ?`,
 ).bind(d.supplier.name, d.supplier.id, d.concept, d.amounts.base, d.amounts.total, d.amounts.vat, JSON.stringify(d.amounts.lines),
-  d.due_date, d.notes, at, id);
+  d.due_date, d.notes, d.spent_on ?? null, at, id);
 
 /** @param {Db} db @param {number} id @param {string} paidOn @param {string} method @param {string} at */
 export const paidStmt = (db, id, paidOn, method, at) => db.prepare("UPDATE payments SET status = 'pagado', paid_on = ?, method = ?, updated_at = ? WHERE id = ?")
@@ -151,6 +158,9 @@ export const unpaidStmt = (db, id, at) => db.prepare("UPDATE payments SET status
 
 /** @param {Db} db @param {number} id @param {number | null} fileId @param {string} at */
 export const receiptStmt = (db, id, fileId, at) => db.prepare('UPDATE payments SET receipt_file_id = ?, updated_at = ? WHERE id = ?').bind(fileId, at, id);
+
+/** La hoja de una liquidación de gastos @param {Db} db @param {number} id @param {number} fileId @param {string} at */
+export const sheetStmt = (db, id, fileId, at) => db.prepare('UPDATE payments SET sheet_file_id = ?, updated_at = ? WHERE id = ?').bind(fileId, at, id);
 
 /** @param {Db} db @param {number} id @param {string} at */
 export const touchStmt = (db, id, at) => db.prepare('UPDATE payments SET updated_at = ? WHERE id = ?').bind(at, id);

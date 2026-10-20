@@ -137,7 +137,7 @@ test('marcar pagado: Eventos sólo con tarjeta y sin justificante; por transfere
   assert.equal((await payments.markPaid(adm, hotel)).message, RECEIPT_MISSING);
   assert.equal((await payments.markPaid(adm, hotel, { expedienteId: 1, receipt: PDF() })).message, 'Ese pago ya no existe.');
   const r = await payments.markPaid(adm, hotel, { expedienteId: 3, receipt: PDF() });
-  assert.deepEqual(r.value, { expedienteId: 3 });
+  assert.deepEqual(r.value, { expedienteId: 3, kind: 'proveedor' });
   assert.equal(pay(21).status, 'pagado');
   assert.ok(pay(21).receipt_file_id && bucket.files.size === 1);
   assert.ok((await payments.markPaid(adm, hotel)).ok); // ya estaba pagado: no hace nada

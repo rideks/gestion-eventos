@@ -1,8 +1,9 @@
 ---
-// Una fila de coste / pago a proveedor (en el expediente y en la bandeja de pagos).
+// Una fila de coste / pago a proveedor (en el expediente y en la bandeja de pagos). Una liquidación de gastos sale
+// a nombre de quien adelantó el dinero, con su hoja y sin avisos de factura; «Pagado» es «Reembolsada».
 import Icon from './Icon.astro';
 import Pill from './Pill.astro';
-import { paymentState, supplierInvoiceState, PAYMENT_METHODS } from '../lib/finance.js';
+import { paymentState, supplierInvoiceState, isLiquidation, PAYMENT_METHODS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { formatDate, dueText } from '../lib/dates.js';
 import { fileUrl, ACCEPT } from '../lib/files.js';
@@ -13,29 +14,37 @@ const state = paymentState(p, now);
 const href = fileUrl(p);
 const edit = `/expedientes/${p.expediente_id}/pagos/${p.id}`;
 const invoice = supplierInvoiceState(p);
-const missingInvoice = !p.invoice_count && p.total_cents !== 0;
-const canPay = canEdit && p.status !== 'pagado' && can(Astro.locals.user, 'pagos');
-// Eventos sólo marca pagados los pagos con tarjeta; las transferencias (con justificante) las marca Administración
+const liq = isLiquidation(p);
+const missingInvoice = !liq && !p.invoice_count && p.total_cents !== 0;
+// Eventos sólo marca pagados los pagos con tarjeta; las transferencias (con justificante) las marca Administración.
+// Un reembolso no se hace con tarjeta: lo marca Administración.
 const cardOnly = !can(Astro.locals.user, 'payment.any_method');
+const canPay = canEdit && p.status !== 'pagado' && can(Astro.locals.user, 'pagos') && !(liq && cardOnly);
+const sheet = liq ? fileUrl({ file_id: p.sheet_file_id, file_name: p.sheet_name }) : null;
 const canReceipt = can(Astro.locals.user, 'payment.receipt');
 const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name });
 ---
 <li class="item is-row">
   <div class="item-body">
     {showExp && <a class="item-meta" href={`/expedientes/${p.expediente_id}/pagos`}><strong>{p.exp_number ? `EXP ${p.exp_number}` : 'Solicitud'}</strong> · {p.exp_name}</a>}
-    <a class="item-title" href={edit}>{p.supplier}{p.concept && <span class="muted"> · {p.concept}</span>}</a>
+    <a class="item-title" href={edit}>{liq && <span class="muted">Gastos de </span>}{p.supplier}{p.concept && <span class="muted"> · {p.concept}</span>}</a>
     <span class="item-meta">
-      {p.invoice_count
+      {liq
+        ? <span>Liquidación de gastos{p.spent_on && ` del ${formatDate(p.spent_on)}`}</span>
+        : p.invoice_count
         ? <span>{p.invoice_count > 1 ? 'Facturas' : 'Factura'} {p.invoice_number ?? 'sin número todavía'}</span>
         : <span>{p.proforma_count ? 'Con proforma, sin factura todavía' : 'Sin factura todavía'}</span>}
       {p.status === 'pagado'
-        ? <span>Pagado el {formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</span>
+        ? <span>{liq ? 'Reembolsada' : 'Pagado'} el {formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</span>
+        : liq ? null
         : p.due_date ? <span>Límite {formatDate(p.due_date)} · {dueText(p.due_date, now)}</span> : <span>Sin fecha límite</span>}
     </span>
     <span class="item-flags">
       <Pill state={state} />
+      {liq && <span class="pill pill-accent"><Icon name="hand-coins" size={13} /> Liquidación de gastos</span>}
       {invoice && invoice.key !== 'sin' && <Pill state={invoice} />}
       {href && <a class="doc-link" href={href} target="_blank" rel="noopener"><Icon name="paperclip" size={15} />{p.file_name}</a>}
+      {sheet && <a class="doc-link" href={sheet} target="_blank" rel="noopener"><Icon name="file-text" size={15} />Hoja de liquidación</a>}
       {receipt && <a class="doc-link" href={receipt} target="_blank" rel="noopener"><Icon name="banknote" size={15} />Justificante</a>}
     </span>
   </div>
@@ -58,9 +67,9 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
         <form method="post" enctype="multipart/form-data" class="quick-form" data-has-receipt={p.receipt_file_id ? '1' : '0'} data-receipt-href={`${edit}#justificante`}>
           <input type="hidden" name="intent" value="pay" />
           <input type="hidden" name="payment_id" value={p.id} />
-          <label class="visually-hidden" for={`paid-${p.id}`}>Fecha de pago</label>
+          <label class="visually-hidden" for={`paid-${p.id}`}>{liq ? 'Fecha del reembolso' : 'Fecha de pago'}</label>
           <input id={`paid-${p.id}`} type="date" name="paid_on" value={now} required />
-          <label class="visually-hidden" for={`method-${p.id}`}>Forma de pago</label>
+          <label class="visually-hidden" for={`method-${p.id}`}>{liq ? 'Forma de reembolso' : 'Forma de pago'}</label>
           <select id={`method-${p.id}`} name="method">
             {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option value={k}>{v}</option>)}
           </select>
@@ -70,7 +79,7 @@ const receipt = fileUrl({ file_id: p.receipt_file_id, file_name: p.receipt_name 
               <input type="file" name="receipt" accept={ACCEPT} class="visually-hidden" title="" />
             </label>
           )}
-          <button class="btn btn-sm" type="submit" data-receipt-check data-busy="Guardando…"><Icon name="check" size={16} /> Pagado</button>
+          <button class="btn btn-sm" type="submit" data-receipt-check data-busy="Guardando…"><Icon name="check" size={16} /> {liq ? 'Reembolsada' : 'Pagado'}</button>
         </form>
       )}
       {canEdit && missingInvoice

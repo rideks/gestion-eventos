@@ -109,7 +109,7 @@ if (Astro.request.method === 'POST') {
     }
     if (!error) {
       await up.done();
-      return Astro.redirect(`/expedientes/${exp.id}?ok=creado`, 303);
+      return Astro.redirect(`/expedientes/${exp.id}?ok=expediente`, 303);
     }
   }
   // Para no tener que volver a elegir el presupuesto

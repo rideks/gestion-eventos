@@ -12,7 +12,7 @@ import SearchBox from '../components/SearchBox.astro';
 import { readForm, can } from '../lib/app.js';
 import { getFile } from '../lib/files.js';
 import { formToObject } from '../lib/validate.js';
-import { plural, SOON_DAYS } from '../lib/finance.js';
+import { plural, isLiquidation, SOON_DAYS } from '../lib/finance.js';
 import { eur } from '../lib/money.js';
 import { addDays, formatMonth, byMonth } from '../lib/dates.js';
 import { serviceContext, failure } from '../services/context.js';
@@ -31,7 +31,8 @@ if (Astro.request.method === 'POST') {
   const input = form ? formToObject(form) : {};
   if (input.intent === 'pay') {
     const r = await payments.markPaid(ctx, input, { receipt: getFile(form, 'receipt') });
-    if (r.ok) return Astro.redirect(`/pagos${q ? `?q=${encodeURIComponent(q)}&ok=pagado` : '?ok=pagado'}`, 303);
+    const ok = r.ok && r.value.kind === 'liquidacion' ? 'reembolsada' : 'pagado';
+    if (r.ok) return Astro.redirect(`/pagos${q ? `?q=${encodeURIComponent(q)}&ok=${ok}` : `?ok=${ok}`}`, 303);
     const back = failure(Astro, r, '/pagos');
     if (back) return back;
     error = r.message;
@@ -60,7 +61,9 @@ const groups = [
   { key: 'semana', title: `Próximos ${SOON_DAYS} días`, rows: pending.filter((p) => p.due_date && p.due_date >= now && p.due_date <= soonLimit) },
   { key: 'mes', title: 'Este mes', rows: pending.filter((p) => p.due_date && p.due_date > soonLimit && p.due_date <= monthLimit) },
   { key: 'luego', title: 'Más adelante', rows: pending.filter((p) => p.due_date && p.due_date > monthLimit) },
-  { key: 'sinfecha', title: 'Sin fecha límite', rows: pending.filter((p) => !p.due_date) },
+  { key: 'sinfecha', title: 'Sin fecha límite', rows: pending.filter((p) => !p.due_date && !isLiquidation(p)) },
+  // Lo que alguien adelantó de su bolsillo: se le reembolsa (no tiene fecha límite)
+  { key: 'reembolsos', title: 'Liquidaciones de gastos por reembolsar', rows: pending.filter((p) => !p.due_date && isLiquidation(p)) },
 ];
 const months = byMonth(paid, 'paid_on');
 const placeholder = view === 'pendientes' ? 'Proveedor, concepto, nº de factura o expediente' : 'Proveedor, nº de factura o expediente';

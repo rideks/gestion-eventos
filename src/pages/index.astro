@@ -41,7 +41,7 @@ if (Astro.request.method === 'POST') {
       : input.intent === 'conform' ? await payments.conform(ctx, Number(input.supplier_invoice_id), input)
         : { ok: false, message: 'Acción no válida.' };
   const OK = { pay: 'pagado', collect: 'cobrada', conform: 'revisada' };
-  if (r.ok) return Astro.redirect(`/?ok=${OK[input.intent]}`, 303);
+  if (r.ok) return Astro.redirect(`/?ok=${r.value?.kind === 'liquidacion' ? 'reembolsada' : OK[input.intent]}`, 303);
   const back = r.code ? failure(Astro, r, '/') : null;
   if (back) return back;
   error = r.message;

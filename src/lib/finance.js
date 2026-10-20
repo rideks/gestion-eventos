@@ -23,6 +23,13 @@ export const RECEIPT_METHODS = ['transferencia'];
 export const needsReceipt = (method) => RECEIPT_METHODS.includes(method);
 export const RECEIPT_MISSING = 'Falta el justificante bancario de la transferencia: súbelo antes de marcar el pago como pagado.';
 
+/**
+ * Tipos de pago: a un proveedor (con su factura) o una liquidación de gastos (lo que alguien adelantó de su bolsillo:
+ * no lleva factura, se adjunta la hoja de liquidación y se le reembolsa). Las dos cuentan como coste.
+ */
+export const PAYMENT_KINDS = { proveedor: 'Pago a proveedor', liquidacion: 'Liquidación de gastos' };
+export const isLiquidation = (p) => p?.kind === 'liquidacion';
+
 /** Documentos del proveedor: facturas (Administración las revisa) y proformas (no avisan a nadie) */
 export const DOC_KINDS = { factura: 'Factura', proforma: 'Proforma' };
 
@@ -53,12 +60,14 @@ export function expedienteState(e, now) {
 }
 
 export function paymentState(p, now) {
-  if (p.status === 'pagado') return { key: 'pagado', label: 'Pagado', tone: 'ok' };
+  const liq = isLiquidation(p);
+  if (p.status === 'pagado') return { key: 'pagado', label: liq ? 'Reembolsada' : 'Pagado', tone: 'ok' };
   if (isDate(p.due_date)) {
     const d = daysBetween(now, p.due_date);
     if (d < 0) return { key: 'vencido', label: 'Vencido', tone: 'danger' };
     if (d <= SOON_DAYS) return { key: 'pronto', label: d === 0 ? 'Vence hoy' : 'Vence pronto', tone: 'warn' };
   }
+  if (liq) return { key: 'pendiente', label: 'Por reembolsar', tone: 'info' };
   if (!p.invoice_count && p.planned) return { key: 'previsto', label: 'Previsto', tone: 'muted' };
   return { key: 'pendiente', label: 'Por pagar', tone: 'info' };
 }
@@ -68,8 +77,10 @@ export function paymentState(p, now) {
  *  · alguna factura sin revisar por Administración (naranja), aunque ya hubiera otra conforme
  *  · todas revisadas y conformes (verde)
  *  · sin factura: en rojo si ya está pagado (hay que reclamarla); si hay proforma, se indica
+ * Una liquidación de gastos no lleva factura: null (no sale ningún aviso).
  */
 export function supplierInvoiceState(p) {
+  if (isLiquidation(p)) return null;
   if (p.invoice_count > 0) {
     if (!p.invoice_pending) return { key: 'conforme', label: 'Con factura', tone: 'ok' };
     // Se revisa cuando el pago está hecho: hasta entonces la factura sólo está recibida
@@ -151,8 +162,11 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const toPay = sum(pendingRows, 'total_cents');
   const overdue = pendingRows.filter((p) => isDate(p.due_date) && p.due_date < now);
   const soon = pendingRows.filter((p) => isDate(p.due_date) && p.due_date >= now && daysBetween(now, p.due_date) <= SOON_DAYS);
-  // Una proforma no es una factura: el pago sigue «sin factura»
-  const withoutInvoice = payments.filter((p) => !p.invoice_count && p.total_cents !== 0);
+  // Una proforma no es una factura: el pago sigue «sin factura». Las liquidaciones de gastos no llevan factura.
+  const withoutInvoice = payments.filter((p) => !isLiquidation(p) && !p.invoice_count && p.total_cents !== 0);
+  const liquidations = payments.filter(isLiquidation);
+  // Lo que falta por reembolsar a quien adelantó los gastos (está dentro de «por pagar»)
+  const toReimburse = sum(liquidations.filter((p) => p.status !== 'pagado'), 'total_cents');
   const paidWithoutInvoice = withoutInvoice.filter((p) => p.status === 'pagado');
   // Facturas subidas que Administración aún no ha revisado (una factura puede cubrir varios pagos)
   const toReview = documents.filter((d) => d.kind === 'factura' && d.review !== 'conforme');
@@ -196,7 +210,7 @@ export function summarize({ budget = null, payments = [], pos = [], invoices = [
   const margin = sales.base - cost.base;
 
   return {
-    payments, sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview,
+    payments, sale, cost, paid, toPay, pending: pendingRows, overdue, soon, withoutInvoice, paidWithoutInvoice, toReview, liquidations, toReimburse,
     sales, invoiced, collected, toCollect, toIssue, uncollected, unsent, overdueInvoices,
     poRows, poTotal, poLeft, poClosedLeft, poMissing,
     expectedMargin, margin,
@@ -261,8 +275,19 @@ export function closingChecks(s) {
   if (!s.payments.length) {
     push('proveedores', { ok: false, text: 'Aún no hay ningún coste apuntado' });
   } else {
-    push('proveedores', { ok: !s.pending.length, text: s.pending.length ? `Quedan ${eur(s.toPay)} por pagar a proveedores` : 'Todos los proveedores están pagados' });
-    push('proveedores', { ok: s.withoutInvoice.length === 0, text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor` : 'Todos los costes tienen factura' });
+    const reimburse = s.toReimburse ?? 0;
+    const liqs = s.liquidations?.length ?? 0;
+    push('proveedores', {
+      ok: !s.pending.length,
+      text: !s.pending.length ? (liqs ? 'Todos los proveedores están pagados y los gastos, reembolsados' : 'Todos los proveedores están pagados')
+        : reimburse === s.toPay ? `Quedan ${eur(reimburse)} por reembolsar de liquidaciones de gastos`
+        : `Quedan ${eur(s.toPay - reimburse)} por pagar a proveedores${reimburse ? ` y ${eur(reimburse)} por reembolsar de gastos` : ''}`,
+    });
+    push('proveedores', {
+      ok: s.withoutInvoice.length === 0,
+      text: s.withoutInvoice.length ? `${s.withoutInvoice.length} ${s.withoutInvoice.length === 1 ? 'coste' : 'costes'} sin factura del proveedor`
+        : liqs ? 'Todos los costes tienen factura (las liquidaciones de gastos no la llevan)' : 'Todos los costes tienen factura',
+    });
     push('proveedores', { ok: s.toReview.length === 0, text: s.toReview.length ? `${s.toReview.length} ${s.toReview.length === 1 ? 'factura de proveedor' : 'facturas de proveedor'} sin revisar` : 'Las facturas de proveedor están revisadas' });
   }
   // Cliente: todo el presupuesto facturado, emitido y cobrado

@@ -2,7 +2,7 @@
 // Pagos a proveedores del expediente (lado izquierdo del cierre).
 // Las previsiones de la solicitud ya están aquí: al llegar la factura se le añade y se marca pagada.
 // Se pueden ir añadiendo pagos en cualquier momento: uno con su factura o proforma, o varios de golpe
-// (al mismo proveedor o a varios).
+// (al mismo proveedor o a varios), y las liquidaciones de gastos (lo que alguien adelantó, con su hoja: sin factura).
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
 import ExpHeader from '../../../components/ExpHeader.astro';
@@ -10,6 +10,7 @@ import PaymentForm from '../../../components/PaymentForm.astro';
 import SupplierDocFields from '../../../components/SupplierDocFields.astro';
 import PaymentItem from '../../../components/PaymentItem.astro';
 import ForecastRows from '../../../components/ForecastRows.astro';
+import FileField from '../../../components/FileField.astro';
 import EntityPickerKit from '../../../components/EntityPickerKit.astro';
 import { parseId, readForm, can } from '../../../lib/app.js';
 import { formToObject } from '../../../lib/validate.js';
@@ -26,14 +27,18 @@ const id = parseId(Astro.params.id);
 const me = Astro.locals.user;
 const now = ctx.now;
 const self = `/expedientes/${id}/pagos`;
-// ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?proveedor=<id> lo rellena
+// ?nuevo abre el formulario; ?nuevo=varios, el de varios pagos; ?nuevo=liquidacion, el de gastos; ?proveedor=<id> lo rellena
 const params = Astro.url.searchParams;
-let open = params.has('nuevo') ? (params.get('nuevo') === 'varios' ? 'varios' : 'uno') : null;
+const OPEN = { varios: 'varios', liquidacion: 'liquidacion' };
+let open = params.has('nuevo') ? OPEN[params.get('nuevo') ?? ''] ?? 'uno' : null;
 let error = null;
 let errors = {};
 let v = null;
 let lines = [];
 let many = [];
+// Lo escrito en el formulario de la liquidación de gastos (si hubo un error)
+let liq = {};
+let liqLines = [];
 
 if (id && Astro.request.method === 'POST') {
   const form = await readForm(Astro.request);
@@ -41,7 +46,7 @@ if (id && Astro.request.method === 'POST') {
   let r;
   if (input.intent === 'pay') {
     r = await payments.markPaid(ctx, input, { expedienteId: id, receipt: getFile(form, 'receipt') });
-    if (r.ok) return Astro.redirect(`${self}?ok=pagado`, 303);
+    if (r.ok) return Astro.redirect(`${self}?ok=${r.value.kind === 'liquidacion' ? 'reembolsada' : 'pagado'}`, 303);
   } else if (input.intent === 'add') {
     v = input;
     open = 'uno';
@@ -53,6 +58,14 @@ if (id && Astro.request.method === 'POST') {
     else v = { ...input, kept: await up.keep() };
     // El pago ya está guardado aunque su documento no se haya podido subir: se lleva a su ficha para reintentarlo
     if (r.ok && r.value.docError) return Astro.redirect(`${self}/${r.value.id}?aviso_doc=${encodeURIComponent(r.value.docError)}`, 303);
+    if (r.ok) return Astro.redirect(`${self}?ok=creado`, 303);
+  } else if (input.intent === 'add_liq') {
+    open = 'liquidacion';
+    liqLines = form ? rawVatLines(form) : [];
+    const up = await keepUploads(ctx, form, ['sheet', 'receipt']);
+    r = await payments.createLiquidation(ctx, id, form ?? new FormData());
+    if (r.ok) await up.done();
+    else liq = { ...input, kept: await up.keep() };
     if (r.ok) return Astro.redirect(`${self}?ok=creado`, 303);
   } else if (input.intent === 'add_many') {
     open = 'varios';
@@ -72,7 +85,7 @@ if (id && Astro.request.method === 'POST') {
 
 const tab = id ? await payments.tab(ctx, id, { supplierId: parseId(params.get('proveedor')) }) : { ok: false, code: 'not_found' };
 if (!tab.ok) return failure(Astro, tab, '/expedientes');
-const { exp, fin, rates, editable, options, types, preset } = tab.value;
+const { exp, fin, rates, editable, options, types, preset, people } = tab.value;
 const locked = !editable;
 v ??= { supplier: preset?.name, supplier_id: preset?.id };
 const s = fin.summary;
@@ -88,7 +101,7 @@ const suppliersHere = [...new Map(fin.payments.filter((p) => p.supplier_id).map(
   <div class="kpis">
     <div class="kpi"><span>Coste sin IVA</span><b class="money">{eur(s.cost.base)}</b><small class="money">{eur(s.cost.total)} con IVA</small></div>
     <div class="kpi is-ok"><span>Pagado</span><b class="money">{eur(s.paid)}</b><small>{plural(paid.length, 'pago', 'pagos')}</small></div>
-    <div class:list={['kpi', { 'is-danger': s.overdue.length > 0 }]}><span>Por pagar</span><b class="money">{eur(s.toPay)}</b><small>{s.overdue.length ? plural(s.overdue.length, 'vencido', 'vencidos') : plural(pending.length, 'pendiente', 'pendientes')}</small></div>
+    <div class:list={['kpi', { 'is-danger': s.overdue.length > 0 }]}><span>Por pagar</span><b class="money">{eur(s.toPay)}</b><small>{s.overdue.length ? plural(s.overdue.length, 'vencido', 'vencidos') : plural(pending.length, 'pendiente', 'pendientes')}{s.toReimburse > 0 && <> · <span class="money">{eur(s.toReimburse)}</span> por reembolsar</>}</small></div>
     <div class="kpi"><span>Sin factura</span><b>{s.withoutInvoice.length}</b><small>{s.paidWithoutInvoice.length ? plural(s.paidWithoutInvoice.length, 'ya pagado', 'ya pagados') : 'líneas previstas'}</small></div>
   </div>
 
@@ -107,7 +120,7 @@ const suppliersHere = [...new Map(fin.payments.filter((p) => p.supplier_id).map(
           <h2><Icon name="receipt" /> Pago a proveedor</h2>
           <p class="muted">Un pago nuevo (aunque no estuviera previsto), un pago con tarjeta o un abono/comisión (en negativo).
             Si es la factura de un pago que ya está en la lista, ábrelo y añádesela allí.</p>
-          <PaymentForm v={v} errors={errors} rates={rates} lines={lines} receipt id="new" />
+          <PaymentForm v={v} errors={open === 'uno' ? errors : {}} rates={rates} lines={lines} receipt id="new" />
           <h3 class="form-sub"><Icon name="paperclip" size={18} /> Factura o proforma del proveedor <span class="opt muted">(si ya la tienes)</span></h3>
           <SupplierDocFields v={v} errors={errors} id="newinv" comment="none" />
           <div class="actions-inline">
@@ -124,6 +137,20 @@ const suppliersHere = [...new Map(fin.payments.filter((p) => p.supplier_id).map(
           <ForecastRows rows={many} rates={rates} supplier={preset} addLabel="Añadir otra fila" />
           <div class="actions-inline">
             <button class="btn btn-primary" type="submit" name="intent" value="add_many" data-busy="Guardando…">Guardar pagos</button>
+          </div>
+        </form>
+      </details>
+      <details class="add" open={open === 'liquidacion'} name="nuevo-pago" id="liquidacion">
+        <summary class="btn btn-ghost"><Icon name="hand-coins" size={18} /> <span class="when-closed">Añadir liquidación de gastos</span><span class="when-open">Cerrar formulario</span></summary>
+        <form method="post" enctype="multipart/form-data" class="form-section">
+          <h2><Icon name="hand-coins" /> Liquidación de gastos</h2>
+          <p class="muted">Gastos del evento que alguien ha adelantado de su bolsillo y no tienen factura de proveedor (taxis,
+            material, comidas del equipo…). Cuentan en el coste y en el cierre, y quedan por reembolsar a quien los adelantó.</p>
+          <PaymentForm v={liq} errors={open === 'liquidacion' ? errors : {}} rates={rates} lines={liqLines} receipt liquidation people={people} id="liq" />
+          <FileField id="liq-sheet" name="sheet" label="Hoja de liquidación (PDF o foto)" optional={false} required
+            hint="La hoja con el detalle de los gastos y los tiques escaneados, en un PDF o una foto." error={open === 'liquidacion' ? errors.sheet : null} kept={liq.kept?.sheet} />
+          <div class="actions-inline">
+            <button class="btn btn-primary" type="submit" name="intent" value="add_liq" data-busy="Guardando…" data-receipt-check="status"><Icon name="check" size={18} /> Guardar liquidación</button>
           </div>
         </form>
       </details>

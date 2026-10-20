@@ -222,6 +222,15 @@ ON CONFLICT (name) DO NOTHING;
 UPDATE payments SET supplier_id = (SELECT s.id FROM suppliers s WHERE s.name = TRIM(payments.supplier));
 UPDATE supplier_invoices SET supplier_id = (SELECT s.id FROM suppliers s WHERE s.name = TRIM(supplier_invoices.supplier));
 
+-- ── Liquidación de gastos (EXP 1289): lo que Marta adelantó en la visita técnica (tren y comidas). No lleva factura
+-- y está por reembolsar. Va después del directorio: quien adelanta los gastos no es un proveedor. Sin la hoja
+-- (los datos de ejemplo no llevan archivos): la ficha pide subirla.
+INSERT INTO payments (expediente_id, supplier, concept, base_cents, total_cents, vat, vat_lines, kind, spent_on, status, planned, created_by, created_at) VALUES
+  (3, 'Marta López', 'Visita técnica a Sevilla: tren y comidas', 16945, 18640, '10', '[{"rate":1000,"label":"IVA 10 %","base":16945,"total":18640}]',
+   'liquidacion', '2026-10-08', 'pendiente', 0, 2, '2026-10-09T08:30:00Z');
+INSERT INTO activity (expediente_id, user_id, user_name, action, text, at) VALUES
+  (3, 2, 'Marta López', 'payment.add', 'añadió una liquidación de gastos de Marta López (186,40 €: Visita técnica a Sevilla: tren y comidas)', '2026-10-09T08:30:00Z');
+
 UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Hotel') WHERE name LIKE 'Hotel %';
 UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Restaurante') WHERE name = 'La Parrilla de San Lorenzo';
 UPDATE suppliers SET type_id = (SELECT id FROM supplier_types WHERE name = 'Catering') WHERE name = 'Catering Lazo';
