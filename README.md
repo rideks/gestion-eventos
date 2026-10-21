@@ -123,8 +123,37 @@ Estado de una reserva (como los expedientes):
 
 Para **cerrar** una reserva, en su ficha («Antes de cerrar») tienen que estar en verde: tiene servicios, el viaje ha
 terminado, cada servicio tiene sus pasajeros y los servicios de transporte, alojamiento e inscripción tienen su
-localizador o número de reserva (en «Otros», p. ej. un taxi, no siempre lo hay). Cuando haya albaranes y facturas de
-Business Travel, pedirá además que esté facturada.
+localizador o número de reserva (en «Otros», p. ej. un taxi, no siempre lo hay). Cuando haya facturas de Business
+Travel, pedirá además que esté facturada.
+
+### Business Travel: el albarán de cada reserva
+
+Cada reserva tiene **su albarán**: un documento con todos sus servicios por bloque (proveedor, descripción, fechas,
+localizador y pasajeros de cada uno), el **PVP de cada servicio**, el subtotal de cada bloque y el **PVP total**. El fee
+va dentro del PVP y **no sale nunca**, ni el desglose de IVA: el albarán no es una factura. Los albaranes no se agrupan
+por mes: cada reserva, el suyo (se juntarán al hacer la factura, eligiéndolos a mano).
+
+| Estado | Cuándo |
+|---|---|
+| Pendiente de emisión | La reserva tiene servicios y todavía no tiene albarán. Se puede ver el **borrador** (sin número) |
+| Emitido | Alguien con «Emitir, revisar y anular los albaranes» lo emitió: recibe su **número** y la fecha de hoy |
+| Facturado | Está en una factura (próxima versión): ya no se revisa ni se anula sin anular antes la factura |
+| Anulado | Se anuló con su motivo, o se canceló la reserva. Se conserva y se puede ver, marcado como anulado |
+
+- **Número**: `ALB-2026-000001` (el formato se cambia en Ajustes; si lleva el año, cada año empieza en 1). Lo da la base de
+  datos al emitirlo, en la misma operación: no se repite aunque dos personas emitan a la vez, no se escribe a mano, no
+  cambia en las revisiones y **no se vuelve a usar** aunque el albarán se anule (el siguiente lleva otro número).
+- **Si la reserva cambia** después de emitirlo (un PVP, un servicio, los pasajeros, los datos del cliente…), la ficha lo
+  avisa y dice qué ha cambiado. «Emitir revisión» saca la **revisión 2** (mismo número, fecha de hoy); la 1 se conserva
+  tal cual y se puede volver a ver y descargar. Cambiar el fee sin tocar el PVP, o los datos de la empresa en Ajustes, no
+  cuenta como cambio.
+- **Cancelar la reserva** anula su albarán; si se reabre, queda pendiente de emisión y el nuevo lleva otro número. Una
+  reserva que ha tenido albarán no se puede borrar.
+- **Documento**: como las facturas, una hoja A4 que se imprime desde el navegador, y **«Descargar PDF»**, que lo genera
+  con [pdf-lib](https://pdf-lib.js.org/) (gratuita, licencia MIT) **en el navegador** de quien lo descarga: no gasta nada
+  de Cloudflare (en el plan gratuito, cada petición tiene 10 ms de CPU y el primer PDF en el servidor costaba unos 60 ms).
+  Sale con el emisor y el cliente (nombre fiscal, NIF, dirección), la fecha de emisión, la reserva, la revisión y los
+  pasajeros.
 
 ### Quién hace qué (roles y permisos)
 
@@ -160,7 +189,8 @@ Reparto inicial:
 | Ver y gestionar las reservas de **Business Travel** (pasajeros, servicios, importes y PVP) | ✔ | ✔ | ✔ | ✔ | |
 | Ver y cambiar el **fee interno** de los viajes | ✔ | ✔ | ✔ | | |
 | **Cerrar y reabrir** reservas de Business Travel | ✔ | ✔ | | | |
-| Ajustes (tipos de IVA, numeración) | ✔ | ✔ | | | |
+| **Emitir, revisar y anular los albaranes** de las reservas (verlos y descargarlos basta con ver los viajes) | ✔ | ✔ | ✔ | | |
+| Ajustes (tipos de IVA, numeración de expedientes, facturas y albaranes) | ✔ | ✔ | | | |
 | Usuarios, roles y permisos | | | | | ✔ |
 
 - **Sin «Ver los cobros»** no se ve ninguna factura al cliente: tampoco en el **Cierre** ni en su **CSV**, que
@@ -272,11 +302,13 @@ Reparto inicial:
 - **Business Travel**: como Expedientes, en pestañas **En curso · Por cerrar · Mías · Cerradas · Canceladas · Todas**
   (con el número de las que están en curso, por cerrar y las tuyas), con buscador (referencia, cliente, pasajero,
   proveedor o localizador), cliente y mes. Se ven en **tarjetas** (nº de reserva, descripción, cliente, fechas,
-  pasajeros, servicios, quién la creó, su estado, si le falta algún localizador y el PVP) o, con «Tabla», como tabla
-  con columnas a elegir; cada persona elige y se recuerda. «Por cerrar» va por número de reserva, de la más antigua a
+  pasajeros, servicios, quién la creó, su estado, si le falta algún localizador, su albarán y el PVP) o, con «Tabla»,
+  como tabla con columnas a elegir (también «Albarán»: su número y estado, o «Pendiente de emisión»); cada persona
+  elige y se recuerda. «Por cerrar» va por número de reserva, de la más antigua a
   la más reciente. «Nueva reserva»: el cliente y una descripción; en su **ficha** se
   añaden los pasajeros (si ya viajaron con ese cliente, se eligen y se rellenan sus datos) y los servicios de cada
-  bloque, con el resumen económico arriba y el historial abajo. La ficha del cliente enseña sus reservas.
+  bloque, con el resumen económico arriba, su **albarán** (emitir, ver y descargar, revisiones y anulados) y el
+  historial abajo. La ficha del cliente enseña sus reservas.
 - **Clientes**: directorio con sus expedientes **aceptados** (en curso o cerrados) y **cancelados** (y, en «Columnas», el % de
   cancelados y las reservas canceladas), buscador (nombre, nombre fiscal, NIF, ciudad, un nombre anterior o una de sus
   entidades), filtros de estado, tipo (empresa o persona) y ciudad; con permiso económico, el fee y lo presupuestado de cada uno (y, con cobros, lo facturado y lo
@@ -335,7 +367,7 @@ Con los datos de ejemplo hay una cuenta por rol, todas con la contraseña `demo-
 `npm test` prueba la lectura de importes, el IVA, los totales del cierre, los estados, la validación y los permisos
 (lista blanca, dependencias entre permisos, secciones cerradas por defecto y que siempre quede quien gestione usuarios);
 también las **tablas** (columnas por permiso, orden, páginas, enlaces) y los **servicios** de Proveedores, Contratos, Clientes,
-Pagos, Business Travel y las tablas de listado (páginas, totales, filtros, columnas de cada persona) contra una base SQLite en memoria con las migraciones y los
+Pagos, Business Travel (también sus albaranes: número, revisiones, anular y el PDF) y las tablas de listado (páginas, totales, filtros, columnas de cada persona) contra una base SQLite en memoria con las migraciones y los
 datos de ejemplo (permisos de cada rol, datos que se devuelven, cambios en la base; necesita Node 22.13 o superior)
 y las **reglas de la arquitectura**. `npm run typecheck` comprueba los tipos de servicios y repositorios y
 `npm run check` hace las dos cosas. Cómo está organizado el código: [ARQUITECTURA.md](ARQUITECTURA.md).
@@ -351,6 +383,11 @@ npm run invite -- --url https://TU-DOMINIO        # enlace para crear la primera
 ```
 
 **Antes de cada migración en producción**, guarda una copia: `npx wrangler d1 export DB --remote --output copia.sql`.
+
+**Albaranes de Business Travel (migración 0019)**: sólo añade dos tablas (`bt_albaranes` y `bt_albaran_revisions`) y el
+permiso «Emitir, revisar y anular los albaranes» para los roles que ven Business Travel y emiten facturas (Jefes,
+Administración y Tesorería). Las reservas que ya existen quedan **pendientes de emisión**. El formato del número se
+cambia en Ajustes (por defecto `ALB-{yyyy}-{n}`). Dependencia nueva: `pdf-lib` (MIT), que sólo se usa en el navegador.
 
 **Cerrar reservas de Business Travel (migración 0014)**: sólo añade dos columnas a `bt_bookings` (`closed_at` y
 `closed_by`: cerrada es una reserva abierta con fecha de cierre, así no se reconstruye la tabla) y el permiso
@@ -450,14 +487,16 @@ src/
   middleware.js     CSRF, sesión obligatoria y cabeceras
   worker.js         Entrada del Worker + limpieza diaria
   services/         Casos de uso (permiso → validación → cambios → actividad): suppliers, contracts, clients, payments,
-                    travel (Business Travel), prefs (columnas de cada persona) y files (guardar y borrar documentos);
-                    result y context
+                    travel (Business Travel), albaranes (el albarán de cada reserva), prefs (columnas de cada persona)
+                    y files (guardar y borrar documentos); result y context
   repos/            El SQL de cada área: suppliers, contracts, clients, payments, supplier-docs (facturas y proformas
                     de proveedor), files, rates (tipos de IVA), expedientes (su cabecera), travel (reservas de Business
-                    Travel), counters (numeraciones), prefs (preferencias de cada persona) y changes (historial común)
+                    Travel), albaranes (y sus revisiones), counters (numeraciones), settings (Ajustes), prefs
+                    (preferencias de cada persona) y changes (historial común)
   lib/              Reglas puras: table y tables (tablas de listado: columnas, orden, filtros y páginas), money (importes), vat (IVA), finance (estados, totales, cierre), contracts (estado por fechas),
                     suppliers (volumen de negocio), clients (relación económica, antigüedad), changes (qué cambió),
-                    travel (servicios de viaje, importes y PVP), name-match (nombres parecidos), supplier (reglas de las facturas de proveedor), files (comprobar
+                    travel (servicios de viaje, importes y PVP), albaranes (qué dice el albarán y sus textos),
+                    albaran-pdf (el PDF, con pdf-lib), documents (formato del número y emisor), name-match (nombres parecidos), supplier (reglas de las facturas de proveedor), files (comprobar
                     archivos), validate (formularios), permissions… y lo que aún no está en capas: data (consultas),
                     actions (cobrar), invoicing (nº de factura y envío), auth…
   layouts/App.astro Menú lateral (ordenador) y barra inferior (móvil)

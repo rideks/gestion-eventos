@@ -2,6 +2,7 @@
 // Ficha de una reserva de Business Travel: su cliente, sus pasajeros, sus servicios en cuatro bloques
 // (transporte, alojamiento, inscripción y otros), el resumen económico (sin IVA, con IVA, fees y PVP) y el historial.
 // El fee de cada servicio sólo lo ven y lo cambian quienes tienen «viajes.fee» (el servicio ni lo devuelve si no).
+// Su albarán (emitir, revisión si la reserva cambia, anular) y el enlace al documento: src/services/albaranes.js.
 // Una reserva cancelada es de sólo lectura (se puede reabrir). Todo pasa por src/services/travel.js.
 import App from '../../layouts/App.astro';
 import Icon from '../../components/Icon.astro';
@@ -20,6 +21,7 @@ import { plural } from '../../lib/finance.js';
 import { cancelSummary } from '../../lib/cancel.js';
 import { serviceContext, failure } from '../../services/context.js';
 import * as travel from '../../services/travel.js';
+import * as albaranes from '../../services/albaranes.js';
 
 const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
@@ -50,6 +52,9 @@ if (id && Astro.request.method === 'POST') {
     line_add: [() => travel.addLine(ctx, id, input.kind, input, passengerIds), `${self}?ok=servicio#${input.kind}`, `linea:${input.kind}`],
     line_save: [() => travel.updateLine(ctx, id, lid, input, passengerIds), `${self}?ok=guardado#${input.kind}`, `linea:${lid}`],
     line_delete: [() => travel.removeLine(ctx, id, lid), `${self}?ok=quitado#${input.kind}`],
+    albaran_emit: [() => albaranes.emit(ctx, id), `${self}?ok=albaran#albaran`],
+    albaran_revise: [() => albaranes.revise(ctx, id), `${self}?ok=albaran_revision#albaran`],
+    albaran_void: [() => albaranes.voidAlbaran(ctx, id, input), `${self}?ok=albaran_anulado#albaran`, 'albaran_void'],
   };
   const action = Object.hasOwn(ACTIONS, input.intent) ? ACTIONS[input.intent] : null;
   const r = action ? await action[0]() : { ok: false, code: 'invalid', message: 'Esa acción no está permitida.', fields: {} };
@@ -63,7 +68,8 @@ if (id && Astro.request.method === 'POST') {
 
 const f = id ? await travel.detail(ctx, id) : { ok: false, code: 'not_found' };
 if (!f.ok) return failure(Astro, f, '/viajes');
-const { booking: b, passengers, lines, summary, dates, state, checks, canClose, history, rates, options, types, clients, known, fee, editable } = f.value;
+const { booking: b, passengers, lines, summary, dates, state, checks, canClose, history, rates, options, types, clients, known, fee, editable, albaran } = f.value;
+const alb = albaran?.live;
 const ready = checks.length > 0 && checks.every((c) => c.ok);
 const clientLabel = [b.client_title, b.client_name].filter(Boolean).join(' ');
 const seesClient = can(Astro.locals.user, 'clientes');
@@ -252,6 +258,104 @@ const dateText = (l) => (l.end_date && l.end_date !== l.start_date ? `${formatDa
   })}
   {editable && <EntityPickerKit kind="supplier" options={options} types={types} />}
   {editable && <EntityPickerKit kind="client" options={clients} />}
+
+  <!-- El albarán de la reserva -->
+  {albaran && (
+    <section class="card mt" id="albaran">
+      <div class="sec-head">
+        <h2><Icon name="file-text" /> Albarán</h2>
+        <p>Todos los servicios de la reserva con su PVP, sin el fee. Con número propio; si la reserva cambia después de emitirlo, se emite una revisión.</p>
+      </div>
+      {alb ? (
+        <>
+          <p class="exp-meta">
+            <span class={`pill pill-${alb.state.tone}`}>{alb.state.label}</span>
+            <strong>{alb.number}</strong>
+            {alb.revision > 1 && <span>revisión {alb.revision}</span>}
+            <span class="money">PVP {eur(alb.total_cents)}</span>
+            <span class="muted small">Emitido el {formatDate(alb.issued_on)}{alb.issued_by_name && ` por ${alb.issued_by_name}`}</span>
+          </p>
+          {alb.changed && (
+            <p class="flash flash-warn mt">
+              <Icon name="triangle-alert" />
+              <span>La reserva ha cambiado desde que se emitió: {alb.changes.join(' · ')}.
+                {alb.status === 'facturado' ? ' Está facturado: ya no se puede revisar.'
+                  : albaran.canEmit ? ' Emite una revisión para que el albarán lo recoja (la anterior se conserva).' : ' Avisa a Administración para que emita una revisión.'}</span>
+            </p>
+          )}
+          <form method="post" class="actions-inline mt">
+            <a class="btn btn-ghost btn-sm" href={`${self}/albaran`}><Icon name="file-text" size={16} /> Ver y descargar</a>
+            {albaran.canEmit && alb.changed && alb.status === 'emitido' && (
+              <button class="btn btn-primary btn-sm" type="submit" name="intent" value="albaran_revise" data-busy="Emitiendo…"
+                data-confirm={`¿Emitir la revisión ${alb.revision + 1} del albarán ${alb.number}? La revisión ${alb.revision} se conserva tal cual.`}>
+                <Icon name="rotate-ccw" size={16} /> Emitir revisión {alb.revision + 1}
+              </button>
+            )}
+            {alb.changed && <a class="btn btn-ghost btn-sm" href={`${self}/albaran?borrador`}><Icon name="eye" size={16} /> Cómo quedaría</a>}
+          </form>
+          {alb.revisions.length > 1 && (
+            <ul class="compact-list mt">
+              {alb.revisions.map((r) => (
+                <li>
+                  <a href={`${self}/albaran?albaran=${alb.id}&rev=${r.revision}`}>Revisión {r.revision}</a>
+                  <span class="muted small"> · {formatDate(r.issued_on)}{r.issued_by_name && ` · ${r.issued_by_name}`} · PVP {eur(r.total_cents)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {albaran.canEmit && alb.status === 'emitido' && (
+            <details class="inline-edit mt" open={open === 'albaran_void'}>
+              <summary class="btn btn-ghost btn-sm"><Icon name="ban" size={14} /> Anular albarán</summary>
+              <form method="post" class="form-section mt">
+                <p class="muted small">Se conserva con su número, que no se vuelve a usar, y la reserva vuelve a quedar pendiente de emisión.
+                  Si la reserva ya no sigue adelante, cancélala: su albarán se anula con ella.</p>
+                <div class:list={['field', { 'has-error': open === 'albaran_void' && errors.void_reason }]}>
+                  <label for="alb-void">Motivo</label>
+                  <input id="alb-void" name="void_reason" type="text" maxlength="300" required value={open === 'albaran_void' ? input?.void_reason ?? '' : ''}
+                    placeholder="Emitido al cliente equivocado, servicios duplicados…" />
+                </div>
+                <div class="actions-inline">
+                  <button class="btn btn-danger btn-sm" type="submit" name="intent" value="albaran_void" data-confirm={`¿Anular el albarán ${alb.number}?`}>Anular albarán</button>
+                </div>
+              </form>
+            </details>
+          )}
+        </>
+      ) : albaran.problem ? (
+        <p class="muted">{albaran.problem}</p>
+      ) : (
+        <>
+          <p class="exp-meta">
+            <span class={`pill pill-${albaran.state.tone}`}>{albaran.state.label}</span>
+            <span class="money">PVP {eur(albaran.total)}</span>
+            {!albaran.canEmit && <span class="muted small">Lo emite Administración</span>}
+          </p>
+          <form method="post" class="actions-inline mt">
+            <a class="btn btn-ghost btn-sm" href={`${self}/albaran`}><Icon name="eye" size={16} /> Ver borrador</a>
+            {albaran.canEmit && (
+              <button class="btn btn-primary btn-sm" type="submit" name="intent" value="albaran_emit" data-busy="Emitiendo…"
+                data-confirm="¿Emitir el albarán? Recibe su número, que ya no cambia ni se vuelve a usar.">
+                <Icon name="file-text" size={16} /> Emitir albarán
+              </button>
+            )}
+          </form>
+        </>
+      )}
+      {albaran.voided.length > 0 && (
+        <details class="mt">
+          <summary class="muted small">Albaranes anulados ({albaran.voided.length})</summary>
+          <ul class="compact-list">
+            {albaran.voided.map((a) => (
+              <li>
+                <a href={`${self}/albaran?albaran=${a.id}`}>{a.number}</a>
+                <span class="muted small"> · anulado el {formatStamp(a.voided_at, { year: true })}{a.voided_by_name && ` por ${a.voided_by_name}`} · {a.void_reason}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  )}
 
   {history.length > 0 && (
     <section class="mt">

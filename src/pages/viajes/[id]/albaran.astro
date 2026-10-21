@@ -1,0 +1,172 @@
+---
+// El albarán de una reserva como documento: emisor, cliente, número, fecha, los servicios de cada bloque con su PVP,
+// los subtotales y el PVP total (sin el fee ni el desglose de IVA). Como las facturas: se imprime desde el navegador
+// y, además, se descarga en PDF (pdf-lib, en el navegador de quien lo descarga: no gasta nada del servidor).
+//   ?albaran=<id>&rev=<n>  una revisión concreta (también las de un albarán anulado)
+//   ?borrador              el borrador con los datos de ahora (lo que diría la próxima revisión)
+// Sin albarán emitido sale el borrador, sin número y marcado. Todo pasa por src/services/albaranes.js.
+import '@fontsource/barlow/latin-400.css';
+import '@fontsource/barlow/latin-600.css';
+import '@fontsource/barlow/latin-700.css';
+import '@fontsource/barlow-condensed/latin-800.css';
+import '../../../styles/invoice.css';
+import { parseId } from '../../../lib/app.js';
+import { formatDate } from '../../../lib/dates.js';
+import { serviceContext, failure } from '../../../services/context.js';
+import * as albaranes from '../../../services/albaranes.js';
+
+const ctx = serviceContext(Astro);
+const id = parseId(Astro.params.id);
+const q = Astro.url.searchParams;
+const r = id
+  ? await albaranes.document(ctx, id, { albaranId: parseId(q.get('albaran')), revision: parseId(q.get('rev')), draft: q.has('borrador') })
+  : { ok: false, code: 'not_found' };
+if (!r.ok) return failure(Astro, r, id ? `/viajes/${id}` : '/viajes');
+const { view, booking, draft, albaran, revisions, changed, current } = r.value;
+const self = `/viajes/${booking.id}/albaran`;
+const revLink = (n) => `${self}?albaran=${albaran.id}&rev=${n}`;
+const shown = draft ? null : (parseId(q.get('rev')) ?? albaran.revision);
+const note = draft
+  ? 'Borrador: el número se asigna al emitirlo, desde la reserva.'
+  : albaran.status === 'anulado' ? 'Albarán anulado: se conserva con su número, pero no vale.'
+  : !current ? `Revisión ${shown}: hay una más reciente, la ${albaran.revision}.`
+  : 'Documento generado por la aplicación.';
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{view.title} {view.short} · {view.issuer.name}</title>
+    <link rel="icon" href="/favicon.png" type="image/png" />
+  </head>
+  <body class="invoice-page">
+    <nav class="inv-toolbar">
+      <a href={`/viajes/${booking.id}#albaran`}>← Volver a la reserva {booking.reference}</a>
+      <span class="inv-note">
+        {note}
+        {changed && current && <> La reserva ha cambiado desde esta revisión: <a href={`${self}?borrador`}>ver cómo quedaría</a>.</>}
+      </span>
+      {revisions.length > 1 && (
+        <span class="inv-revs" aria-label="Revisiones">
+          {revisions.map((x) => (
+            <a href={revLink(x.revision)} aria-current={x.revision === shown ? 'page' : undefined}
+              title={`Emitida el ${formatDate(x.issued_on)}`}>Rev. {x.revision}</a>
+          ))}
+        </span>
+      )}
+      <button type="button" class="is-ghost" data-print>Imprimir</button>
+      <button type="button" data-pdf data-busy="Preparando el PDF…">Descargar PDF</button>
+    </nav>
+
+    <article class:list={['invoice', 'albaran', { 'is-draft': draft, 'is-void': albaran?.status === 'anulado' }]} data-view={JSON.stringify(view)}>
+      {view.stamp && <p class="inv-stamp">{view.stamp}</p>}
+      <header class="inv-head">
+        <img src="/brand/logo.png" alt={view.issuer.name} width="178" height="85" />
+        <div class="inv-title">
+          <h1>{view.title}</h1>
+          <p class="inv-number">{view.number}</p>
+        </div>
+      </header>
+
+      <section class="inv-parties">
+        <div>
+          <h2>Emisor</h2>
+          <p><strong>{view.issuer.name}</strong></p>
+          {view.issuer.lines.map((l) => <p>{l}</p>)}
+        </div>
+        <div>
+          <h2>Cliente</h2>
+          <p><strong>{view.client.name}</strong></p>
+          {view.client.lines.map((l) => <p>{l}</p>)}
+        </div>
+      </section>
+
+      <dl class="inv-meta">
+        {view.meta.map(([k, v]) => <div><dt>{k}</dt><dd>{v}</dd></div>)}
+      </dl>
+
+      {(view.subject || view.passengers) && (
+        <section class="alb-subject">
+          {view.subject && <p><strong>{view.subject}</strong></p>}
+          {view.passengers && <p class="muted">Pasajeros: {view.passengers}</p>}
+        </section>
+      )}
+
+      <table class="inv-lines alb-lines">
+        <thead>
+          <tr><th scope="col">Servicio</th><th scope="col" class="num">PVP</th></tr>
+        </thead>
+        {view.groups.map((g) => (
+          <tbody>
+            <tr class="alb-group"><th scope="rowgroup" colspan="2">{g.label}</th></tr>
+            {g.rows.map((row) => (
+              <tr>
+                <td>
+                  <span class="alb-concept">{row.concept}</span>
+                  {row.detail && <span class="alb-detail">{row.detail}</span>}
+                  {row.who && <span class="alb-detail">{row.who}</span>}
+                </td>
+                <td class="num"><strong>{row.pvp}</strong></td>
+              </tr>
+            ))}
+            <tr class="alb-sub"><th scope="row">Subtotal {g.label.toLowerCase()}</th><td class="num">{g.subtotal}</td></tr>
+          </tbody>
+        ))}
+      </table>
+      {!view.groups.length && <p class="alb-empty muted">La reserva todavía no tiene servicios.</p>}
+
+      <div class="alb-end">
+        <div>
+          {view.voided && <p class="alb-void">{view.voided}</p>}
+          <p class="muted">{view.note}</p>
+        </div>
+        <table class="inv-totals">
+          <tbody>
+            <tr class="inv-total"><th scope="row">PVP total</th><td class="num">{view.total}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="inv-foot">{view.foot}</footer>
+    </article>
+
+    <script>
+      document.querySelector('[data-print]')?.addEventListener('click', () => window.print());
+
+      // Descargar en PDF: el módulo (con pdf-lib) se carga sólo al pulsar y el PDF se hace aquí, en el navegador
+      const button = document.querySelector('[data-pdf]');
+      const article = document.querySelector('article[data-view]');
+      if (button instanceof HTMLButtonElement && article instanceof HTMLElement) {
+        const label = button.textContent;
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          button.textContent = button.dataset.busy ?? label;
+          try {
+            const view = JSON.parse(article.dataset.view ?? '{}');
+            const [{ albaranPdf }, logo] = await Promise.all([
+              import('../../../lib/albaran-pdf.js'),
+              fetch('/brand/logo.png').then((res) => (res.ok ? res.arrayBuffer() : null)).catch(() => null),
+            ]);
+            const bytes = await albaranPdf(view, { logo });
+            const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = view.fileName;
+            document.body.append(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 30_000);
+          } catch (err) {
+            console.error(err);
+            alert('No se ha podido preparar el PDF. Usa «Imprimir» y elige «Guardar como PDF».');
+          } finally {
+            button.disabled = false;
+            button.textContent = label;
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

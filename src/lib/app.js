@@ -100,5 +100,8 @@ export const FLASH = {
   pasajero: 'Pasajero añadido',
   servicio: 'Servicio añadido',
   quitado: 'Quitado de la reserva',
+  albaran: 'Albarán emitido: ya tiene su número',
+  albaran_revision: 'Revisión del albarán emitida: la anterior se conserva tal cual',
+  albaran_anulado: 'Albarán anulado: se conserva con su número y la reserva vuelve a estar pendiente de emisión',
   columnas: 'Columnas guardadas: se mantienen la próxima vez',
 };

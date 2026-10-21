@@ -13,30 +13,15 @@ import { eur } from './money.js';
 import { formatDate, nowIso, addDays } from './dates.js';
 import { InvoiceSchema, EmitSchema, parseAllocations, validate } from './validate.js';
 import { invoiceAmounts } from './vat.js';
+import { yearly, formatNumber, companyFrom } from './documents.js';
 
 export const DEFAULT_PATTERN = 'G/{n}/{yy}/01';
-const DIGITS = 6;
 
-/** ¿El formato lleva el año? (entonces la numeración vuelve a 1 cada año) */
-export const yearly = (pattern) => /\{yy(yy)?\}/.test(pattern);
-
-/** Problema del formato, o null si vale */
-export function patternProblem(pattern) {
-  const p = String(pattern ?? '').trim();
-  if (!p) return 'Formato: escríbelo, por ejemplo G/{n}/{yy}/01';
-  if (p.length > 40) return 'Formato: máximo 40 caracteres';
-  if ((p.match(/\{n\}/g) ?? []).length !== 1) return 'Formato: tiene que llevar {n} (el número) una vez';
-  if (/\{(?!n\}|yy\}|yyyy\})[^}]*\}/.test(p)) return 'Formato: sólo se puede usar {n}, {yy} y {yyyy}';
-  return null;
-}
+// El formato del número y los datos del emisor son comunes a facturas y albaranes (src/lib/documents.js)
+export { yearly, patternProblem } from './documents.js';
 
 /** 'G/{n}/{yy}/01' + 904 + 2026 → 'G/000904/26/01' */
-export function formatInvoiceNumber(pattern, n, year) {
-  return pattern
-    .replaceAll('{n}', String(n).padStart(DIGITS, '0'))
-    .replaceAll('{yyyy}', String(year))
-    .replaceAll('{yy}', String(year).slice(-2));
-}
+export const formatInvoiceNumber = formatNumber;
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
@@ -75,13 +60,7 @@ export async function invoiceSettings(db) {
   return {
     pattern: s.invoice_pattern || DEFAULT_PATTERN,
     counters: Object.fromEntries(results.filter((r) => r.key.startsWith('invoice_next')).map((r) => [r.key, r.value])),
-    company: {
-      name: s.company_legal_name || '',
-      taxId: s.company_tax_id || '',
-      address: s.company_address || '',
-      iban: s.company_iban || '',
-      email: s.company_email || '',
-    },
+    company: companyFrom(s),
   };
 }
 

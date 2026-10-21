@@ -367,6 +367,12 @@ export const InvoiceSettingsSchema = z.object({
   company_email: optEmail('Email de facturación'),
 });
 
+/** Formato del número de los albaranes de Business Travel (Ajustes) */
+export const AlbaranSettingsSchema = z.object({ albaran_pattern: reqText('Formato', 3, 40) });
+
+/** Anular un albarán: por qué (queda en el albarán y en el historial de la reserva) */
+export const AlbaranVoidSchema = z.object({ void_reason: reqText('Motivo', 3, 300) });
+
 /** Un tipo de IVA nuevo (Ajustes) */
 export const VatRateSchema = z.object({
   label: reqText('Nombre', 2, 40),

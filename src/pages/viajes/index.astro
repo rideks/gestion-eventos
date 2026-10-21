@@ -14,6 +14,7 @@ import Pager from '../../components/Pager.astro';
 import { readForm, can, parseId } from '../../lib/app.js';
 import { TABLES } from '../../lib/tables.js';
 import { tableState, pageInfo, shows, isFiltered, hrefWith } from '../../lib/table.js';
+import { ALBARAN_STATES } from '../../lib/albaranes.js';
 import { formToObject } from '../../lib/validate.js';
 import { BOOKING_TABS } from '../../lib/travel.js';
 import { cancelSummary } from '../../lib/cancel.js';
@@ -147,6 +148,8 @@ const pill = (s) => `pill pill-${s.tone}`;
                 <span class={pill(r.state)}>{r.state.label}</span>
                 {r.status === 'abierta' && !r.closed_at && r.lines > 0 && !r.passengers && <span class="pill pill-warn">Sin pasajeros</span>}
                 {r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <span class="pill pill-warn">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</span>}
+                {r.albaran_number ? <span class={`pill pill-${ALBARAN_STATES[r.albaran_status].tone}`}>Albarán {r.albaran_number}</span>
+                  : r.status === 'abierta' && r.lines > 0 && <span class="pill pill-muted">Albarán pendiente</span>}
               </span>
               {r.status === 'cancelada' && <span class="cancel-note">Motivo: {cancelSummary(r)}</span>}
             </div>
@@ -183,6 +186,12 @@ const pill = (s) => `pill pill-${s.tone}`;
               {has('fee') && <td data-label={L.fee} class="num money">{eur(r.fee_cents)}</td>}
               {has('pvp') && <td data-label={L.pvp} class="num money"><strong>{eur(r.pvp_cents)}</strong></td>}
               {has('estado') && <td data-label={L.estado}><span class={pill(r.state)}>{r.state.label}</span>{r.status === 'cancelada' && <div class="cancel-note">{cancelSummary(r)}</div>}{r.status === 'abierta' && !r.closed_at && r.missing_locators > 0 && <div class="small neg">{r.missing_locators === 1 ? 'Falta 1 localizador' : `Faltan ${r.missing_locators} localizadores`}</div>}</td>}
+              {has('albaran') && (
+                <td data-label={L.albaran}>
+                  {r.albaran_number ? <><strong>{r.albaran_number}</strong><div class="small muted">{ALBARAN_STATES[r.albaran_status].label}</div></>
+                    : r.status === 'abierta' && r.lines > 0 ? <span class="muted">Pendiente de emisión</span> : '—'}
+                </td>
+              )}
               {has('creada') && <td data-label={L.creada}>{formatStamp(r.created_at, { year: true })}</td>}
               {has('creador') && <td data-label={L.creador}>{r.created_by_name ?? '—'}</td>}
             </tr>

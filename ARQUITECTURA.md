@@ -108,9 +108,22 @@ Así se hizo Clientes (v24), y así se hará la siguiente (p. ej. Incidencias):
 ## Lo que aún no está en capas
 
 **Business Travel** nació ya en capas (`src/services/travel.js`, `src/repos/travel.js`, `src/lib/travel.js`) y no
-depende de los expedientes. Las numeraciones nuevas (referencias de reserva y, más adelante, albaranes y facturas de
+depende de los expedientes. Las numeraciones nuevas (referencias de reserva, albaranes y, más adelante, facturas de
 Business Travel) usan `src/repos/counters.js`: un contador que se incrementa en una sola sentencia, así que nunca
 sale el mismo número aunque dos personas guarden a la vez.
+
+El **albarán** de cada reserva también está en capas (`src/services/albaranes.js`, `src/repos/albaranes.js`,
+`src/lib/albaranes.js`):
+- `emitStmts` sube el contador, crea el albarán con el número ya compuesto (prefijo + `printf('%06d')` + sufijo, de
+  `numberParts` en `src/lib/documents.js`, común con las facturas) y su revisión 1, todo en un `db.batch`. Si la
+  reserva ya tiene un albarán sin anular, no hace nada (ni gasta número); el índice único parcial lo garantiza.
+- Cada revisión guarda lo que dice el documento en JSON (`albaranContent`), emisor incluido, y no se cambia nunca. Para
+  saber si la reserva ha cambiado se compara con lo de ahora sin el emisor (`sameContent`).
+- El documento se pinta desde `albaranView` (todo en textos): lo mismo para la vista imprimible
+  (`src/pages/viajes/[id]/albaran.astro`) y para el PDF (`src/lib/albaran-pdf.js`, con pdf-lib). El PDF se hace **en el
+  navegador** (el módulo se carga al pulsar «Descargar PDF»): en el Worker, el primer PDF tras arrancar costaba unos 60 ms
+  de CPU y el plan gratuito da 10 ms por petición. El módulo no depende del navegador (se prueba en Node), así que podría
+  ir al servidor si algún día hace falta (p. ej. para adjuntar los bonos a un correo).
 
 Los **números de expediente** también salen de un contador (`src/repos/expedientes.js`: `nextNumberStmt` y `NUMBER`), en el
 mismo `db.batch` que el alta: el contador sube y el INSERT usa ese valor dentro de la misma transacción. El contador nunca

@@ -16,3 +16,11 @@ export async function next(db, key) {
     .bind(key).first();
   return row.value;
 }
+
+/**
+ * El último número dado por ese contador, sin darlo (0 si todavía no ha dado ninguno)
+ * @param {Db} db
+ * @param {string} key
+ * @returns {Promise<number>}
+ */
+export const last = (db, key) => db.prepare('SELECT value FROM counters WHERE key = ?').bind(key).first().then((r) => r?.value ?? 0);

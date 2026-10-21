@@ -14,7 +14,7 @@
 
 DELETE FROM activity; DELETE FROM invoice_pos; DELETE FROM invoices; DELETE FROM purchase_orders;
 DELETE FROM payment_documents; DELETE FROM payments; DELETE FROM supplier_invoices; DELETE FROM budgets; DELETE FROM files; DELETE FROM expedientes;
-DELETE FROM bt_line_passengers; DELETE FROM bt_lines; DELETE FROM bt_passengers; DELETE FROM bt_bookings; DELETE FROM counters;
+DELETE FROM bt_albaran_revisions; DELETE FROM bt_albaranes; DELETE FROM bt_line_passengers; DELETE FROM bt_lines; DELETE FROM bt_passengers; DELETE FROM bt_bookings; DELETE FROM counters;
 DELETE FROM change_log; DELETE FROM client_entities; DELETE FROM client_aliases; DELETE FROM clients;
 DELETE FROM supplier_contract_changes; DELETE FROM supplier_contracts;
 DELETE FROM supplier_aliases; DELETE FROM suppliers; DELETE FROM supplier_types;
@@ -27,9 +27,9 @@ DELETE FROM role_permissions; DELETE FROM roles WHERE system = 0;
 -- Reparto inicial (el de migrations/0008_roles_y_permisos.sql más los de 0009, 0010 y 0011)
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.value FROM roles r, json_each(CASE r.key
-  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.close"]'
-  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.close"]'
-  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee"]'
+  WHEN 'jefes' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.close","viajes.albaran"]'
+  WHEN 'administracion' THEN '["expedientes","expediente.open","expediente.close","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","delete","settings","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.close","viajes.albaran"]'
+  WHEN 'tesoreria' THEN '["expedientes","pagos","payment.any_method","payment.receipt","payment.unpay","supplier.review","cobros","invoice.issue","po.manage","proveedores","proveedores.create","proveedores.edit","proveedores.gasto","contratos","contratos.edit","clientes","clientes.create","clientes.edit","clientes.economia","viajes","viajes.fee","viajes.albaran"]'
   WHEN 'eventos' THEN '["expedientes","pagos","proveedores","proveedores.create","clientes","clientes.create","viajes"]'
   WHEN 'tecnico' THEN '["users"]'
 END) p;
@@ -181,7 +181,7 @@ UPDATE invoices SET billed_tax_id = 'A00000002', billed_address = 'Calle de Ejem
 UPDATE invoices SET billed_tax_id = 'B00000' || printf('%03d', id), billed_address = 'Polígono de Ejemplo, 47000 Valladolid'
  WHERE expediente_id = 1 AND billed_to <> 'BMW Ibérica';
 UPDATE invoices SET sent_at = issued_on || 'T10:00:00Z' WHERE status IN ('emitida', 'cobrada');
-DELETE FROM settings WHERE key = 'invoice_pattern' OR key LIKE 'invoice_next%' OR key LIKE 'company_%';
+DELETE FROM settings WHERE key = 'invoice_pattern' OR key LIKE 'invoice_next%' OR key LIKE 'company_%' OR key = 'albaran_pattern';
 INSERT INTO settings (key, value) VALUES
   ('invoice_pattern', 'G/{n}/{yy}/01'),
   ('company_legal_name', 'Seven Worlds Events & Congresses, S.L.'),

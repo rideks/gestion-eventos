@@ -210,6 +210,7 @@ export const TABLES = {
       { key: 'fee', label: 'Fee', num: true, need: 'viajes.fee', sort: 'desc' },
       { key: 'pvp', label: 'PVP', num: true, sort: 'desc' },
       { key: 'estado', label: 'Estado', sort: 'asc' },
+      { key: 'albaran', label: 'Albarán', sort: 'asc' },
       { key: 'creada', label: 'Creada', hidden: true, sort: 'desc' },
       { key: 'creador', label: 'Creada por', hidden: true, sort: 'asc' },
     ],

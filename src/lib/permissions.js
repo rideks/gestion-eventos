@@ -51,6 +51,7 @@ export const AREAS = [
       { key: 'viajes', label: 'Ver y gestionar las reservas de Business Travel', help: 'Reservas de viajes de empresa de cada cliente: pasajeros, transporte, alojamiento, inscripciones y otros servicios, con sus importes y el PVP. Aparte de los expedientes.' },
       { key: 'viajes.fee', label: 'Ver y cambiar el fee interno de los viajes', help: 'El fee oculto de cada servicio y el total de fees de cada reserva. Nunca sale en los documentos del cliente.' },
       { key: 'viajes.close', label: 'Cerrar y reabrir reservas de Business Travel', help: 'Cuando el viaje ha terminado y está todo (pasajeros y localizadores). Una reserva cerrada ya no se cambia hasta reabrirla.' },
+      { key: 'viajes.albaran', label: 'Emitir, revisar y anular los albaranes de las reservas', help: 'Cada reserva tiene su albarán (todos sus servicios con su PVP, sin el fee), con número propio. Si la reserva cambia después, se emite una revisión. Ver y descargar el albarán basta con ver los viajes.' },
     ],
   },
   {
@@ -104,6 +105,7 @@ export const REQUIRES = {
   'contratos.edit': 'contratos',
   'viajes.fee': 'viajes',
   'viajes.close': 'viajes',
+  'viajes.albaran': 'viajes',
 };
 
 /**

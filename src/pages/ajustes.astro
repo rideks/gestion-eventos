@@ -1,7 +1,8 @@
 ---
 // Ajustes (sólo Administración): los tipos de IVA que salen en todos los desplegables,
-// el primer número de expediente y la facturación al cliente (formato y próximo nº de factura,
-// datos de la empresa que salen en las facturas).
+// el primer número de expediente, la facturación al cliente (formato y próximo nº de factura,
+// datos de la empresa que salen en las facturas) y el formato del número de los albaranes de Business Travel
+// (src/services/albaranes.js).
 import { env } from 'cloudflare:workers';
 import App from '../layouts/App.astro';
 import Icon from '../components/Icon.astro';
@@ -11,6 +12,8 @@ import { invoiceSettings, peekInvoiceNumber, patternProblem, counterKey, nextSeq
 import { today } from '../lib/dates.js';
 import { loadRates, pctText } from '../lib/vat.js';
 import { upcomingNumber } from '../repos/expedientes.js';
+import { serviceContext } from '../services/context.js';
+import * as albaranes from '../services/albaranes.js';
 
 const denied = deny(Astro, 'settings');
 if (denied) return denied;
@@ -98,6 +101,12 @@ if (Astro.request.method === 'POST') {
         return Astro.redirect('/ajustes?ok=guardado#facturacion', 303);
       }
     }
+  } else if (input.intent === 'albaranes') {
+    v = input;
+    const r = await albaranes.saveNumbering(serviceContext(Astro), input);
+    if (r.ok) return Astro.redirect('/ajustes?ok=guardado#albaranes', 303);
+    error = r.message;
+    errors = r.fields;
   } else if (input.intent === 'first_number') {
     const parsed = validate(FirstNumberSchema, input);
     if (!parsed.ok) {
@@ -113,12 +122,13 @@ if (Astro.request.method === 'POST') {
   if (error) Astro.response.status = 400;
 }
 
-const [rates, first, next, billing, nextInvoice] = await Promise.all([
+const [rates, first, next, billing, nextInvoice, albaranNumbering] = await Promise.all([
   loadRates(db),
   db.prepare("SELECT value FROM settings WHERE key = 'first_number'").first().then((r) => r?.value ?? '1001'),
   upcomingNumber(db),
   invoiceSettings(db),
   peekInvoiceNumber(db, year),
+  albaranes.numbering(serviceContext(Astro)).then((r) => (r.ok ? r.value : null)),
 ]);
 ---
 <App title="Ajustes" section="ajustes" error={error} fieldErrors={errors}>
@@ -218,6 +228,23 @@ const [rates, first, next, billing, nextInvoice] = await Promise.all([
     <p class="hint muted small">Mientras falten, en la factura sale «pendiente».</p>
     <div><button class="btn btn-primary" type="submit" name="intent" value="invoicing">Guardar</button></div>
   </form>
+
+  {albaranNumbering && (
+    <form method="post" class="form-section mt" id="albaranes">
+      <h2><Icon name="file-text" /> Albaranes de Business Travel</h2>
+      <p class="muted">Cada reserva tiene su albarán. El número se asigna solo al emitirlo, sin repetir y sin volver a usarse aunque se anule.
+        El próximo será el <strong>{albaranNumbering.next}</strong>.{albaranNumbering.yearly && ' Como el formato lleva el año, cada año vuelve a empezar en 1.'}</p>
+      <div class="row row-2">
+        <div class:list={['field', { 'has-error': errors.albaran_pattern }]}>
+          <label for="albaran_pattern">Formato del número</label>
+          <input id="albaran_pattern" name="albaran_pattern" type="text" required maxlength="40" value={v.albaran_pattern ?? albaranNumbering.pattern} />
+          <p class="hint">{'{n}'} el número (6 cifras) · {'{yy}'} el año con 2 cifras · {'{yyyy}'} con 4. Ej.: ALB-{'{yyyy}'}-{'{n}'} → ALB-{year}-000001. Los ya emitidos conservan el suyo.</p>
+        </div>
+      </div>
+      <p class="hint muted small">El emisor que sale en los albaranes es el de «Datos de la empresa en las facturas».</p>
+      <div><button class="btn btn-primary" type="submit" name="intent" value="albaranes">Guardar</button></div>
+    </form>
+  )}
 
   <form method="post" class="form-section mt">
     <h2><Icon name="folder" /> Numeración de expedientes</h2>

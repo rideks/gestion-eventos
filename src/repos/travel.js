@@ -29,6 +29,8 @@ const SORT = {
   // en curso → por cerrar → cerrada → cancelada (?4 = hoy)
   estado: "CASE WHEN status = 'cancelada' THEN 4 WHEN closed_at IS NOT NULL THEN 3 WHEN last_date < ?4 THEN 2 ELSE 1 END",
   creador: 'created_by_name COLLATE NOCASE',
+  // sin albarán (con servicios) → emitido → facturado → sin servicios ni albarán
+  albaran: "CASE WHEN albaran_number IS NULL AND lines > 0 AND status <> 'cancelada' THEN '0' WHEN albaran_number IS NULL THEN '9' ELSE '1' || albaran_number END",
 };
 
 // Las pestañas (src/lib/travel.js → BOOKING_TABS) sobre la consulta de la lista: ?4 = hoy, ?5 = quien mira
@@ -55,7 +57,9 @@ export async function list(db, { q = '', clientId = null, month = '', view = 'to
     SELECT b.id, b.reference, b.client_id, b.title, b.status, b.closed_at, b.created_by, b.created_at, u.name AS created_by_name,
            b.cancel_by, b.cancel_reason, b.cancel_notes, b.cancelled_at, ${CLIENT}, ${TOTALS},
            (SELECT COUNT(*) FROM bt_lines l WHERE l.booking_id = b.id AND l.kind IN ('transporte', 'alojamiento', 'inscripcion')
-               AND TRIM(COALESCE(l.locator, '')) = '') AS missing_locators
+               AND TRIM(COALESCE(l.locator, '')) = '') AS missing_locators,
+           (SELECT a.number FROM bt_albaranes a WHERE a.booking_id = b.id AND a.status <> 'anulado') AS albaran_number,
+           (SELECT a.status FROM bt_albaranes a WHERE a.booking_id = b.id AND a.status <> 'anulado') AS albaran_status
       FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by
      WHERE (?1 = '%%' OR b.reference LIKE ?1 OR b.title LIKE ?1 OR c.name LIKE ?1
             OR EXISTS (SELECT 1 FROM bt_passengers p WHERE p.booking_id = b.id AND (p.first_name || ' ' || p.last_name) LIKE ?1)
@@ -93,7 +97,9 @@ export const forClient = (db, clientId) => list(db, { clientId, limit: 500 }).th
 export async function detail(db, id) {
   const [b, passengers, lines, links] = await db.batch([
     db.prepare(
-      `SELECT b.*, ${CLIENT}, c.email AS client_email, c.phone AS client_phone, u.name AS created_by_name, k.name AS closed_by_name, x.name AS cancelled_by_name
+      `SELECT b.*, ${CLIENT}, c.email AS client_email, c.phone AS client_phone, c.legal_name AS client_legal_name, c.tax_id AS client_tax_id,
+              c.fiscal_address AS client_fiscal_address, c.billing_email AS client_billing_email,
+              u.name AS created_by_name, k.name AS closed_by_name, x.name AS cancelled_by_name
          FROM bt_bookings b JOIN clients c ON c.id = b.client_id LEFT JOIN users u ON u.id = b.created_by LEFT JOIN users k ON k.id = b.closed_by
          LEFT JOIN users x ON x.id = b.cancelled_by
         WHERE b.id = ?`,

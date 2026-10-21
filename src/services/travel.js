@@ -3,13 +3,15 @@
 // (transporte, alojamiento, inscripción y otros). Aparte de los expedientes: no los usa ni los cambia.
 // Permisos: «viajes» para ver y gestionar las reservas; «viajes.fee» para ver y cambiar el fee oculto de cada
 // servicio (sin él no llega: el fee de un servicio se conserva al cambiarlo y uno nuevo va sin fee); «viajes.close»
-// para cerrar una reserva cuando el viaje ha terminado (y reabrirla).
+// para cerrar una reserva cuando el viaje ha terminado (y reabrirla). Su albarán: src/services/albaranes.js.
 // Una reserva cancelada o cerrada no se cambia (se puede reabrir). Los cambios quedan en su historial (change_log).
 import * as repo from '../repos/travel.js';
 import * as changes from '../repos/changes.js';
 import * as counters from '../repos/counters.js';
 import * as rates from '../repos/rates.js';
+import * as albaranRepo from '../repos/albaranes.js';
 import * as clients from './clients.js';
+import * as albaranes from './albaranes.js';
 import * as suppliers from './suppliers.js';
 import { can, activityStmt } from '../lib/app.js';
 import { LINE_KINDS, BOOKING_TABS, personName, bookingReference, parseLineAmounts, pvpOf, bookingSummary, bookingDates, bookingState, closeChecks } from '../lib/travel.js';
@@ -86,7 +88,7 @@ export async function forClient(ctx, clientId) {
 
 /**
  * Ficha de una reserva: el cliente, los pasajeros, los servicios de cada bloque (con sus pasajeros), el resumen
- * económico, el historial y lo que necesitan sus formularios (tipos de IVA, proveedores, pasajeros conocidos).
+ * económico, su albarán, el historial y lo que necesitan sus formularios (tipos de IVA, proveedores, pasajeros conocidos).
  * @param {Context} ctx
  * @param {number} id
  */
@@ -96,16 +98,17 @@ export async function detail(ctx, id) {
   if (!d) return notFound();
   const fee = seesFee(ctx);
   const editable = d.booking.status !== 'cancelada' && !d.booking.closed_at;
-  const [history, vatRates, picker, known, clientPicker] = await Promise.all([
+  const byLine = new Map();
+  for (const l of d.links) byLine.set(l.line_id, [...(byLine.get(l.line_id) ?? []), l.passenger_id]);
+  const lines = d.lines.map((l) => ({ ...(fee ? l : noFee(l)), passenger_ids: byLine.get(l.id) ?? [] }));
+  const [history, vatRates, picker, known, clientPicker, albaran] = await Promise.all([
     changes.forEntity(ctx.db, 'bt_booking', id),
     rates.list(ctx.db),
     editable ? suppliers.pickerData(ctx) : null,
     editable ? repo.knownPassengers(ctx.db, d.booking.client_id) : [],
     editable ? clients.pickerData(ctx) : null,
+    albaranes.panel(ctx, { booking: d.booking, passengers: d.passengers, lines }),
   ]);
-  const byLine = new Map();
-  for (const l of d.links) byLine.set(l.line_id, [...(byLine.get(l.line_id) ?? []), l.passenger_id]);
-  const lines = d.lines.map((l) => ({ ...(fee ? l : noFee(l)), passenger_ids: byLine.get(l.id) ?? [] }));
   const full = bookingSummary(d.lines);
   const dates = bookingDates(d.lines);
   const state = bookingState({ ...d.booking, lines: d.lines.length, first_date: dates.from, last_date: dates.to }, ctx.now);
@@ -115,7 +118,7 @@ export async function detail(ctx, id) {
   return done({
     booking: d.booking, passengers: d.passengers, lines, summary, dates, state, checks, canClose: can(ctx.user, 'viajes.close'), history,
     rates: vatRates, options: picker?.ok ? picker.value.options : [], types: picker?.ok ? picker.value.types : [],
-    clients: clientPicker?.ok ? clientPicker.value.options : [], known, fee, editable,
+    clients: clientPicker?.ok ? clientPicker.value.options : [], known, fee, editable, albaran: albaran.ok ? albaran.value : null,
   });
 }
 
@@ -175,6 +178,7 @@ export async function update(ctx, id, input) {
 /**
  * Cancelar una reserva: quién cancela (el cliente o nosotros), el motivo de la lista y un comentario (obligatorio con
  * «Otros»). Queda en su historial y en la ficha del cliente. Una reserva cerrada no se cancela (antes se reabre).
+ * Su albarán emitido queda anulado (si se reabre, se emite otro con otro número); uno facturado no deja cancelarla.
  * @param {Context} ctx
  * @param {number} id
  * @param {Record<string, any>} input cancel_by, cancel_reason, cancel_notes
@@ -184,13 +188,21 @@ export async function cancel(ctx, id, input) {
   if (!r.ok) return r;
   if (r.value.status === 'cancelada') return done({ id });
   if (r.value.closed_at) return fail('conflict', CLOSED);
+  // Su albarán emitido se anula con ella (se conserva con su número); uno facturado no: antes, la factura
+  const albaran = await albaranRepo.live(ctx.db, id);
+  if (albaran?.status === 'facturado') return fail('conflict', `Su albarán ${albaran.number} está facturado: para cancelar la reserva, antes hay que anular la factura.`);
   const c = validate(CancelSchema, input);
   if (!c.ok) return invalid(c);
   const at = nowIso();
   const why = cancelSummary(c.data);
+  const userId = ctx.user?.id ?? null;
   await ctx.db.batch([
-    repo.cancelStmt(ctx.db, id, { by: c.data.cancel_by, reason: c.data.cancel_reason, notes: c.data.cancel_notes, userId: ctx.user?.id ?? null, at }),
+    repo.cancelStmt(ctx.db, id, { by: c.data.cancel_by, reason: c.data.cancel_reason, notes: c.data.cancel_notes, userId, at }),
     log(ctx, id, 'estado', `Reserva cancelada · ${why}`),
+    ...(albaran ? [
+      albaranRepo.voidForBookingStmt(ctx.db, id, { reason: 'Reserva cancelada', userId, at }),
+      log(ctx, id, 'albaran', `Albarán ${albaran.number} anulado · la reserva se ha cancelado`),
+    ] : []),
     activityStmt(ctx.db, ctx.actor, null, 'bt_booking.cancel', `canceló la reserva ${r.value.reference} (${why})`),
   ]);
   return done({ id });
@@ -270,6 +282,7 @@ export async function remove(ctx, id) {
   const r = await load(ctx, id, { write: false });
   if (!r.ok) return r;
   if (!(await repo.isEmpty(ctx.db, id))) return fail('conflict', 'Tiene pasajeros o servicios: no se puede borrar. Si ya no sigue adelante, cancélala.');
+  if (await albaranRepo.hasAny(ctx.db, id)) return fail('conflict', 'Ha tenido albarán: no se puede borrar (su número no se puede perder). Si ya no sigue adelante, cancélala.');
   await ctx.db.batch([
     repo.deleteStmt(ctx.db, id),
     activityStmt(ctx.db, ctx.actor, null, 'bt_booking.delete', `borró la reserva ${r.value.reference} (vacía)`),
