@@ -130,6 +130,32 @@ export function normalizePermissions(list) {
   return { permissions: PERMISSIONS.map((p) => p.key).filter((k) => set.has(k)), dropped };
 }
 
+/**
+ * Al guardar un rol, sólo cambia lo que la persona ha cambiado en la pantalla: lo que marcó se añade y lo que
+ * desmarcó se quita, sobre los permisos que el rol tiene AHORA en la base (si otra persona ha cambiado otros entre
+ * tanto, se respetan). Sin original (un formulario sin él), la lista enviada sustituye a la guardada.
+ * No se quita nada a escondidas: si un permiso se queda sin el suyo de base, se devuelve en missing (y no se guarda).
+ * @param {{ current: Iterable<string>, wanted: Iterable<string>, original?: Iterable<string> | null }} lists
+ * @returns {{ permissions: string[], added: string[], removed: string[], missing: { key: string, base: string }[] }}
+ */
+export function applyPermissionChanges({ current, wanted, original = null }) {
+  const known = (/** @type {Iterable<string>} */ list) => new Set([...list].filter((k) => BY_KEY.has(k)));
+  const want = known(wanted);
+  const next = known(current);
+  if (original) {
+    const before = known(original);
+    for (const k of want) if (!before.has(k)) next.add(k);
+    for (const k of before) if (!want.has(k)) next.delete(k);
+  } else {
+    next.clear();
+    for (const k of want) next.add(k);
+  }
+  const permissions = PERMISSIONS.map((p) => p.key).filter((k) => next.has(k));
+  const missing = permissions.filter((k) => REQUIRES[k] && !next.has(REQUIRES[k])).map((k) => ({ key: k, base: REQUIRES[k] }));
+  const { added, removed } = permissionDiff(known(current), next);
+  return { permissions, added, removed, missing };
+}
+
 /** Qué ha cambiado entre dos listas de permisos (para el registro de actividad) */
 export function permissionDiff(before, after) {
   const b = new Set(before);

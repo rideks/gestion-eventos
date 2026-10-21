@@ -918,6 +918,9 @@ a.file-chip-name { text-decoration: underline; }
 .file-chip-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); font-weight: 700; }
 .file-chip-actions { display: flex; gap: 6px; margin-left: auto; }
 .file-chip.is-kept { border-style: dashed; }
+/* El documento ya guardado (al editar): ficha neutra con «Cambiar»; el elegido para sustituirlo, en verde */
+.file-chip.is-current { border-color: var(--line-2); background: var(--surface); }
+.file-chip.is-current .file-chip-icon { background: var(--bg); color: var(--muted); }
 
 /* En las tablas, el motivo de una cancelación en dos líneas como mucho (entero al pasar por encima y en la ficha) */
 .dtable .cancel-note { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 26ch; }
@@ -925,3 +928,9 @@ a.file-chip-name { text-decoration: underline; }
 .dtable.expedientes th, .dtable.expedientes td { padding-left: 8px; padding-right: 8px; }
 /* La columna de acciones de una tabla (p. ej. «Pagar» en la bandeja de pagos) */
 .dtable .row-actions { white-space: nowrap; text-align: right; }
+
+/* Formularios con «Guardar» que sólo se activa si hay cambios (p. ej. un rol): el estado junto al botón */
+.save-bar { align-items: center; }
+.save-state { font-size: 0.9rem; color: var(--muted); }
+.save-state.is-dirty { color: var(--warn); font-weight: 600; }
+.save-state.is-saved { color: var(--ok); font-weight: 600; }

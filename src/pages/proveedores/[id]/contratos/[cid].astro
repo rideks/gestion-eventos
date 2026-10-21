@@ -118,11 +118,11 @@ const canRenew = editable && !c.renewed_by && ['por_caducar', 'pendiente', 'cadu
     <div class="stack">
       <section class="card">
         <h2>Documento</h2>
-        {fileHref ? <p class="file-current"><Icon name="paperclip" size={16} /><a href={fileHref} target="_blank" rel="noopener">{c.file_name}</a></p> : <p class="muted">Sin documento.</p>}
+        {!editable && (fileHref ? <p class="file-current"><Icon name="paperclip" size={16} /><a href={fileHref} target="_blank" rel="noopener">{c.file_name}</a></p> : <p class="muted">Sin documento.</p>)}
         {editable && (
-          <form method="post" enctype="multipart/form-data" class="mt">
-            <FileField label={fileHref ? 'Sustituir el documento' : 'Subir el documento'} optional={false} error={errors.file} />
-            <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="file" data-busy="Subiendo…"><Icon name="upload" size={16} /> Subir</button>
+          <form method="post" enctype="multipart/form-data">
+            <FileField label={fileHref ? 'Documento del contrato' : 'Subir el documento'} optional={false} error={errors.file} current={fileHref ? c : null} />
+            <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="file" data-busy="Subiendo…"><Icon name="upload" size={16} /> {fileHref ? 'Guardar el documento nuevo' : 'Subir'}</button>
           </form>
         )}
       </section>

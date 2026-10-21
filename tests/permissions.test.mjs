@@ -65,3 +65,15 @@ test('managersAfter: siempre tiene que quedar alguien que gestione usuarios', ()
   assert.equal(managersAfter(users, managers, { roleId: 2, hasUsersPerm: true }), 2); // se da a Administración
   assert.equal(managersAfter(users, managers, { userId: 1, newRoleId: 5 }), 2); // Tania pasa a Técnico
 });
+
+test('applyPermissionChanges: sólo lo cambiado, sobre lo guardado ahora, y sin quitar nada a escondidas', async () => {
+  const { applyPermissionChanges } = await import('../src/lib/permissions.js');
+  // Se abrió con expedientes + pagos + cobros; entre tanto otra persona quitó «pagos»; ahora se añade «invoice.issue»
+  const r = applyPermissionChanges({ current: ['expedientes', 'cobros'], original: ['expedientes', 'pagos', 'cobros'], wanted: ['expedientes', 'pagos', 'cobros', 'invoice.issue'] });
+  assert.deepEqual(r, { permissions: ['expedientes', 'cobros', 'invoice.issue'], added: ['invoice.issue'], removed: [], missing: [] });
+  // Quitar la base y dejar el que depende de ella: se avisa, no se quita en silencio
+  const m = applyPermissionChanges({ current: ['expedientes', 'cobros', 'invoice.issue'], original: ['expedientes', 'cobros', 'invoice.issue'], wanted: ['expedientes', 'invoice.issue'] });
+  assert.deepEqual(m.missing, [{ key: 'invoice.issue', base: 'cobros' }]);
+  // Lo desconocido no entra; sin original, lo enviado sustituye
+  assert.deepEqual(applyPermissionChanges({ current: ['expedientes'], wanted: ['pagos', 'inventado', 'expedientes'] }).permissions, ['expedientes', 'pagos']);
+});

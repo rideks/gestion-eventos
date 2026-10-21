@@ -28,7 +28,7 @@ const LEGACY_PAGES = [
   'expedientes/[id]/editar.astro', 'expedientes/[id]/facturas/[fid].astro', 'expedientes/[id]/facturas/[fid]/documento.astro',
   'expedientes/[id]/facturas/nueva.astro', 'expedientes/[id]/index.astro',
   'expedientes/[id]/po/[poid].astro', 'expedientes/[id]/presupuesto.astro', 'expedientes/nuevo.astro', 'index.astro',
-  'login.astro', 'registro.astro', 'usuarios/index.astro', 'usuarios/roles/[id].astro', 'usuarios/roles/index.astro',
+  'login.astro', 'registro.astro', 'usuarios/index.astro', 'usuarios/roles/index.astro',
 ].map((p) => `pages/${p}`);
 
 test('el SQL sólo está en los repositorios (y en lo que aún no se ha pasado a capas)', () => {
@@ -53,7 +53,7 @@ test('los repositorios no deciden permisos ni dependen de los servicios', () => 
 });
 
 // Áreas ya en capas: sus páginas sólo usan servicios (cada área nueva se añade aquí)
-const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/cobros.astro', 'pages/expedientes/index.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/', 'pages/preferencias/'];
+const LAYERED = ['pages/proveedores/', 'pages/clientes/', 'pages/pagos.astro', 'pages/cobros.astro', 'pages/expedientes/index.astro', 'pages/expedientes/[id]/pagos', 'pages/viajes/', 'pages/preferencias/', 'pages/usuarios/roles/[id].astro'];
 
 test('las páginas de las áreas en capas (Proveedores, Contratos, Clientes, Pagos, Business Travel) sólo hablan con los servicios', () => {
   for (const p of all.filter((f) => LAYERED.some((dir) => rel(f).startsWith(dir)))) {

@@ -360,7 +360,7 @@ const flow = liq ? [
         <dt>{liq ? 'Reembolsada' : 'Pagado'}</dt><dd>{formatDate(p.paid_on)}{p.method && ` · ${PAYMENT_METHODS[p.method]}`}</dd>
       </dl>
     )}
-    {receiptHref && (
+    {receiptHref && !(canPay && canReceipt) && (
       <div class="doc-current mt">
         <Icon name="paperclip" size={16} />
         <a href={receiptHref} target="_blank" rel="noopener">{p.receipt_name}</a>
@@ -376,8 +376,10 @@ const flow = liq ? [
       <form method="post" enctype="multipart/form-data" class="form mt" data-has-receipt={p.receipt_file_id ? '1' : '0'}>
         <input type="hidden" name="payment_id" value={p.id} />
         {canReceipt && (
-          <FileField id="pay-receipt" name="receipt" optional={false} label={p.receipt_file_id ? 'Cambiar el justificante' : 'Justificante bancario (PDF o foto)'}
-            hint={liq ? 'Obligatorio para marcarla reembolsada si es por transferencia.' : 'Obligatorio para marcar como pagado un pago por transferencia.'} kept={input?.intent === 'pay' ? kept.receipt : null} />
+          <FileField id="pay-receipt" name="receipt" optional={false} label="Justificante bancario (PDF o foto)"
+            current={receiptHref ? { file_id: p.receipt_file_id, file_name: p.receipt_name } : null} removable={!locked} removeIntent="receipt_remove"
+            hint={liq ? 'Obligatorio para marcarla reembolsada si es por transferencia.' : 'Obligatorio para marcar como pagado un pago por transferencia.'}
+            kept={['pay', 'receipt'].includes(input?.intent) ? kept.receipt : null} />
         )}
         <>
             <div class="row row-2">

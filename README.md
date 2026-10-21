@@ -162,6 +162,13 @@ lo puede hacer). Se gestionan desde **Usuarios y permisos** (sólo el rol Técni
 el rol, crear roles nuevos (en blanco o copiando otro) y marcar sus permisos. Los cambios valen al momento y
 quedan registrados. Siempre tiene que quedar al menos una persona activa que pueda gestionar usuarios.
 
+Al guardar un rol **sólo cambia lo que se ha cambiado** en la pantalla: lo marcado se añade y lo desmarcado se quita,
+sobre lo que el rol tiene guardado en ese momento (si dos personas lo cambian a la vez, no se pisan). **Nada se quita a
+escondidas**: desmarcar un permiso del que dependen otros (p. ej. «Ver los cobros», que necesitan «Emitir facturas» y
+las PO) pide confirmación y dice cuáles se quitan con él; y si llegara un permiso sin el suyo de base, no se guarda y se
+explica. «Guardar» sólo se activa con cambios sin guardar («Hay cambios sin guardar»); al guardar sale «Cambios
+guardados» y «Guardado: no hay cambios pendientes». Si algo falla, lo cambiado sigue en la pantalla con el error.
+
 Reparto inicial:
 
 | Permiso | Jefes | Administración | Tesorería | Eventos | Técnico |
@@ -250,6 +257,10 @@ Reparto inicial:
   algún dato, el documento **no se pierde**: la página vuelve con él ya puesto («Ya subido: no hace falta volver a
   elegirlo») y se guarda al corregir el resto. Con un documento elegido, hay que decir si es factura o proforma antes
   de enviar, y un justificante ya subido no se vuelve a pedir al marcar «Ya pagado».
+  **Al editar** algo que ya tiene documento (PO, contrato, justificante, PDF de la factura), el guardado sale como
+  ficha («Guardado») con **Cambiar**: si se cancela la selección o no se elige nada, se queda el que había; uno nuevo
+  sale como «Sustituirá a «…» al guardar» (con **Deshacer**) y sólo lo sustituye al guardar bien. El guardado sólo se
+  borra con **Quitar**, que pide confirmación.
 - **Cierre**: las comprobaciones de «Antes de cerrar» sólo salen en verde cuando está hecho de verdad: costes apuntados
   y pagados, todo el presupuesto facturado (o avisa si se ha facturado de más), emitido y cobrado, y las PO facturadas
   (si las hay). Un expediente recién creado no sale «todo terminado».

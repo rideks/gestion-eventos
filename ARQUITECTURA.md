@@ -137,7 +137,8 @@ cobrar y cobradas, y registrar un cobro, que usan también el expediente, la fic
 **liquidaciones de gastos** son pagos de tipo `liquidacion` (`payments.kind`): el mismo servicio, la misma ficha y el
 mismo reembolso; lo que cambia lo decide `isLiquidation` (`src/lib/finance.js`), que las deja fuera de los avisos de
 factura sin tocar el cálculo del coste. El resto
-(crear, emitir, enviar y anular facturas al cliente y las PO, la ficha y el cierre de los expedientes, Inicio, usuarios, ajustes) todavía hace SQL en las páginas o en `src/lib`: está
+(crear, emitir, enviar y anular facturas al cliente y las PO, la ficha y el cierre de los expedientes, Inicio, usuarios
+—salvo la ficha de un rol, ya en capas: `src/services/roles.js`, `src/repos/roles.js`—, ajustes) todavía hace SQL en las páginas o en `src/lib`: está
 en las listas `LEGACY_*` de `tests/architecture.test.mjs`, que **sólo pueden encoger**. Orden propuesto:
 facturas al cliente y PO → ficha y cierre de expedientes → usuarios y ajustes. Cada paso, sin cambios para quien usa la
 aplicación y con sus pruebas de servicio.

@@ -1,91 +1,57 @@
 ---
 // Usuarios y permisos · Un rol: nombre, descripción y permisos (por áreas), quién lo tiene y borrarlo.
-// Los permisos se guardan normalizados (sin los que necesitan otro que no está marcado) y el cambio
-// queda en el registro. Vale al momento: los permisos se leen en cada petición.
-import { env } from 'cloudflare:workers';
+// Al guardar sólo cambia lo que se ha cambiado en la pantalla (src/services/roles.js): se envían los permisos que
+// había al abrirla (original) y los marcados, y el servicio aplica la diferencia sobre lo guardado. Nada se quita
+// a escondidas: si un permiso se queda sin el suyo de base, no se guarda y se explica; en la pantalla, desmarcar
+// uno del que dependen otros pide confirmación. «Guardar» sólo se activa si hay cambios sin guardar.
 import App from '../../../layouts/App.astro';
 import Icon from '../../../components/Icon.astro';
-import { deny, parseId, readForm, actor, logActivity } from '../../../lib/app.js';
-import { RoleSchema, validate, formToObject } from '../../../lib/validate.js';
-import { AREAS, REQUIRES, normalizePermissions, permissionDiff, permissionLabel } from '../../../lib/permissions.js';
-import { loadRoles, keepsAManager, LAST_MANAGER } from '../../../lib/users.js';
+import { parseId, readForm } from '../../../lib/app.js';
+import { formToObject } from '../../../lib/validate.js';
+import { AREAS, REQUIRES, permissionLabel } from '../../../lib/permissions.js';
+import { serviceContext, failure } from '../../../services/context.js';
+import * as roles from '../../../services/roles.js';
 
-const denied = deny(Astro, 'users');
-if (denied) return denied;
-
-const db = env.DB;
+const ctx = serviceContext(Astro);
 const id = parseId(Astro.params.id);
-const roles = id ? await loadRoles(db) : [];
-const role = roles.find((r) => r.id === id);
-if (!role) return Astro.rewrite('/404');
+const r = id ? await roles.detail(ctx, id) : { ok: false, code: 'not_found' };
+if (!r.ok) return failure(Astro, r, '/');
+const { role, people } = r.value;
 
 let error = null;
 let errors = {};
-let notice = null;
 let v = { name: role.name, description: role.description ?? '' };
 let checked = new Set(role.permissions);
+let original = role.permissions;
 
 if (Astro.request.method === 'POST') {
-  const who = actor(Astro);
   const form = await readForm(Astro.request);
   const input = form ? formToObject(form) : {};
-
+  let res;
   if (input.intent === 'delete') {
-    if (role.system) error = 'Los roles iniciales no se pueden borrar (sí se pueden cambiar sus permisos).';
-    else if (role.users) error = `Este rol lo tienen ${role.users} ${role.users === 1 ? 'persona' : 'personas'}: cámbiales el rol antes de borrarlo.`;
-    else if (role.invites) error = 'Hay invitaciones sin usar con este rol: anúlalas antes de borrarlo.';
-    else {
-      await db.batch([
-        db.prepare('DELETE FROM invites WHERE role_id = ?').bind(id), // usadas, anuladas o caducadas
-        db.prepare('DELETE FROM roles WHERE id = ?').bind(id),
-      ]);
-      await logActivity(db, who, null, 'role.delete', `borró el rol ${role.name}`);
-      return Astro.redirect('/usuarios/roles?ok=borrado', 303);
-    }
+    res = await roles.remove(ctx, id);
+    if (res.ok) return Astro.redirect('/usuarios/roles?ok=borrado', 303);
   } else if (input.intent === 'save') {
-    const parsed = validate(RoleSchema, input);
     const wanted = form ? form.getAll('permissions').map(String) : [];
-    const { permissions, dropped } = normalizePermissions(wanted);
+    original = typeof input.original === 'string' ? input.original.split(',').filter(Boolean) : null;
+    res = await roles.save(ctx, id, input, { wanted, original });
+    if (res.ok) return Astro.redirect(`/usuarios/roles/${id}?ok=guardado`, 303);
+    // Lo que se había cambiado sigue en la pantalla (y «Guardar» sigue activo)
     v = input;
-    checked = new Set(permissions);
-    if (!parsed.ok) {
-      error = parsed.message;
-      errors = parsed.errors;
-    } else if (roles.some((r) => r.id !== id && r.name.toLowerCase() === parsed.data.name.toLowerCase())) {
-      error = 'Ya hay otro rol con ese nombre.';
-      errors = { name: error };
-    } else if (role.permissions.includes('users') && !permissions.includes('users')
-      && !(await keepsAManager(db, { roleId: id, hasUsersPerm: false }))) {
-      error = LAST_MANAGER;
-    } else {
-      const { added, removed } = permissionDiff(role.permissions, permissions);
-      await db.batch([
-        db.prepare("UPDATE roles SET name = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
-          .bind(parsed.data.name, parsed.data.description, id),
-        db.prepare('DELETE FROM role_permissions WHERE role_id = ?').bind(id),
-        ...permissions.map((p) => db.prepare('INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)').bind(id, p)),
-      ]);
-      const changes = [
-        parsed.data.name !== role.name && `le cambió el nombre a ${parsed.data.name}`,
-        added.length && `le dio ${added.map((k) => `«${permissionLabel(k)}»`).join(', ')}`,
-        removed.length && `le quitó ${removed.map((k) => `«${permissionLabel(k)}»`).join(', ')}`,
-      ].filter(Boolean);
-      if (changes.length) await logActivity(db, who, null, 'role.update', `cambió el rol ${role.name}: ${changes.join('; ')}`);
-      const qs = dropped.length ? `&sin=${encodeURIComponent(dropped.join(','))}` : '';
-      return Astro.redirect(`/usuarios/roles/${id}?ok=guardado${qs}`, 303);
-    }
+    checked = new Set(wanted);
+    original ??= role.permissions;
+  } else {
+    res = { ok: false, code: 'invalid', message: 'Acción no válida.', fields: {} };
   }
-  if (error) Astro.response.status = 400;
+  const back = failure(Astro, res, `/usuarios/roles/${id}`);
+  if (back) return back;
+  error = res.message;
+  errors = res.fields ?? {};
 }
-
-// Al guardar se quitan los permisos que necesitan otro que no estaba marcado: se avisa de cuáles
-const droppedNow = (Astro.url.searchParams.get('sin') ?? '').split(',').filter(Boolean);
-if (droppedNow.length) {
-  notice = `No se han guardado ${droppedNow.map((k) => `«${permissionLabel(k)}»`).join(', ')}: necesitan otro permiso que no estaba marcado.`;
-}
-const { results: people } = await db.prepare('SELECT id, name, active FROM users WHERE role_id = ? ORDER BY active DESC, name').bind(id).all();
+// Lo guardado, para saber en la pantalla si hay cambios sin guardar
+const saved = JSON.stringify({ name: role.name, description: role.description ?? '', permissions: [...role.permissions].sort() });
 ---
-<App title={`Rol · ${role.name}`} section="usuarios" error={error} notice={notice} fieldErrors={errors}>
+<App title={`Rol · ${role.name}`} section="usuarios" error={error} fieldErrors={errors}>
   <div class="crumbs">
     <nav aria-label="Estás en">
       <ol>
@@ -102,7 +68,8 @@ const { results: people } = await db.prepare('SELECT id, name, active FROM users
     </div>
   </div>
 
-  <form method="post" class="form">
+  <form method="post" class="form" autocomplete="off" data-role-form data-saved={saved}>
+    <input type="hidden" name="original" value={original.join(',')} />
     <section class="form-section">
       <h2><Icon name="key-round" /> Datos del rol</h2>
       <div class="row row-2">
@@ -133,9 +100,11 @@ const { results: people } = await db.prepare('SELECT id, name, active FROM users
       </section>
     ))}
 
-    <div class="actions">
-      <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…"><Icon name="check" size={18} /> Guardar el rol</button>
-      <a class="btn btn-ghost" href="/usuarios/roles">Cancelar</a>
+    <div class="actions save-bar" data-save-bar>
+      <button class="btn btn-primary" type="submit" name="intent" value="save" data-busy="Guardando…" data-save><Icon name="check" size={18} /> Guardar el rol</button>
+      <a class="btn btn-ghost" href={`/usuarios/roles/${id}`} data-discard hidden>Descartar los cambios</a>
+      <a class="btn btn-ghost" href="/usuarios/roles">Volver a los roles</a>
+      <span class="save-state" data-save-state role="status" aria-live="polite"></span>
     </div>
   </form>
 
@@ -160,23 +129,77 @@ const { results: people } = await db.prepare('SELECT id, name, active FROM users
 </App>
 
 <script>
-  // Al desmarcar un permiso, se desmarcan los que dependen de él; al marcar uno, se marca su base
-  const boxes = [...document.querySelectorAll('input[name="permissions"]')];
-  const byKey = new Map(boxes.map((b) => [b.value, b]));
-  for (const box of boxes) {
-    box.addEventListener('change', () => {
-      if (box.checked) {
-        for (let base = byKey.get(box.dataset.requires ?? ''); base; base = byKey.get(base.dataset.requires ?? '')) base.checked = true;
-      } else {
-        const off = new Set([box.value]);
-        let grew = true;
-        while (grew) {
-          grew = false;
-          for (const b of boxes) {
-            if (b.checked && off.has(b.dataset.requires ?? '')) { b.checked = false; off.add(b.value); grew = true; }
-          }
+  const form = document.querySelector('form[data-role-form]');
+  if (form instanceof HTMLFormElement) {
+    const boxes = [...form.querySelectorAll('input[name="permissions"]')].filter((b) => b instanceof HTMLInputElement);
+    const byKey = new Map(boxes.map((b) => [b.value, b]));
+    const label = (b) => b.closest('label')?.querySelector('strong')?.textContent ?? b.value;
+    // Los que dependen (directa o indirectamente) de un permiso y están marcados
+    const dependents = (box) => {
+      const off = new Set([box.value]);
+      const out = [];
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const b of boxes) {
+          if (b.checked && !off.has(b.value) && off.has(b.dataset.requires ?? '')) { off.add(b.value); out.push(b); grew = true; }
         }
       }
+      return out;
+    };
+    // Desmarcar uno del que dependen otros pide confirmación (la ventana común de data-confirm)
+    const syncConfirms = () => {
+      for (const b of boxes) {
+        const deps = b.checked ? dependents(b) : [];
+        if (deps.length) {
+          b.dataset.confirm = `Al quitar «${label(b)}» también se quitan los que lo necesitan: ${deps.map((d) => `«${label(d)}»`).join(', ')}. ¿Quitarlos?`;
+          b.dataset.confirmOk = deps.length === 1 ? 'Quitar los dos' : `Quitar los ${deps.length + 1}`;
+        } else {
+          delete b.dataset.confirm;
+          delete b.dataset.confirmOk;
+        }
+      }
+    };
+    for (const box of boxes) {
+      box.addEventListener('change', () => {
+        if (box.checked) {
+          // Marcar uno marca también el que necesita
+          for (let base = byKey.get(box.dataset.requires ?? ''); base; base = byKey.get(base.dataset.requires ?? '')) base.checked = true;
+        } else {
+          for (const d of dependents(box)) d.checked = false;
+        }
+        syncConfirms();
+        update();
+      });
+    }
+
+    // ¿Hay cambios sin guardar? Se compara con lo guardado: «Guardar» sólo se activa si los hay
+    const saved = JSON.parse(form.dataset.saved ?? '{}');
+    const save = form.querySelector('[data-save]');
+    const discard = form.querySelector('[data-discard]');
+    const state = form.querySelector('[data-save-state]');
+    const justSaved = new URLSearchParams(location.search).get('ok') === 'guardado';
+    const current = () => ({
+      name: String(form.elements.namedItem('name')?.value ?? '').trim(),
+      description: String(form.elements.namedItem('description')?.value ?? '').trim(),
+      permissions: boxes.filter((b) => b.checked).map((b) => b.value).sort(),
     });
+    let dirty = false;
+    function update() {
+      dirty = JSON.stringify(current()) !== JSON.stringify(saved);
+      if (save instanceof HTMLButtonElement) save.disabled = !dirty;
+      if (discard instanceof HTMLElement) discard.hidden = !dirty;
+      if (state) {
+        state.textContent = dirty ? 'Hay cambios sin guardar' : justSaved ? 'Guardado: no hay cambios pendientes' : 'Sin cambios';
+        state.className = `save-state ${dirty ? 'is-dirty' : justSaved ? 'is-saved' : ''}`;
+      }
+    }
+    form.addEventListener('input', update);
+    form.addEventListener('submit', () => { dirty = false; });
+    window.addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
+    // Al volver con «Atrás», la página guardada en memoria puede no estar al día: se vuelve a pedir
+    window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+    syncConfirms();
+    update();
   }
 </script>

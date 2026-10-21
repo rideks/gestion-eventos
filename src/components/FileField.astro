@@ -1,32 +1,44 @@
 ---
 // Campo para adjuntar un documento (PDF, foto, Excel, Word o correo).
 // Al elegir el archivo se enseña su ficha (nombre, tamaño, «Listo para guardar» y «Quitar») en vez del recuadro.
+// current: el documento ya guardado. Sale como ficha («Guardado») con «Cambiar»: el guardado no se toca hasta que se
+//   guarda el formulario con otro archivo elegido. Si se cancela la selección o no se elige nada, se queda el que había;
+//   con uno nuevo elegido, «Deshacer» vuelve al guardado. Sólo «Quitar» (removable, con confirmación) lo borra.
 // kept: el documento que se eligió en un intento anterior con error (src/services/files.js → keepUploads): sale ya
 // puesto («Ya subido: no hace falta volver a elegirlo») y se envía su clave en <name>__kept.
+// Elegir otro archivo y cancelar el selector nunca quita lo que ya estaba elegido (algunos navegadores lo vacían).
 import Icon from './Icon.astro';
 import { ACCEPT, MAX_FILE_BYTES, fileUrl } from '../lib/files.js';
 
-// removable: botón «Quitar» junto al documento actual (envía intent=remove_file en el mismo formulario)
+// removable: botón «Quitar» junto al documento guardado (envía intent=<removeIntent> en el mismo formulario)
 // optional: «(opcional)» junto a la etiqueta si no es obligatorio (no se pone si depende de otra cosa)
-const { name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, optional = true, error = null, kept = null } = Astro.props;
+const {
+  name = 'file', label = 'Documento', current = null, hint = null, required = false, id = name, removable = false, removeIntent = 'remove_file',
+  optional = true, error = null, kept = null,
+} = Astro.props;
 const href = fileUrl(current);
 const keptHref = kept ? fileUrl({ file_id: kept.id, file_name: kept.name }) : null;
 const kb = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const isImage = (n) => /\.(jpe?g|png|webp|heic)$/i.test(n ?? '');
 ---
 <div class:list={['field', 'file-field', { 'has-error': error }]} data-file-wrap>
-  <span class="label">{label}{!required && optional && <span class="opt"> (opcional)</span>}</span>
+  <span class="label">{label}{!required && optional && !href && <span class="opt"> (opcional)</span>}</span>
   {href && (
-    <p class="file-current">
-      <Icon name="paperclip" size={16} />
-      <a href={href} target="_blank" rel="noopener">{current.file_name}</a>
-      <span class="muted small">· si subes otro, sustituye a este</span>
-      {removable && (
-        <button class="btn btn-danger btn-sm" type="submit" name="intent" value="remove_file" formnovalidate
-          data-confirm={`¿Quitar el documento «${current.file_name}»? Se borra del expediente.`} data-confirm-ok="Quitar documento">
-          <Icon name="trash-2" size={14} /> Quitar documento</button>
-      )}
-    </p>
+    <div class="file-chip is-current" data-file-current data-name={current.file_name} hidden={!!kept}>
+      <span class="file-chip-icon"><Icon name={isImage(current.file_name) ? 'eye' : 'paperclip'} size={22} /></span>
+      <span class="file-chip-body">
+        <a class="file-chip-name" href={href} target="_blank" rel="noopener">{current.file_name}</a>
+        <span class="file-chip-meta"><span class="file-chip-ok"><Icon name="circle-check" size={14} /> Guardado</span></span>
+      </span>
+      <span class="file-chip-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-current-change hidden><Icon name="upload" size={14} /> Cambiar</button>
+        {removable && (
+          <button class="btn btn-danger btn-sm" type="submit" name="intent" value={removeIntent} formnovalidate
+            data-confirm={`¿Quitar el documento «${current.file_name}»? Se borra del expediente.`} data-confirm-ok="Quitar documento">
+            <Icon name="trash-2" size={14} /> Quitar</button>
+        )}
+      </span>
+    </div>
   )}
   <div class:list={['file-chip', { 'is-kept': kept }]} data-file-chip hidden={!kept}>
     <span class="file-chip-icon" data-chip-icon><Icon name={kept && isImage(kept.name) ? 'eye' : 'file-text'} size={22} /></span>
@@ -36,20 +48,23 @@ const isImage = (n) => /\.(jpe?g|png|webp|heic)$/i.test(n ?? '');
         : <strong class="file-chip-name" data-chip-name></strong>}
       <span class="file-chip-meta">
         <span data-chip-size>{kept ? kb(kept.size) : ''}</span>
-        <span class="file-chip-ok"><Icon name="circle-check" size={14} /> <span data-chip-status>{kept ? 'Ya subido: no hace falta volver a elegirlo' : 'Listo para guardar'}</span></span>
+        <span class="file-chip-ok"><Icon name="circle-check" size={14} /> <span data-chip-status>{kept
+          ? (href ? `Ya subido: sustituirá a «${current.file_name}» al guardar` : 'Ya subido: no hace falta volver a elegirlo')
+          : 'Listo para guardar'}</span></span>
       </span>
     </span>
     <span class="file-chip-actions">
       <button type="button" class="btn btn-ghost btn-sm" data-chip-change><Icon name="upload" size={14} /> Cambiar</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-chip-clear aria-label={`Quitar el documento de «${label}»`}><Icon name="x" size={14} /> Quitar</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-chip-clear aria-label={href ? `Deshacer: dejar «${current.file_name}»` : `Quitar el documento de «${label}»`}>
+        <Icon name={href ? 'rotate-ccw' : 'x'} size={14} /> {href ? 'Deshacer' : 'Quitar'}</button>
     </span>
     {kept && <input type="hidden" name={`${name}__kept`} value={kept.token} data-kept-input />}
   </div>
   <label class="dropzone" for={id} data-file-field hidden={!!kept}>
     <Icon name="upload" size={22} />
-    <strong data-file-label>Toca para elegir o arrastra aquí el archivo</strong>
+    <strong data-file-label>{href ? 'Elige otro archivo para sustituirlo' : 'Toca para elegir o arrastra aquí el archivo'}</strong>
     <span class="small">PDF, foto, Excel, Word o correo · máx. {MAX_FILE_BYTES / 1024 / 1024} MB</span>
-    <input id={id} name={name} type="file" accept={ACCEPT} required={required && !kept} data-required={required ? '' : undefined} title=""
+    <input id={id} name={name} type="file" accept={ACCEPT} required={required && !kept && !href} data-required={required && !href ? '' : undefined} title=""
       data-invalid="Elige el archivo (PDF o foto)." />
   </label>
   {hint && <p class="hint">{hint}</p>}
@@ -62,38 +77,64 @@ const isImage = (n) => /\.(jpe?g|png|webp|heic)$/i.test(n ?? '');
     const input = wrap.querySelector('input[type="file"]');
     const chip = wrap.querySelector('[data-file-chip]');
     if (!(zone instanceof HTMLElement) || !(input instanceof HTMLInputElement) || !(chip instanceof HTMLElement)) return;
+    const current = wrap.querySelector('[data-file-current]');
+    const currentName = current instanceof HTMLElement ? current.dataset.name : null;
     const name = chip.querySelector('[data-chip-name]');
     const size = chip.querySelector('[data-chip-size]');
     const status = chip.querySelector('[data-chip-status]');
-    const show = (file) => {
+    // Lo último elegido: si el selector se cancela y el navegador vacía el campo, se vuelve a poner
+    let last = null;
+    const show = () => {
+      const file = input.files?.[0] ?? null;
       const kept = chip.querySelector('[data-kept-input]');
-      const has = !!file || !!kept;
-      chip.hidden = !has;
-      zone.hidden = has;
+      const pending = !!file || !!kept;
+      chip.hidden = !pending;
+      if (current instanceof HTMLElement) current.hidden = pending;
+      // Con un documento guardado, el recuadro no hace falta: se cambia con «Cambiar»
+      zone.hidden = pending || current instanceof HTMLElement;
       chip.classList.toggle('is-kept', !file && !!kept);
       // Con un documento ya subido, el campo deja de ser obligatorio (el servidor lo recupera)
       input.required = input.hasAttribute('data-required') && !kept;
-      if (file && name && size && status) {
+      if (file && name && size) {
         name.textContent = file.name;
         if (name instanceof HTMLAnchorElement) name.removeAttribute('href');
         size.textContent = kb(file.size);
-        status.textContent = 'Listo para guardar';
       }
-      wrap.dispatchEvent(new CustomEvent('file-change', { bubbles: true, detail: { has } }));
+      if (status && pending) {
+        status.textContent = currentName
+          ? `${file ? 'Sustituirá' : 'Ya subido: sustituirá'} a «${currentName}» al guardar`
+          : file ? 'Listo para guardar' : 'Ya subido: no hace falta volver a elegirlo';
+      }
+      wrap.dispatchEvent(new CustomEvent('file-change', { bubbles: true, detail: { has: pending } }));
     };
     input.addEventListener('change', () => {
-      // Un archivo nuevo sustituye al que ya estaba subido
-      if (input.files?.length) chip.querySelector('[data-kept-input]')?.remove();
-      show(input.files?.[0] ?? null);
+      if (input.files?.length) {
+        last = input.files;
+        // Un archivo nuevo sustituye al que ya estaba subido
+        chip.querySelector('[data-kept-input]')?.remove();
+      } else if (last) {
+        // Cancelar el selector no quita lo que ya estaba elegido
+        try { input.files = last; } catch { /* navegador sin esa posibilidad: se queda vacío */ }
+      }
+      show();
     });
-    chip.querySelector('[data-chip-change]')?.addEventListener('click', () => input.click());
+    const pick = () => input.click();
+    chip.querySelector('[data-chip-change]')?.addEventListener('click', pick);
+    const change = wrap.querySelector('[data-current-change]');
+    if (change instanceof HTMLElement) {
+      change.hidden = false;
+      change.addEventListener('click', pick);
+    }
+    // «Quitar» lo elegido (o «Deshacer», si hay uno guardado: vuelve a él). El guardado no se toca.
     chip.querySelector('[data-chip-clear]')?.addEventListener('click', () => {
       input.value = '';
+      last = null;
       chip.querySelector('[data-kept-input]')?.remove();
-      show(null);
+      show();
     });
     zone.addEventListener('dragover', () => zone.classList.add('is-over'));
     zone.addEventListener('dragleave', () => zone.classList.remove('is-over'));
     zone.addEventListener('drop', () => zone.classList.remove('is-over'));
+    show();
   });
 </script>
